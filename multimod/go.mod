@@ -1,4 +1,4 @@
-module github.com/cloudengio/citools/multimod
+module cloudeng.io/citools/multimod
 
 go 1.19
 

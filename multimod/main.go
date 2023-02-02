@@ -2,6 +2,8 @@
 // Use of this source code is governed by the Apache-2.0
 // license that can be found in the LICENSE file.
 
+// multimod provides a means of running commands across multiple modules in a
+// a single repository.
 package main
 
 import (
@@ -63,7 +65,7 @@ func main() {
 	if err != nil {
 		done("finding modules", err)
 	}
-	if modulesFlag {
+	if modulesFlag || (!testFlag && !lintFlag && !goVulnFlag) {
 		fmt.Println(strings.Join(mods, " "))
 		return
 	}
