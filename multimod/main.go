@@ -65,7 +65,7 @@ func main() {
 	if err != nil {
 		done("finding modules", err)
 	}
-	if modulesFlag {
+	if modulesFlag || (!testFlag && !lintFlag && !goVulnFlag) {
 		fmt.Println(strings.Join(mods, " "))
 		return
 	}
