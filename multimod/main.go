@@ -18,8 +18,9 @@ import (
 )
 
 type config struct {
-	TestCmd []string `yaml:"test_cmd,flow"`
-	LintCmd []string `yaml:"lint_cmd,flow"`
+	TestCmd   []string `yaml:"test_cmd,flow"`
+	LintCmd   []string `yaml:"lint_cmd,flow"`
+	GoVulnCmd []string `yaml:"govuln_cmd,flow"`
 }
 
 func readConfig() (config, error) {
@@ -44,14 +45,15 @@ var (
 	testFlag    bool
 	modulesFlag bool
 	lintFlag    bool
+	goVulnFlag  bool
 )
 
 func init() {
 	flag.BoolVar(&modulesFlag, "modules", false, "print modules in this repo")
 	flag.BoolVar(&testFlag, "test", false, "run tests")
 	flag.BoolVar(&lintFlag, "lint", false, "run lint")
+	flag.BoolVar(&goVulnFlag, "govuln", false, "run govuln")
 	flag.StringVar(&configFile, "config", ".multimod.yml", "config file")
-
 }
 
 func main() {
@@ -79,6 +81,12 @@ func main() {
 	if lintFlag {
 		if err := runInDirs(ctx, mods, cfg.LintCmd); err != nil {
 			done("lint: ", err)
+		}
+	}
+
+	if goVulnFlag {
+		if err := runInDirs(ctx, mods, cfg.GoVulnCmd); err != nil {
+			done("govuln: ", err)
 		}
 	}
 
