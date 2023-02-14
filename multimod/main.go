@@ -20,14 +20,42 @@ import (
 )
 
 type config struct {
-	TestCmd   []string `yaml:"test_cmd,flow"`
-	LintCmd   []string `yaml:"lint_cmd,flow"`
-	GoVulnCmd []string `yaml:"govuln_cmd,flow"`
+	TestCmd   []string `yaml:"test,flow"`
+	LintCmd   []string `yaml:"lint,flow"`
+	GoVulnCmd []string `yaml:"govuln,flow"`
+	Generate  []string `yaml:"generate,flow"`
+	Markdown  []string `yaml:"markdown,flow"`
+	Usage     []string `yaml:"usage,flow"`
+	Annotate  []string `yaml:"annotate,flow"`
+	Update    []string `yaml:"update,flow"`
+}
+
+func (c config) commandForAction(action string) []string {
+	switch action {
+	case "test":
+		return c.TestCmd
+	case "lint":
+		return c.LintCmd
+	case "govuln":
+		return c.GoVulnCmd
+	case "generate":
+		return c.Generate
+	case "markdown":
+		return c.Markdown
+	case "usage":
+		return c.Usage
+	case "annotate":
+		return c.Annotate
+	case "update":
+		return c.Update
+
+	}
+	return nil
 }
 
 func readConfig() (config, error) {
 	var c config
-	data, err := os.ReadFile(configFile)
+	data, err := os.ReadFile(configFileFlag)
 	if err != nil {
 		return c, err
 	}
@@ -43,55 +71,46 @@ func done(msg string, err error) {
 }
 
 var (
-	configFile  string
-	testFlag    bool
-	modulesFlag bool
-	lintFlag    bool
-	goVulnFlag  bool
+	configFileFlag string
+	modulesFlag    bool
 )
 
 func init() {
 	flag.BoolVar(&modulesFlag, "modules", false, "print modules in this repo")
-	flag.BoolVar(&testFlag, "test", false, "run tests")
-	flag.BoolVar(&lintFlag, "lint", false, "run lint")
-	flag.BoolVar(&goVulnFlag, "govuln", false, "run govuln")
-	flag.StringVar(&configFile, "config", ".multimod.yml", "config file")
+	flag.StringVar(&configFileFlag, "config", "", "run tests")
 }
 
 func main() {
 	ctx := context.Background()
 	flag.Parse()
-	mods, err := modules()
-	if err != nil {
-		done("finding modules", err)
-	}
-	if modulesFlag || (!testFlag && !lintFlag && !goVulnFlag) {
-		fmt.Println(strings.Join(mods, " "))
-		return
-	}
+
 	cfg, err := readConfig()
 	if err != nil {
 		done("reading config", err)
 	}
 
-	if testFlag {
-		if err := runInDirs(ctx, mods, cfg.TestCmd); err != nil {
-			done("test: ", err)
-		}
+	mods, err := modules()
+	if err != nil {
+		done("finding modules", err)
 	}
-
-	if lintFlag {
-		if err := runInDirs(ctx, mods, cfg.LintCmd); err != nil {
+	actions := flag.Args()
+	if modulesFlag && len(actions) == 0 {
+		fmt.Println(strings.Join(mods, " "))
+		return
+	}
+	script := [][]string{}
+	for _, action := range actions {
+		command := cfg.commandForAction(action)
+		if len(command) == 0 {
+			done("unsupported action", fmt.Errorf("%q", action))
+		}
+		script = append(script, command)
+	}
+	for _, command := range script {
+		if err := runInDirs(ctx, mods, command); err != nil {
 			done("lint: ", err)
 		}
 	}
-
-	if goVulnFlag {
-		if err := runInDirs(ctx, mods, cfg.GoVulnCmd); err != nil {
-			done("govuln: ", err)
-		}
-	}
-
 	return
 }
 
