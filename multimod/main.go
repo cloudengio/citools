@@ -48,9 +48,30 @@ func (c config) commandForAction(action string) []string {
 		return c.Annotate
 	case "update":
 		return c.Update
-
 	}
 	return nil
+}
+
+var multimod_root string
+
+func init() {
+	multimod_root, _ = os.Getwd()
+}
+
+func expand(command []string) []string {
+	mapper := func(varname string) string {
+		switch varname {
+		case "MULTIMOD_ROOT":
+			return multimod_root
+		default:
+			return ""
+		}
+	}
+	expanded := []string{}
+	for _, c := range command {
+		expanded = append(expanded, os.Expand(c, mapper))
+	}
+	return expanded
 }
 
 func readConfig() (config, error) {
@@ -73,11 +94,13 @@ func done(msg string, err error) {
 var (
 	configFileFlag string
 	modulesFlag    bool
+	verboseFlag    bool
 )
 
 func init() {
 	flag.BoolVar(&modulesFlag, "modules", false, "print modules in this repo")
 	flag.StringVar(&configFileFlag, "config", "", "run tests")
+	flag.BoolVar(&verboseFlag, "verbose", false, "verbose output")
 }
 
 func main() {
@@ -104,6 +127,7 @@ func main() {
 		if len(command) == 0 {
 			done("unsupported action", fmt.Errorf("%q", action))
 		}
+		command = expand(command)
 		script = append(script, command)
 	}
 	for _, command := range script {
@@ -156,6 +180,9 @@ func runInDirs(ctx context.Context, dirs []string, cmdargs []string) error {
 
 func runInDir(ctx context.Context, dir string, binary string, args []string) error {
 	fmt.Printf("%v...\n", dir)
+	if verboseFlag {
+		fmt.Printf("%v %v\n", binary, strings.Join(args, " "))
+	}
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = dir
 	cmd.Stdout = os.Stdout
