@@ -19,6 +19,32 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const builtinConfig = `
+test:
+  [
+    "go",
+    "test",
+    "-failfast",
+    "--covermode=atomic",
+    "--vet=off",
+    "-race",
+    "./...",
+  ]
+lint: ["golangci-lint", "run", "./..."]
+govuln: ["govulncheck", "./..."]
+generate: ["go", "generate", "./..."]
+markdown: ["gomarkdown", "-overwrite", "./..."]
+annotate:
+  [
+    "goannotate",
+    "--config=${MULTIMOD_ROOT}/copyright-annotation.yaml",
+    "--annotation=cloudeng-copyright",
+  ]
+usage: ["gousage", "--overwrite", "./..."]
+update: ["go", "get", "-u", "./...", ";",
+         "go", "mod", "tidy"]
+`
+
 type config struct {
 	TestCmd   []string `yaml:"test,flow"`
 	LintCmd   []string `yaml:"lint,flow"`
@@ -76,9 +102,13 @@ func expand(command []string) []string {
 
 func readConfig() (config, error) {
 	var c config
-	data, err := os.ReadFile(configFileFlag)
-	if err != nil {
-		return c, err
+	var data = []byte(builtinConfig)
+	var err error
+	if len(configFileFlag) > 0 {
+		data, err = os.ReadFile(configFileFlag)
+		if err != nil {
+			return c, err
+		}
 	}
 	if err := yaml.Unmarshal(data, &c); err != nil {
 		return c, err
@@ -121,17 +151,21 @@ func main() {
 		fmt.Println(strings.Join(mods, " "))
 		return
 	}
-	script := [][]string{}
+	type script struct {
+		action   string
+		commands []string
+	}
+	var scripts []script
 	for _, action := range actions {
 		command := cfg.commandForAction(action)
 		if len(command) == 0 {
 			done("unsupported action", fmt.Errorf("%q", action))
 		}
 		command = expand(command)
-		script = append(script, command)
+		scripts = append(scripts, script{action, command})
 	}
-	for _, command := range script {
-		if err := runInDirs(ctx, mods, command); err != nil {
+	for _, script := range scripts {
+		if err := runInDirs(ctx, mods, script.action, script.commands); err != nil {
 			done("lint: ", err)
 		}
 	}
@@ -155,25 +189,45 @@ func modules() ([]string, error) {
 	return dirs, err
 }
 
-func runInDirs(ctx context.Context, dirs []string, cmdargs []string) error {
-	if len(cmdargs) == 0 {
-		return fmt.Errorf("missing command")
-	}
-	cmd := cmdargs[0]
-	args := []string{}
-	if len(cmdargs) > 1 {
-		args = cmdargs[1:]
-	}
-
-	failed := false
-	for _, dir := range dirs {
-		if err := runInDir(ctx, dir, cmd, args); err != nil {
-			fmt.Fprintf(os.Stderr, "%v: failed: %v\n", dir, err)
-			failed = true
+func splitCmd(cmdargs []string) [][]string {
+	var cmds [][]string
+	var cmd []string
+	for _, arg := range cmdargs {
+		if arg == ";" {
+			cmds = append(cmds, cmd)
+			cmd = []string{}
+		} else {
+			cmd = append(cmd, arg)
 		}
 	}
-	if failed {
-		return fmt.Errorf("tests failed")
+	if len(cmd) > 0 {
+		cmds = append(cmds, cmd)
+	}
+	return cmds
+}
+
+func runInDirs(ctx context.Context, dirs []string, action string, cmdSpec []string) error {
+	if len(cmdSpec) == 0 {
+		return fmt.Errorf("missing command")
+	}
+
+	allCmds := splitCmd(cmdSpec)
+	for _, cmdargs := range allCmds {
+		cmd := cmdargs[0]
+		args := []string{}
+		if len(cmdargs) > 1 {
+			args = cmdargs[1:]
+		}
+		failed := false
+		for _, dir := range dirs {
+			if err := runInDir(ctx, dir, cmd, args); err != nil {
+				fmt.Fprintf(os.Stderr, "%v: failed: %v\n", dir, err)
+				failed = true
+			}
+		}
+		if failed {
+			return fmt.Errorf("%v failed", action)
+		}
 	}
 	return nil
 }
