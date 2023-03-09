@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -57,23 +58,14 @@ type config struct {
 }
 
 func (c config) commandForAction(action string) []string {
-	switch action {
-	case "test":
-		return c.TestCmd
-	case "lint":
-		return c.LintCmd
-	case "govuln":
-		return c.GoVulnCmd
-	case "generate":
-		return c.Generate
-	case "markdown":
-		return c.Markdown
-	case "usage":
-		return c.Usage
-	case "annotate":
-		return c.Annotate
-	case "update":
-		return c.Update
+	t := reflect.TypeOf(c)
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		if strings.HasPrefix(field.Tag.Get("yaml"), action) {
+			val := reflect.ValueOf(c)
+			cmd := val.Field(i).Interface().([]string)
+			return cmd
+		}
 	}
 	return nil
 }
@@ -166,7 +158,7 @@ func main() {
 	}
 	for _, script := range scripts {
 		if err := runInDirs(ctx, mods, script.action, script.commands); err != nil {
-			done("lint: ", err)
+			done(script.action, err)
 		}
 	}
 	return
