@@ -3,7 +3,20 @@
 // license that can be found in the LICENSE file.
 
 // multimod provides a means of running commands across multiple modules in a
-// a single repository.
+// a single repository. It operates by scanning the filesystem for all
+// directories that contain a go.mod file (including 'sub-modules').
+// It can then perform a set of 'actions' in each of these directories
+// in turn. The available actions are specified in a yaml config file and
+// consist of a list of commands to be executed in each directory.
+// For example, the 'lint' action will run the following command in
+// each module directory.
+//
+//	lint: ["golangci-lint", "run", "./..."]
+//
+// Note that that ';' can be used as a command separator to specify multiple
+// commands to be run, as in:
+//
+//	update: ["go", "get", "-u", "./...", ";", "go", "mod", "tidy"]
 package main
 
 import (
@@ -173,7 +186,7 @@ func modules() ([]string, error) {
 		if info.IsDir() {
 			if _, err := os.Open(filepath.Join(path, "go.mod")); err == nil {
 				dirs = append(dirs, path)
-				return filepath.SkipDir
+				return nil
 			}
 		}
 		return nil
