@@ -21,6 +21,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -30,6 +31,7 @@ import (
 	"reflect"
 	"strings"
 
+	"golang.org/x/mod/modfile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -127,20 +129,29 @@ func done(msg string, err error) {
 }
 
 var (
-	configFileFlag string
-	modulesFlag    bool
-	verboseFlag    bool
+	configFileFlag   string
+	modulesFlag      bool
+	verboseFlag      bool
+	goworkUpdateFlag bool
 )
 
 func init() {
 	flag.BoolVar(&modulesFlag, "modules", false, "print modules in this repo")
-	flag.StringVar(&configFileFlag, "config", "", "run tests")
+	flag.StringVar(&configFileFlag, "config", "", "config file")
 	flag.BoolVar(&verboseFlag, "verbose", false, "verbose output")
+	flag.BoolVar(&goworkUpdateFlag, "gowork-update", false, "update all go.work references to latest git hash")
 }
 
 func main() {
 	ctx := context.Background()
 	flag.Parse()
+
+	if goworkUpdateFlag {
+		if err := goworkUpdate(ctx); err != nil {
+			done("updating go.work references", err)
+		}
+		return
+	}
 
 	cfg, err := readConfig()
 	if err != nil {
@@ -174,7 +185,6 @@ func main() {
 			done(script.action, err)
 		}
 	}
-	return
 }
 
 func modules() ([]string, error) {
@@ -253,4 +263,65 @@ func runInDir(ctx context.Context, dir string, binary string, args []string) err
 		fmt.Printf("%v... failed\n", dir)
 	}
 	return err
+}
+
+func goworkUpdate(ctx context.Context) error {
+	filename := "go.work"
+	if args := flag.Args(); len(args) > 0 {
+		filename = args[0]
+	}
+	contents, err := os.ReadFile(filename)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			fmt.Printf("No go.work file found at %v\n", filename)
+			return nil
+		}
+		return err
+	}
+	fmt.Printf("Updating go.work references in %v\n", filename)
+	wk, err := modfile.ParseWork(filename, contents, nil)
+	if err != nil {
+		return err
+	}
+	for _, r := range wk.Use {
+		if r.Path == "." {
+			continue
+		}
+		if len(r.Path) > 2 && r.Path[0] == '.' && r.Path[1] == '/' {
+			continue
+		}
+		h, err := gitHashFor(ctx, r.Path)
+		if err != nil {
+			return fmt.Errorf("failed to get git hash for %v: %v", r.Path, err)
+		}
+		if err := updateWorkfilePath(ctx, r.Path, h); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func updateWorkfilePath(ctx context.Context, path, h string) error {
+	filename := filepath.Join(path, "go.mod")
+	contents, err := os.ReadFile(filename)
+	if err != nil {
+		return err
+	}
+	mod, err := modfile.Parse(path, contents, nil)
+	if err != nil {
+		return err
+	}
+	return runInDir(ctx, ".", "go", []string{"get", mod.Module.Mod.Path + "@" + h})
+}
+
+func gitHashFor(ctx context.Context, path string) (string, error) {
+	var out strings.Builder
+	c := exec.CommandContext(ctx, "git", "rev-parse", "HEAD")
+	c.Dir = path
+	c.Stderr = os.Stderr
+	c.Stdout = &out
+	if err := c.Run(); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out.String()[:8]), nil
 }
