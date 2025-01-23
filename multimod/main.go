@@ -146,13 +146,6 @@ func main() {
 	ctx := context.Background()
 	flag.Parse()
 
-	if goworkUpdateFlag {
-		if err := goworkUpdate(ctx); err != nil {
-			done("updating go.work references", err)
-		}
-		return
-	}
-
 	cfg, err := readConfig()
 	if err != nil {
 		done("reading config", err)
@@ -162,6 +155,13 @@ func main() {
 	if err != nil {
 		done("finding modules", err)
 	}
+	if goworkUpdateFlag {
+		if err := goworkUpdate(ctx, mods); err != nil {
+			done("updating go.work references", err)
+		}
+		return
+	}
+
 	actions := flag.Args()
 	if modulesFlag && len(actions) == 0 {
 		fmt.Println(strings.Join(mods, " "))
@@ -265,7 +265,7 @@ func runInDir(ctx context.Context, dir string, binary string, args []string) err
 	return err
 }
 
-func goworkUpdate(ctx context.Context) error {
+func goworkUpdate(ctx context.Context, mods []string) error {
 	filename := "go.work"
 	if args := flag.Args(); len(args) > 0 {
 		filename = args[0]
@@ -283,8 +283,10 @@ func goworkUpdate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	updates := []string{}
 	for _, r := range wk.Use {
-		if r.Path == "." {
+		if r.Path == "." || strings.Contains(r.Path, "multimod") {
 			continue
 		}
 		if len(r.Path) > 2 && r.Path[0] == '.' && r.Path[1] == '/' {
@@ -294,13 +296,34 @@ func goworkUpdate(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("failed to get git hash for %v: %v", r.Path, err)
 		}
-		if err := updateWorkfilePath(ctx, r.Path, h); err != nil {
+		mod, err := readGoMod(r.Path)
+		if err != nil {
 			return err
+		}
+		updates = append(updates, mod.Module.Mod.Path+"@"+h)
+	}
+
+	for _, modpath := range mods {
+		for _, update := range updates {
+			fmt.Printf("updating %v to %v\n", modpath, update)
+			if err := runInDir(ctx, modpath, "go", []string{"get", update}); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
+func readGoMod(path string) (*modfile.File, error) {
+	filename := filepath.Join(path, "go.mod")
+	contents, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, err
+	}
+	return modfile.Parse(path, contents, nil)
+}
+
+/*
 func updateWorkfilePath(ctx context.Context, path, h string) error {
 	filename := filepath.Join(path, "go.mod")
 	contents, err := os.ReadFile(filename)
@@ -312,7 +335,7 @@ func updateWorkfilePath(ctx context.Context, path, h string) error {
 		return err
 	}
 	return runInDir(ctx, ".", "go", []string{"get", mod.Module.Mod.Path + "@" + h})
-}
+}*/
 
 func gitHashFor(ctx context.Context, path string) (string, error) {
 	var out strings.Builder
