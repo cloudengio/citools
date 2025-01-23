@@ -323,20 +323,6 @@ func readGoMod(path string) (*modfile.File, error) {
 	return modfile.Parse(path, contents, nil)
 }
 
-/*
-func updateWorkfilePath(ctx context.Context, path, h string) error {
-	filename := filepath.Join(path, "go.mod")
-	contents, err := os.ReadFile(filename)
-	if err != nil {
-		return err
-	}
-	mod, err := modfile.Parse(path, contents, nil)
-	if err != nil {
-		return err
-	}
-	return runInDir(ctx, ".", "go", []string{"get", mod.Module.Mod.Path + "@" + h})
-}*/
-
 func gitHashFor(ctx context.Context, path string) (string, error) {
 	var out strings.Builder
 	c := exec.CommandContext(ctx, "git", "rev-parse", "HEAD")
