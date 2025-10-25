@@ -29,6 +29,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 
 	"golang.org/x/mod/modfile"
@@ -62,14 +63,15 @@ update: ["go", "get", "-u", "./...", ";",
 `
 
 type config struct {
-	TestCmd   []string `yaml:"test,flow"`
-	LintCmd   []string `yaml:"lint,flow"`
-	GoVulnCmd []string `yaml:"govuln,flow"`
-	Generate  []string `yaml:"generate,flow"`
-	Markdown  []string `yaml:"markdown,flow"`
-	Usage     []string `yaml:"usage,flow"`
-	Annotate  []string `yaml:"annotate,flow"`
-	Update    []string `yaml:"update,flow"`
+	TestCmd    []string            `yaml:"test,flow"`
+	LintCmd    []string            `yaml:"lint,flow"`
+	GoVulnCmd  []string            `yaml:"govuln,flow"`
+	Generate   []string            `yaml:"generate,flow"`
+	Markdown   []string            `yaml:"markdown,flow"`
+	Usage      []string            `yaml:"usage,flow"`
+	Annotate   []string            `yaml:"annotate,flow"`
+	Update     []string            `yaml:"update,flow"`
+	Exclusions map[string][]string `yaml:"exclusions"`
 }
 
 func (c config) commandForAction(action string) []string {
@@ -181,7 +183,16 @@ func main() {
 		scripts = append(scripts, script{action, command})
 	}
 	for _, script := range scripts {
-		if err := runInDirs(ctx, mods, script.action, script.commands); err != nil {
+		exclusions := cfg.Exclusions[script.action]
+		allowedMods := []string{}
+		for _, mod := range mods {
+			if !slices.Contains(exclusions, mod) {
+				allowedMods = append(allowedMods, mod)
+			} else {
+				fmt.Printf("Excluding module %q from action %q\n", mod, script.action)
+			}
+		}
+		if err := runInDirs(ctx, allowedMods, script.action, script.commands); err != nil {
 			done(script.action, err)
 		}
 	}
