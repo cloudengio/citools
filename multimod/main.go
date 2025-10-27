@@ -131,10 +131,11 @@ func done(msg string, err error) {
 }
 
 var (
-	configFileFlag   string
-	modulesFlag      bool
-	verboseFlag      bool
-	goworkUpdateFlag bool
+	configFileFlag    string
+	modulesFlag       bool
+	verboseFlag       bool
+	goworkUpdateFlag  bool
+	localGoWorkUpdate string
 )
 
 func init() {
@@ -142,6 +143,7 @@ func init() {
 	flag.StringVar(&configFileFlag, "config", "", "config file")
 	flag.BoolVar(&verboseFlag, "verbose", false, "verbose output")
 	flag.BoolVar(&goworkUpdateFlag, "gowork-update", false, "update all go.work references to latest git hash")
+	flag.StringVar(&localGoWorkUpdate, "gowork-update-local", "", "update go.work references for the specified local modules (comman separated) only")
 }
 
 func main() {
@@ -158,7 +160,13 @@ func main() {
 		done("finding modules", err)
 	}
 	if goworkUpdateFlag {
-		if err := goworkUpdate(ctx, mods); err != nil {
+		if err := goworkUpdate(ctx, nil); err != nil {
+			done("updating go.work references", err)
+		}
+		return
+	}
+	if len(localGoWorkUpdate) > 0 {
+		if err := goworkUpdate(ctx, strings.Split(localGoWorkUpdate, ",")); err != nil {
 			done("updating go.work references", err)
 		}
 		return
@@ -276,7 +284,7 @@ func runInDir(ctx context.Context, dir string, binary string, args []string) err
 	return err
 }
 
-func goworkUpdate(ctx context.Context, mods []string) error {
+func goworkUpdate(ctx context.Context, internalModsToConsider []string) error {
 	filename := "go.work"
 	if args := flag.Args(); len(args) > 0 {
 		filename = args[0]
@@ -295,14 +303,19 @@ func goworkUpdate(ctx context.Context, mods []string) error {
 		return err
 	}
 
-	updates := []string{}
+	type perModUpdate struct {
+		mod    string
+		update string
+	}
+
+	updates := []perModUpdate{}
+	modFiles := map[string]*modfile.File{}
+	var internalMods, externalMods []string
 	for _, r := range wk.Use {
 		if r.Path == "." || strings.Contains(r.Path, "multimod") {
 			continue
 		}
-		if len(r.Path) > 2 && r.Path[0] == '.' && r.Path[1] == '/' {
-			continue
-		}
+
 		h, err := gitHashFor(ctx, r.Path)
 		if err != nil {
 			return fmt.Errorf("failed to get git hash for %v: %v", r.Path, err)
@@ -311,15 +324,55 @@ func goworkUpdate(ctx context.Context, mods []string) error {
 		if err != nil {
 			return err
 		}
-		updates = append(updates, mod.Module.Mod.Path+"@"+h)
+		modFiles[r.Path] = mod
+		updates = append(updates, perModUpdate{
+			mod:    mod.Module.Mod.Path,
+			update: mod.Module.Mod.Path + "@" + h,
+		})
+		if len(r.Path) > 2 && r.Path[0] == '.' && r.Path[1] == '/' {
+			internalMods = append(internalMods, r.Path)
+		} else {
+			externalMods = append(externalMods, r.Path)
+		}
 	}
 
-	for _, modpath := range mods {
+	// for external modules apply all updates to every module
+	// in this workspace.
+	for _, modpath := range externalMods {
 		for _, update := range updates {
-			fmt.Printf("updating %v to %v\n", modpath, update)
-			if err := runInDir(ctx, modpath, "go", []string{"get", update}); err != nil {
-				return err
+			if err := runInDir(ctx, modpath, "go", []string{"get", update.update}); err != nil {
+				return fmt.Errorf("%v: go get %v: failed %w", modpath, update.update, err)
 			}
+		}
+	}
+
+	fmt.Printf("locall.. %v\n", internalModsToConsider)
+	if len(internalModsToConsider) == 0 {
+		return nil
+	}
+	cleaned := []string{}
+	for _, m := range internalModsToConsider {
+		cleaned = append(cleaned, filepath.Clean(m))
+	}
+	// for internal modules only apply updates for other modules,
+	// avoid updating a module with itself.
+	for _, modpath := range internalMods {
+		if !slices.Contains(cleaned, filepath.Clean(modpath)) {
+			continue
+		}
+		otherUpdates := []string{}
+		for _, update := range updates {
+			mf := modFiles[modpath]
+			if mf.Module.Mod.Path == update.mod {
+				fmt.Printf("Skipping update of %v in %v to itself\n", update.mod, modpath)
+				continue
+			}
+			otherUpdates = append(otherUpdates, update.update)
+		}
+		merged := []string{"get"}
+		merged = append(merged, otherUpdates...)
+		if err := runInDir(ctx, modpath, "go", merged); err != nil {
+			return fmt.Errorf("%v: go get %v: failed %w", modpath, merged, err)
 		}
 	}
 	return nil
