@@ -346,7 +346,6 @@ func goworkUpdate(ctx context.Context, internalModsToConsider []string) error {
 		}
 	}
 
-	fmt.Printf("locall.. %v\n", internalModsToConsider)
 	if len(internalModsToConsider) == 0 {
 		return nil
 	}
