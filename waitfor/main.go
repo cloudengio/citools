@@ -18,6 +18,7 @@ import (
 
 var interval time.Duration
 var total time.Duration
+var initial time.Duration
 var verbose bool
 
 var errInt = errors.New("interrupted")
@@ -25,6 +26,7 @@ var errInt = errors.New("interrupted")
 func main() {
 	flag.DurationVar(&interval, "interval", time.Second, "Interval between prints")
 	flag.DurationVar(&total, "total", time.Second*10, "Total duration to run")
+	flag.DurationVar(&initial, "initial", 0, "Initial delay before starting")
 	flag.BoolVar(&verbose, "verbose", false, "Enable verbose output")
 	flag.Parse()
 
@@ -43,6 +45,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "no files specified\n")
 		os.Exit(1)
 	}
+	time.Sleep(initial)
 	var wg sync.WaitGroup
 	wg.Add(len(files))
 	errCh := make(chan error, len(files))
