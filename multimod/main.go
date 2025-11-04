@@ -256,7 +256,7 @@ func runInDirs(ctx context.Context, dirs []string, action string, cmdSpec []stri
 		for _, dir := range dirs {
 			if err := runInDir(ctx, dir, cmd, args); err != nil {
 				fmt.Fprintf(os.Stderr, "%v: failed: %v\n", dir, err)
-				errs.Append(fmt.Errorf("running %v in %v: %w", action, strings.Join(cmdargs, " "), dir, err))
+				errs.Append(fmt.Errorf("action in %v: %v %v %w", dir, action, strings.Join(cmdargs, " "), err))
 			}
 		}
 		if err := errs.Err(); err != nil {
