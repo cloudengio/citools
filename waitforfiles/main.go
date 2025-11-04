@@ -23,8 +23,11 @@ var verbose bool
 
 var errInt = errors.New("interrupted")
 
-func now() string {
-	return time.Now().Format(time.DateTime)
+func leader(path string) string {
+	if len(path) > 0 {
+		return fmt.Sprintf("waitforfiles(%s): %v", path, time.Now().Format(time.DateTime))
+	}
+	return fmt.Sprintf("waitforfiles: %v", time.Now().Format(time.DateTime))
 }
 
 func main() {
@@ -46,11 +49,11 @@ func main() {
 
 	files := flag.Args()
 	if len(files) == 0 {
-		fmt.Fprintf(os.Stderr, "no files specified\n")
+		fmt.Printf("%v: no files specified\n", leader(""))
 		os.Exit(1)
 	}
 	if initial > 0 {
-		fmt.Printf("%v: initial delay of %v\n", now(), initial)
+		fmt.Printf("%v: initial delay of %v\n", leader(""), initial)
 		time.Sleep(initial)
 	}
 	var wg sync.WaitGroup
@@ -88,21 +91,21 @@ func waitForFile(ctx context.Context, path string, interval, total time.Duration
 	}
 
 	for {
-		fmt.Printf("%v: waiting for file %q\n", now(), path)
+		fmt.Printf("%v: waiting\n", leader(path))
 		select {
 		case <-ticker.C:
 			if _, err := os.Stat(path); err == nil {
-				fmt.Printf("%v: %q: exists\n", now(), path)
+				fmt.Printf("%v: exists\n", leader(path))
 				return nil
 			}
 			if verbose {
-				fmt.Printf("%v: waiting for file %q\n", now(), path)
+				fmt.Printf("%v: waiting\n", leader(path))
 			}
 		case <-ctx.Done():
 			if context.Cause(ctx) == errInt {
 				return nil
 			}
-			return fmt.Errorf("%v: waiting for file %q: %v", now(), path, ctx.Err())
+			return fmt.Errorf("%v: failed: %v", leader(path), ctx.Err())
 		}
 	}
 }
