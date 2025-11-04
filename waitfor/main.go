@@ -45,7 +45,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "no files specified\n")
 		os.Exit(1)
 	}
-	time.Sleep(initial)
+	if initial > 0 {
+		fmt.Printf("%v: initial delay of %v\n", time.Now(), initial)
+		time.Sleep(initial)
+	}
 	var wg sync.WaitGroup
 	wg.Add(len(files))
 	errCh := make(chan error, len(files))
@@ -81,6 +84,7 @@ func waitForFile(ctx context.Context, path string, interval, total time.Duration
 	}
 
 	for {
+		fmt.Printf("%v: waiting for file %q\n", time.Now(), path)
 		select {
 		case <-ticker.C:
 			if _, err := os.Stat(path); err == nil {
@@ -93,7 +97,7 @@ func waitForFile(ctx context.Context, path string, interval, total time.Duration
 			if context.Cause(ctx) == errInt {
 				return nil
 			}
-			return fmt.Errorf("%v: %v", time.Now(), ctx.Err())
+			return fmt.Errorf("%v: waiting for file %q: %v", time.Now(), path, ctx.Err())
 		}
 	}
 }
