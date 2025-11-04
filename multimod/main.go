@@ -21,7 +21,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -32,6 +31,7 @@ import (
 	"slices"
 	"strings"
 
+	"cloudeng.io/errors"
 	"golang.org/x/mod/modfile"
 	"gopkg.in/yaml.v3"
 )
@@ -126,8 +126,13 @@ func readConfig() (config, error) {
 }
 
 func done(msg string, err error) {
-	fmt.Printf("Failed: %s: %s\n", msg, err)
+	fmt.Printf("multimod: %s: %v\n", msg, err)
 	os.Exit(1)
+}
+
+type script struct {
+	action   string
+	commands []string
 }
 
 var (
@@ -177,10 +182,6 @@ func main() {
 		fmt.Println(strings.Join(mods, " "))
 		return
 	}
-	type script struct {
-		action   string
-		commands []string
-	}
 	var scripts []script
 	for _, action := range actions {
 		command := cfg.commandForAction(action)
@@ -201,7 +202,7 @@ func main() {
 			}
 		}
 		if err := runInDirs(ctx, allowedMods, script.action, script.commands); err != nil {
-			done(script.action, err)
+			done(fmt.Sprintf("running %v", script.action), err)
 		}
 	}
 }
@@ -244,7 +245,6 @@ func runInDirs(ctx context.Context, dirs []string, action string, cmdSpec []stri
 	if len(cmdSpec) == 0 {
 		return fmt.Errorf("missing command")
 	}
-
 	allCmds := splitCmd(cmdSpec)
 	for _, cmdargs := range allCmds {
 		cmd := cmdargs[0]
@@ -252,15 +252,15 @@ func runInDirs(ctx context.Context, dirs []string, action string, cmdSpec []stri
 		if len(cmdargs) > 1 {
 			args = cmdargs[1:]
 		}
-		failed := false
+		var errs errors.M
 		for _, dir := range dirs {
 			if err := runInDir(ctx, dir, cmd, args); err != nil {
 				fmt.Fprintf(os.Stderr, "%v: failed: %v\n", dir, err)
-				failed = true
+				errs.Append(fmt.Errorf("running %v in %v: %w", action, strings.Join(cmdargs, " "), dir, err))
 			}
 		}
-		if failed {
-			return fmt.Errorf("%v failed", action)
+		if err := errs.Err(); err != nil {
+			return err
 		}
 	}
 	return nil
