@@ -131,11 +131,11 @@ func done(msg string, err error) {
 }
 
 var (
-	configFileFlag    string
-	modulesFlag       bool
-	verboseFlag       bool
-	goworkUpdateFlag  bool
-	localGoWorkUpdate string
+	configFileFlag        string
+	modulesFlag           bool
+	verboseFlag           bool
+	goworkUpdateFlag      bool
+	localGoWorkUpdateFlag bool
 )
 
 func init() {
@@ -143,7 +143,7 @@ func init() {
 	flag.StringVar(&configFileFlag, "config", "", "config file")
 	flag.BoolVar(&verboseFlag, "verbose", false, "verbose output")
 	flag.BoolVar(&goworkUpdateFlag, "gowork-update", false, "update all go.work references to latest git hash")
-	flag.StringVar(&localGoWorkUpdate, "gowork-update-local", "", "update go.work references for the specified local modules (comman separated) only")
+	flag.BoolVar(&localGoWorkUpdateFlag, "gowork-update-local", false, "update go.work references for the specified local modules (comman separated) only")
 }
 
 func main() {
@@ -165,8 +165,8 @@ func main() {
 		}
 		return
 	}
-	if len(localGoWorkUpdate) > 0 {
-		if err := goworkUpdate(ctx, strings.Split(localGoWorkUpdate, ",")); err != nil {
+	if localGoWorkUpdateFlag {
+		if err := goworkUpdate(ctx, flag.Args()); err != nil {
 			done("updating go.work references", err)
 		}
 		return
@@ -286,9 +286,6 @@ func runInDir(ctx context.Context, dir string, binary string, args []string) err
 
 func goworkUpdate(ctx context.Context, internalModsToConsider []string) error {
 	filename := "go.work"
-	if args := flag.Args(); len(args) > 0 {
-		filename = args[0]
-	}
 	contents, err := os.ReadFile(filename)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -343,6 +340,9 @@ func goworkUpdate(ctx context.Context, internalModsToConsider []string) error {
 			if err := runInDir(ctx, modpath, "go", []string{"get", update.update}); err != nil {
 				return fmt.Errorf("%v: go get %v: failed %w", modpath, update.update, err)
 			}
+			if err := runInDir(ctx, modpath, "go", []string{"mod", "tidy"}); err != nil {
+				return fmt.Errorf("%v: go mod tidy: failed %w", modpath, err)
+			}
 		}
 	}
 
@@ -372,6 +372,9 @@ func goworkUpdate(ctx context.Context, internalModsToConsider []string) error {
 		merged = append(merged, otherUpdates...)
 		if err := runInDir(ctx, modpath, "go", merged); err != nil {
 			return fmt.Errorf("%v: go get %v: failed %w", modpath, merged, err)
+		}
+		if err := runInDir(ctx, modpath, "go", []string{"mod", "tidy"}); err != nil {
+			return fmt.Errorf("%v: go mod tidy: failed %w", modpath, err)
 		}
 	}
 	return nil
