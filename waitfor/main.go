@@ -23,6 +23,10 @@ var verbose bool
 
 var errInt = errors.New("interrupted")
 
+func now() string {
+	return time.Now().Format(time.DateTime)
+}
+
 func main() {
 	flag.DurationVar(&interval, "interval", time.Second, "Interval between prints")
 	flag.DurationVar(&total, "total", time.Second*10, "Total duration to run")
@@ -46,7 +50,7 @@ func main() {
 		os.Exit(1)
 	}
 	if initial > 0 {
-		fmt.Printf("%v: initial delay of %v\n", time.Now(), initial)
+		fmt.Printf("%v: initial delay of %v\n", now(), initial)
 		time.Sleep(initial)
 	}
 	var wg sync.WaitGroup
@@ -84,20 +88,20 @@ func waitForFile(ctx context.Context, path string, interval, total time.Duration
 	}
 
 	for {
-		fmt.Printf("%v: waiting for file %q\n", time.Now(), path)
+		fmt.Printf("%v: waiting for file %q\n", now(), path)
 		select {
 		case <-ticker.C:
 			if _, err := os.Stat(path); err == nil {
 				return nil
 			}
 			if verbose {
-				fmt.Printf("%v: waiting for file %q\n", time.Now(), path)
+				fmt.Printf("%v: waiting for file %q\n", now(), path)
 			}
 		case <-ctx.Done():
 			if context.Cause(ctx) == errInt {
 				return nil
 			}
-			return fmt.Errorf("%v: waiting for file %q: %v", time.Now(), path, ctx.Err())
+			return fmt.Errorf("%v: waiting for file %q: %v", now(), path, ctx.Err())
 		}
 	}
 }
