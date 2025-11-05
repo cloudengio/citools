@@ -87,6 +87,7 @@ func waitForFile(ctx context.Context, path string, interval, total time.Duration
 	defer cancel()
 
 	if _, err := os.Stat(path); err == nil {
+		fmt.Printf("%v: exists\n", leader(path))
 		return nil
 	}
 
