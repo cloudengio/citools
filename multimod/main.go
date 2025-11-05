@@ -30,6 +30,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	"cloudeng.io/errors"
 	"golang.org/x/mod/modfile"
@@ -152,6 +153,7 @@ func init() {
 }
 
 func main() {
+	start := time.Now()
 	ctx := context.Background()
 	flag.Parse()
 
@@ -205,6 +207,7 @@ func main() {
 			done(fmt.Sprintf("running %v", script.action), err)
 		}
 	}
+	fmt.Printf("multimod: finished, took %v\n", time.Since(start))
 }
 
 func modules() ([]string, error) {
