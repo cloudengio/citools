@@ -80,16 +80,16 @@ func main() {
 }
 
 func waitForFile(ctx context.Context, path string, interval, total time.Duration) error {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	ctx, cancel := context.WithTimeout(ctx, total)
-	defer cancel()
 
 	if _, err := os.Stat(path); err == nil {
 		fmt.Printf("%v: exists\n", leader(path))
 		return nil
 	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	ctx, cancel := context.WithTimeout(ctx, total)
+	defer cancel()
 
 	for {
 		fmt.Printf("%v: waiting\n", leader(path))
