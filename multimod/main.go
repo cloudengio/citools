@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"time"
@@ -93,18 +94,35 @@ func expand(command []string) []string {
 	return expanded
 }
 
-func readConfig() (config, error) {
-	var c config
-	var data = []byte(builtinConfig)
-	var err error
+func loadConfig() ([]byte, error) {
 	if len(configFileFlag) > 0 {
-		data, err = os.ReadFile(configFileFlag)
-		if err != nil {
-			return c, err
+		fmt.Printf("Using config file: %v\n", configFileFlag)
+		return os.ReadFile(configFileFlag)
+	}
+	for _, cf := range []string{
+		".multimod.yaml",
+		".multimod.yml",
+	} {
+		if len(cf) > 0 {
+			if _, err := os.Stat(cf); err != nil {
+				continue
+			}
+			fmt.Printf("Using config file: %v\n", cf)
+			return os.ReadFile(cf)
 		}
 	}
-	if err := yaml.Unmarshal(data, &c); err != nil {
+	fmt.Printf("Using built-in config\n")
+	return []byte(builtinConfig), nil
+}
+
+func readConfig() (config, error) {
+	var c config
+	data, err := loadConfig()
+	if err != nil {
 		return c, err
+	}
+	if err := yaml.Unmarshal(data, &c); err != nil {
+		return config{}, fmt.Errorf("faild to unmarshal config: %w", err)
 	}
 	return c, nil
 }
@@ -135,10 +153,33 @@ func init() {
 	flag.BoolVar(&localGoWorkUpdateFlag, "gowork-update-local", false, "update go.work references for the specified local modules (comman separated) only")
 }
 
+func getSetting(s []debug.BuildSetting, key string) string {
+	for _, setting := range s {
+		if setting.Key == key {
+			return setting.Value
+		}
+	}
+	return ""
+}
+
+func gitHashShort(h string) string {
+	if len(h) > 8 {
+		return h[:8]
+	}
+	return h
+}
+
 func main() {
 	start := time.Now()
 	ctx := context.Background()
 	flag.Parse()
+
+	bi, ok := debug.ReadBuildInfo()
+	if ok {
+		fmt.Printf("multimod: build info: %v %v\n",
+			gitHashShort(getSetting(bi.Settings, "vcs.revision")),
+			getSetting(bi.Settings, "vcs.time"))
+	}
 
 	cfg, err := readConfig()
 	if err != nil {
