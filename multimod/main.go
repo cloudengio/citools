@@ -69,8 +69,6 @@ type config struct {
 
 func (c config) commandForAction(action string) []string {
 	return c.Commands[action]
-
-	//	return nil
 }
 
 var multimod_root string
