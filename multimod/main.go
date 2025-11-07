@@ -27,7 +27,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -64,28 +63,14 @@ update: ["go", "get", "-u", "./...", ";",
 `
 
 type config struct {
-	TestCmd    []string            `yaml:"test,flow"`
-	LintCmd    []string            `yaml:"lint,flow"`
-	GoVulnCmd  []string            `yaml:"govuln,flow"`
-	Generate   []string            `yaml:"generate,flow"`
-	Markdown   []string            `yaml:"markdown,flow"`
-	Usage      []string            `yaml:"usage,flow"`
-	Annotate   []string            `yaml:"annotate,flow"`
-	Update     []string            `yaml:"update,flow"`
+	Commands   map[string][]string `yaml:",inline"`
 	Exclusions map[string][]string `yaml:"exclusions"`
 }
 
 func (c config) commandForAction(action string) []string {
-	t := reflect.TypeOf(c)
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		if strings.HasPrefix(field.Tag.Get("yaml"), action) {
-			val := reflect.ValueOf(c)
-			cmd := val.Field(i).Interface().([]string)
-			return cmd
-		}
-	}
-	return nil
+	return c.Commands[action]
+
+	//	return nil
 }
 
 var multimod_root string
