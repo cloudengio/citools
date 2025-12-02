@@ -46,14 +46,9 @@ func (vf *VersionFlags) ParseRequestedDownload() (RequestedDownload, error) {
 	}, nil
 }
 
-type DestinationFlags struct {
-	DestinationDir string `subcmd:"destination-dir,$PWD,directory to install Chrome for Testing into"`
-}
-
 type installFlags struct {
 	VersionFlags
 	CacheFlags
-	DestinationFlags
 }
 
 type downloadInstallCmd struct{}
