@@ -369,7 +369,7 @@ func goworkUpdate(ctx context.Context, mods, internalModsToConsider []string) er
 			merged = append(merged, update.update)
 		}
 		if err := runInDir(ctx, modpath, "go", merged); err != nil {
-			return fmt.Errorf("%v: go get %v: failed %w", modpath, merged, err)
+			return fmt.Errorf("%v: go %v: failed %w", modpath, strings.Join(merged, " "), err)
 		}
 		if err := runInDir(ctx, modpath, "go", []string{"mod", "tidy"}); err != nil {
 			return fmt.Errorf("%v: go mod tidy: failed %w", modpath, err)
@@ -402,7 +402,7 @@ func goworkUpdate(ctx context.Context, mods, internalModsToConsider []string) er
 		merged := []string{"get"}
 		merged = append(merged, otherUpdates...)
 		if err := runInDir(ctx, modpath, "go", merged); err != nil {
-			return fmt.Errorf("%v: go %v: failed %w", modpath, merged, err)
+			return fmt.Errorf("%v: go %v: failed %w", modpath, strings.Join(merged, " "), err)
 		}
 		if err := runInDir(ctx, modpath, "go", []string{"mod", "tidy"}); err != nil {
 			return fmt.Errorf("%v: go mod tidy: failed %w", modpath, err)
