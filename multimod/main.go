@@ -150,7 +150,7 @@ func init() {
 	flag.StringVar(&configFileFlag, "config", "", "config file")
 	flag.BoolVar(&verboseFlag, "verbose", false, "verbose output")
 	flag.BoolVar(&goworkUpdateFlag, "gowork-update", false, "update all go.work references to latest git hash")
-	flag.BoolVar(&localGoWorkUpdateFlag, "gowork-update-local", false, "update go.work references for the specified local modules (comman separated) only")
+	flag.BoolVar(&localGoWorkUpdateFlag, "gowork-update-local", false, "update go.work references for the specified local modules only")
 }
 
 func getSetting(s []debug.BuildSetting, key string) string {
@@ -191,14 +191,14 @@ func main() {
 		done("finding modules", err)
 	}
 	if goworkUpdateFlag {
-		if err := goworkUpdate(ctx, nil); err != nil {
+		if err := goworkUpdate(ctx, mods, nil); err != nil {
 			done("updating go.work references", err)
 		}
 		return
 	}
 	if localGoWorkUpdateFlag {
-		if err := goworkUpdate(ctx, flag.Args()); err != nil {
-			done("updating go.work references", err)
+		if err := goworkUpdate(ctx, mods, flag.Args()); err != nil {
+			done("updating local go.work references", err)
 		}
 		return
 	}
@@ -294,9 +294,8 @@ func runInDirs(ctx context.Context, dirs []string, action string, cmdSpec []stri
 }
 
 func runInDir(ctx context.Context, dir string, binary string, args []string) error {
-	fmt.Printf("%v...\n", dir)
 	if verboseFlag {
-		fmt.Printf("%v %v\n", binary, strings.Join(args, " "))
+		fmt.Printf("%v: %v %v\n", dir, binary, strings.Join(args, " "))
 	}
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = dir
@@ -311,7 +310,7 @@ func runInDir(ctx context.Context, dir string, binary string, args []string) err
 	return err
 }
 
-func goworkUpdate(ctx context.Context, internalModsToConsider []string) error {
+func goworkUpdate(ctx context.Context, mods, internalModsToConsider []string) error {
 	filename := "go.work"
 	contents, err := os.ReadFile(filename)
 	if err != nil {
@@ -332,44 +331,48 @@ func goworkUpdate(ctx context.Context, internalModsToConsider []string) error {
 		update string
 	}
 
-	updates := []perModUpdate{}
+	internalUpdates := []perModUpdate{}
+	externalUpdates := []perModUpdate{}
 	modFiles := map[string]*modfile.File{}
 	var internalMods, externalMods []string
 	for _, r := range wk.Use {
 		if r.Path == "." || strings.Contains(r.Path, "multimod") {
 			continue
 		}
-
 		h, err := gitHashFor(ctx, r.Path)
 		if err != nil {
 			return fmt.Errorf("failed to get git hash for %v: %v", r.Path, err)
 		}
 		mod, err := readGoMod(r.Path)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to read/parse: %v: %w", r.Path, err)
 		}
 		modFiles[r.Path] = mod
-		updates = append(updates, perModUpdate{
+		update := perModUpdate{
 			mod:    mod.Module.Mod.Path,
 			update: mod.Module.Mod.Path + "@" + h,
-		})
+		}
 		if len(r.Path) > 2 && r.Path[0] == '.' && r.Path[1] == '/' {
 			internalMods = append(internalMods, r.Path)
+			internalUpdates = append(internalUpdates, update)
 		} else {
 			externalMods = append(externalMods, r.Path)
+			externalUpdates = append(externalUpdates, update)
 		}
 	}
 
 	// for external modules apply all updates to every module
-	// in this workspace.
-	for _, modpath := range externalMods {
-		for _, update := range updates {
-			if err := runInDir(ctx, modpath, "go", []string{"get", update.update}); err != nil {
-				return fmt.Errorf("%v: go get %v: failed %w", modpath, update.update, err)
-			}
-			if err := runInDir(ctx, modpath, "go", []string{"mod", "tidy"}); err != nil {
-				return fmt.Errorf("%v: go mod tidy: failed %w", modpath, err)
-			}
+	// in this repo.
+	for _, modpath := range mods {
+		merged := []string{"get"}
+		for _, update := range externalUpdates {
+			merged = append(merged, update.update)
+		}
+		if err := runInDir(ctx, modpath, "go", merged); err != nil {
+			return fmt.Errorf("%v: go %v: failed %w", modpath, strings.Join(merged, " "), err)
+		}
+		if err := runInDir(ctx, modpath, "go", []string{"mod", "tidy"}); err != nil {
+			return fmt.Errorf("%v: go mod tidy: failed %w", modpath, err)
 		}
 	}
 
@@ -380,6 +383,7 @@ func goworkUpdate(ctx context.Context, internalModsToConsider []string) error {
 	for _, m := range internalModsToConsider {
 		cleaned = append(cleaned, filepath.Clean(m))
 	}
+
 	// for internal modules only apply updates for other modules,
 	// avoid updating a module with itself.
 	for _, modpath := range internalMods {
@@ -387,7 +391,7 @@ func goworkUpdate(ctx context.Context, internalModsToConsider []string) error {
 			continue
 		}
 		otherUpdates := []string{}
-		for _, update := range updates {
+		for _, update := range internalUpdates {
 			mf := modFiles[modpath]
 			if mf.Module.Mod.Path == update.mod {
 				fmt.Printf("Skipping update of %v in %v to itself\n", update.mod, modpath)
@@ -398,7 +402,7 @@ func goworkUpdate(ctx context.Context, internalModsToConsider []string) error {
 		merged := []string{"get"}
 		merged = append(merged, otherUpdates...)
 		if err := runInDir(ctx, modpath, "go", merged); err != nil {
-			return fmt.Errorf("%v: go get %v: failed %w", modpath, merged, err)
+			return fmt.Errorf("%v: go %v: failed %w", modpath, strings.Join(merged, " "), err)
 		}
 		if err := runInDir(ctx, modpath, "go", []string{"mod", "tidy"}); err != nil {
 			return fmt.Errorf("%v: go mod tidy: failed %w", modpath, err)
