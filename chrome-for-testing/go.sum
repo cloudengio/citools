@@ -14,6 +14,8 @@ cloudeng.io/logging v0.0.0-20251128212508-a29ef095b894 h1:I3vxuOsjBGoK2llcKGi2tu
 cloudeng.io/logging v0.0.0-20251128212508-a29ef095b894/go.mod h1:D0TUs3Aiwa1c7xI/TE7JITYnICck34r6DR5twakJjIs=
 cloudeng.io/net v0.0.0-20251128212508-a29ef095b894 h1:4T2rG6ayFTMsjZWcbSWa8Q5xwxEDIWWJJ37oMg7WNO8=
 cloudeng.io/net v0.0.0-20251128212508-a29ef095b894/go.mod h1:axC62OVIKFR0L0uamfK8txQDIJbQNqSHOwxxfLYFRRs=
+cloudeng.io/net v0.0.0-20251202225320-0bbed8e69d21 h1:htc0MeqbVu/JKwmI3U7O1M92ImRYxl57RPi1KfnbgEc=
+cloudeng.io/net v0.0.0-20251202225320-0bbed8e69d21/go.mod h1:axC62OVIKFR0L0uamfK8txQDIJbQNqSHOwxxfLYFRRs=
 cloudeng.io/sync v0.0.9-0.20251104013446-a84136171725 h1:VOMaCAr/QDNPu2ZcbuV9JwWzGJmnXzJjrW9PwuV/H2g=
 cloudeng.io/sync v0.0.9-0.20251104013446-a84136171725/go.mod h1:bPp7qbb4lSaOsQEAsGX7NCvyKAgekc4/Vxd2yYeyVM0=
 cloudeng.io/sys v0.0.0-20251120181725-ae601f12dbbf h1:jm6F86dtveU077vcsoOAc36e/tFPVApeWVK91WXJfqA=
