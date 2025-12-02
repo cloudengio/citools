@@ -6,6 +6,7 @@ package main
 
 import (
 	"archive/zip"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
@@ -17,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"cloudeng.io/logging/ctxlog"
 	"github.com/google/uuid"
 )
 
@@ -152,12 +154,14 @@ func (t toolCache) fileExists(path string) bool {
 	return err == nil && !fi.IsDir()
 }
 
-func unzip(prefix, src, dst string) error {
+func unzip(ctx context.Context, prefix, src, dst string) error {
+	logger := ctxlog.Logger(ctx)
 	prefix = filepath.Clean(prefix) + string(os.PathSeparator)
 	r, err := zip.OpenReader(src)
 	if err != nil {
 		return err
 	}
+	logger.Info("unzipping file", "source", src, "destination", dst, "prefix", prefix)
 	defer r.Close()
 	for _, f := range r.File {
 		rc, err := f.Open()
@@ -171,11 +175,14 @@ func unzip(prefix, src, dst string) error {
 		}
 		name := filepath.Join(dst, localized)
 		if f.FileInfo().IsDir() {
+			logger.Debug("creating directory", "zip_entry", f.Name, "stripped", stripped, "localized", localized, "destination", name)
 			if err := os.MkdirAll(name, f.Mode()); err != nil {
 				return fmt.Errorf("creating directory %q: %w", name, err)
 			}
 			continue
 		}
+		logger.Debug("extracting file", "zip_entry", f.Name, "stripped", stripped, "localized", localized, "destination", name)
+
 		out, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
 		if err != nil {
 			if !errors.Is(err, os.ErrNotExist) {

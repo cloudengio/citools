@@ -8,10 +8,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
+	"os"
 	"os/exec"
 	"time"
 
 	"cloudeng.io/file/diskusage"
+	"cloudeng.io/logging/ctxlog"
 	"cloudeng.io/net/http/httpfs"
 )
 
@@ -49,6 +52,7 @@ func (vf *VersionFlags) ParseRequestedDownload() (RequestedDownload, error) {
 type installFlags struct {
 	VersionFlags
 	CacheFlags
+	Debug bool `subcmd:"debug,false,eenable debug output"`
 }
 
 type downloadInstallCmd struct{}
@@ -59,6 +63,14 @@ func (ic *downloadInstallCmd) installCmd(ctx context.Context, f any, args []stri
 	if err != nil {
 		return fmt.Errorf("getting download: %w", err)
 	}
+	level := slog.LevelInfo
+	if fv.Debug {
+		level = slog.LevelDebug
+	}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: level,
+	}))
+	ctx = ctxlog.WithLogger(ctx, logger)
 
 	cache, err := newToolCache(&fv.CacheFlags)
 	if err != nil {
@@ -77,7 +89,7 @@ func (ic *downloadInstallCmd) installCmd(ctx context.Context, f any, args []stri
 		}
 
 		fmt.Printf("Extracting download %q to %q (prefix: %q)\n", downloadPath, installDir, prefix)
-		if err := unzip(prefix, downloadPath, installDir); err != nil {
+		if err := unzip(ctx, prefix, downloadPath, installDir); err != nil {
 			return fmt.Errorf("unzipping download: %w", err)
 		}
 	}
@@ -85,7 +97,7 @@ func (ic *downloadInstallCmd) installCmd(ctx context.Context, f any, args []stri
 	if err != nil {
 		return fmt.Errorf("failed to get version for %q: %w", binaryPath, err)
 	}
-	fmt.Printf("Installed version: %v\n", version)
+	logger.Info("installation complete", "binary", binaryPath, "version", version)
 	if err := updateGithubActionOutput("chrome-path", binaryPath); err != nil {
 		return fmt.Errorf("updating github action output: %w", err)
 	}
@@ -100,7 +112,8 @@ func (ic *downloadInstallCmd) download(ctx context.Context, cache *toolCache, sd
 	if cache.fileExists(downloadPath) {
 		return downloadPath, nil
 	}
-	fmt.Printf("Downloading %v to %v\n", sd.Download.URL, downloadPath)
+	logger := ctxlog.Logger(ctx)
+	logger.Info("downloading file", "url", sd.Download.URL, "path", downloadPath)
 	start := time.Now()
 	downloader := httpfs.NewDownloader().
 		WithReaderOptions(httpfs.WithLargeFileBlockSize(64 * 1024 * 1024))
@@ -109,7 +122,7 @@ func (ic *downloadInstallCmd) download(ctx context.Context, cache *toolCache, sd
 		return "", fmt.Errorf("downloading %q: %w", sd.Download.URL, err)
 	}
 	took := time.Since(start)
-	fmt.Printf("Downloaded %q to %q: %.2f in %v (%.2f MB/s)\n", sd.Download.URL, downloadPath, diskusage.Decimal(n), took.Round(time.Millisecond*10), diskusage.MB.Value(n)/took.Seconds())
+	logger.Info("downloaded file", "url", sd.Download.URL, "path", downloadPath, "size", diskusage.Decimal(n), "duration", took.Round(time.Millisecond*10), "speed_MBps", diskusage.MB.Value(n)/took.Seconds())
 	return downloadPath, nil
 }
 
