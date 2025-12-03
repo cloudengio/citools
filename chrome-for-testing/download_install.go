@@ -19,6 +19,7 @@ import (
 	"cloudeng.io/file/diskusage"
 	"cloudeng.io/logging/ctxlog"
 	"cloudeng.io/net/http/httpfs"
+	"cloudeng.io/windows/powershell"
 )
 
 type VersionFlags struct {
@@ -95,6 +96,10 @@ func (ic *downloadInstallCmd) installCmd(ctx context.Context, f any, args []stri
 		fmt.Printf("Extracting download %q to %q (prefix: %q)\n", downloadPath, installDir, prefix)
 		if err := unzip(ctx, prefix, downloadPath, installDir); err != nil {
 			return fmt.Errorf("unzipping download: %w", err)
+		}
+
+		if err := prepareInstallDir(ctx, installDir); err != nil {
+			return fmt.Errorf("preparing install dir: %w", err)
 		}
 	}
 
@@ -176,7 +181,7 @@ func (downloadInstallCmd) getSelectedDownload(ctx context.Context, vf VersionFla
 func getVersion(ctx context.Context, debug bool, binaryPath string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	args := []string{"--version", "--no-sandbox"}
+	args := []string{"--version"}
 	ctxlog.Debug(ctx, "running", "binary", binaryPath, "args", args)
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd := exec.CommandContext(ctx, binaryPath, args...)
@@ -192,4 +197,27 @@ func getVersion(ctx context.Context, debug bool, binaryPath string) (string, err
 		return "", fmt.Errorf("running %v: %w", strings.Join(cmd.Args, " "), err)
 	}
 	return string(bytes.TrimSpace(stdout.Bytes())), nil
+}
+
+func prepareInstallDir(ctx context.Context, installDir string) error {
+	if runtime.GOOS == "windows" {
+		return windowsSandbox(ctx, installDir)
+	}
+	return nil
+}
+
+func windowsSandbox(ctx context.Context, dir string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	pwsh := powershell.New(ctx)
+	args := []string{"icacls", dir, "/grant", "ALL APPLICATION PACKAGES:(OI)(CI)(RX)", "/grant", "ALL RESTRICTED APPLICATION PACKAGES:(OI)(CI)(RX)",
+		"/T", "/C"}
+	ctxlog.Debug(ctx, "configuring sandbox permissions", "command", strings.Join(args, " "))
+	err := pwsh.Run(args...)
+	if err != nil {
+		ctxlog.Info(ctx, "failed to configure sandbox permissions", "dir", dir, "command", strings.Join(args, " "), "error", err)
+		return fmt.Errorf("failed to configure sandbox permissions for %v: %w", dir, err)
+	}
+	ctxlog.Info(ctx, "configured sandbox permissions", "dir", dir)
+	return nil
 }
