@@ -30,6 +30,8 @@ cloudeng.io/windows v0.0.0-20251123204424-419b0f93bab3 h1:XwjBOC/4xU11l40FtD5x+F
 cloudeng.io/windows v0.0.0-20251123204424-419b0f93bab3/go.mod h1:tUOArMXLISe8OY+lHimWwdHMev5N7MwQGczQgTYZb3Y=
 cloudeng.io/windows v0.0.0-20251203060251-d4e54f036342 h1:Js9LWeSq7MhiL3dUJul0G651JdOGOw5PgJhC+AXlF6E=
 cloudeng.io/windows v0.0.0-20251203060251-d4e54f036342/go.mod h1:tUOArMXLISe8OY+lHimWwdHMev5N7MwQGczQgTYZb3Y=
+cloudeng.io/windows v0.0.0-20251203211350-c30caae1cc5e h1:88FLgbskFkcsZSgh3jncYqYBg1J2eLHGzmdp74APrCQ=
+cloudeng.io/windows v0.0.0-20251203211350-c30caae1cc5e/go.mod h1:tUOArMXLISe8OY+lHimWwdHMev5N7MwQGczQgTYZb3Y=
 github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=

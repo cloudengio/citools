@@ -54,21 +54,11 @@ func getVersion(ctx context.Context, debug bool, binaryPath string) (string, err
 }
 
 func terminateProcessByPath(ctx context.Context, debug bool, binaryPath string) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	pwsh := powershell.New()
-	args := []string{
-		"Get-Process", "chrome", "-ErrorAction", "SilentlyContinue", "|",
-		"Where-Object", "{", "$_.Path", "-eq", `"` + binaryPath + `"`, "}", "|",
-		"Stop-Process", "-Force"}
-
-	stdout, stderr, err := pwsh.Run(ctx, args...)
+	stdout, stderr, err := powershell.New().KillByPath(ctx, binaryPath)
 	if err != nil {
-		logError(ctx, "failed to terminate processes", stdout, stderr, args, err)
-		return fmt.Errorf("failed to terminate processes %v: %w", binaryPath, err)
+		logError(ctx, "failed to terminate process by path", stdout, stderr, []string{binaryPath}, err)
+		return fmt.Errorf("failed to terminate process by path %v: %w", binaryPath, err)
 	}
-	if debug {
-		ctxlog.Info(ctx, "terminated processes", "process_name", binaryPath)
-	}
+	ctxlog.Info(ctx, "terminated process by path", "binary_path", binaryPath)
 	return nil
 }
