@@ -45,3 +45,7 @@ func getVersion(ctx context.Context, debug bool, binaryPath string) (string, err
 	}
 	return string(bytes.TrimSpace(stdout.Bytes())), nil
 }
+
+func terminateProcessByPath(ctx context.Context, debug bool, binaryPath string) error {
+	return nil
+}
