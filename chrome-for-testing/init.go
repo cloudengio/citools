@@ -34,7 +34,7 @@ type browser struct {
 	debug       bool
 }
 
-func (b browser) init(ctx context.Context, timeout time.Duration) error {
+func (b browser) init(ctx context.Context) error {
 	now := time.Now()
 	stderr, stdout := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd := exec.CommandContext(ctx, b.binaryPath, append(initArgs,
@@ -52,15 +52,12 @@ func (b browser) init(ctx context.Context, timeout time.Duration) error {
 		return fmt.Errorf("failed to start command: %v: %w", strings.Join(cmd.Args, " "), err)
 	}
 	profileDir := filepath.Join(b.userDataDir, "Default")
-	if !b.waitForProfile(ctx, profileDir, timeout) {
-		ctxlog.Info(ctx, "browser profile has not been initialized", "profile_dir", profileDir, "time_taken", time.Since(now).String(), "timeout", timeout.String())
+	if !b.waitForProfile(ctx, profileDir) {
+		ctxlog.Info(ctx, "browser profile has not been initialized", "profile_dir", profileDir, "time_taken", time.Since(now).String())
 		return nil
 	}
-	timeout -= time.Since(now)
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 	pid := cmd.Process.Pid
-	ctxlog.Info(ctx, "terminating browser process after profile init timeout", "pid", pid, "profile_dir", profileDir, "timeout", timeout.String())
+	ctxlog.Info(ctx, "terminating browser process after profile init timeout", "pid", pid, "profile_dir", profileDir)
 	err := executil.SignalAndWait(ctx, time.Second, cmd, os.Interrupt, os.Kill)
 	if err != nil {
 		ctxlog.Info(ctx, "failed to terminate browser process", "command", strings.Join(cmd.Args, " "), "error", err)
@@ -81,15 +78,14 @@ func (b browser) init(ctx context.Context, timeout time.Duration) error {
 	return nil
 }
 
-func (b browser) waitForProfile(ctx context.Context, profileDir string, timeout time.Duration) bool {
+func (b browser) waitForProfile(ctx context.Context, profileDir string) bool {
+	start := time.Now()
 	ticker := time.NewTicker(1 * time.Second)
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			ctxlog.Info(ctx, "timed out waiting for profile dir", "profile_dir", profileDir, "after", timeout.String(), "error", ctx.Err())
+			ctxlog.Info(ctx, "timed out waiting for profile dir", "profile_dir", profileDir, "after", time.Since(start).String(), "error", ctx.Err())
 			return false
 		case <-ticker.C:
 			fi, err := os.Stat(profileDir)

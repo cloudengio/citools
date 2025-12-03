@@ -100,7 +100,9 @@ func (ic *downloadInstallCmd) installCmd(ctx context.Context, f any, args []stri
 		}
 	}
 
-	version, err := getVersion(ctx, fv.Debug, binaryPath)
+	vctx, vancel := context.WithTimeout(ctx, 5*time.Second)
+	defer vancel()
+	version, err := getVersion(vctx, fv.Debug, binaryPath)
 	if err != nil {
 		return fmt.Errorf("failed to get version for %q: %w", binaryPath, err)
 	}
@@ -129,7 +131,9 @@ func (ic *downloadInstallCmd) installCmd(ctx context.Context, f any, args []stri
 		debug:       fv.Debug,
 	}
 	logger.Info("initializing browser profile", "user_data_dir", userDataDir)
-	if err := browser.init(ctx, 30*time.Second); err != nil {
+	ictx, icancel := context.WithTimeout(ctx, time.Minute)
+	defer icancel()
+	if err := browser.init(ictx); err != nil {
 		return fmt.Errorf("initializing browser profile: %w", err)
 	}
 	return nil

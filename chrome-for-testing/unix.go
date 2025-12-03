@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 
 	"cloudeng.io/logging/ctxlog"
 )
@@ -24,8 +23,6 @@ func prepareInstallDir(_ context.Context, _ string) error {
 }
 
 func getVersion(ctx context.Context, debug bool, binaryPath string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
 	args := []string{"--version"}
 	ctxlog.Debug(ctx, "running", "binary", binaryPath, "args", args)
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
