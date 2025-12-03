@@ -57,7 +57,11 @@ func (b browser) init(ctx context.Context, timeout time.Duration) error {
 		ctxlog.Info(ctx, "browser profile initialized", "profile_dir", profileDir)
 		return nil
 	}
-	return executil.SignalAndWait(ctx, time.Second, cmd, os.Interrupt, os.Kill)
+	err := executil.SignalAndWait(ctx, time.Second, cmd, os.Interrupt, os.Kill)
+	if err != nil {
+		ctxlog.Info(ctx, "failed to terminate browser process", "command", strings.Join(cmd.Args, " "), "error", err)
+	}
+	return nil
 }
 
 func (b browser) waitForProfile(ctx context.Context, profileDir string, timeout time.Duration) bool {
