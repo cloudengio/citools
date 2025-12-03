@@ -57,9 +57,19 @@ func (b browser) init(ctx context.Context, timeout time.Duration) error {
 		ctxlog.Info(ctx, "browser profile initialized", "profile_dir", profileDir)
 		return nil
 	}
+	pid := cmd.Process.Pid
+	ctxlog.Info(ctx, "terminating browser process after profile init timeout", "pid", pid, "profile_dir", profileDir, "timeout", timeout.String())
 	err := executil.SignalAndWait(ctx, time.Second, cmd, os.Interrupt, os.Kill)
 	if err != nil {
 		ctxlog.Info(ctx, "failed to terminate browser process", "command", strings.Join(cmd.Args, " "), "error", err)
+	}
+	if !executil.IsStopped(pid) {
+		ctxlog.Info(ctx, "browser process still running after termination attempt", "pid", pid)
+	}
+	lockFile := filepath.Join(profileDir, "SingletonLock")
+	ctxlog.Info(ctx, "waiting for browser lock file removal", "lock_file", lockFile)
+	if !b.waitForLockFileRemoval(ctx, lockFile, timeout) {
+		return fmt.Errorf("browser lock file %q still present after timeout", lockFile)
 	}
 	return nil
 }
@@ -88,6 +98,30 @@ func (b browser) waitForProfile(ctx context.Context, profileDir string, timeout 
 				continue
 			}
 			ctxlog.Debug(ctx, "waiting for profile dir", "profile_dir", profileDir, "error", err)
+		}
+	}
+}
+
+func (b browser) waitForLockFileRemoval(ctx context.Context, lockFile string, timeout time.Duration) bool {
+	ticker := time.NewTicker(1 * time.Second)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			ctxlog.Info(ctx, "timed out waiting for lock file removal", "lock_file", lockFile, "after", timeout.String(), "error", ctx.Err())
+			return false
+		case <-ticker.C:
+			_, err := os.Stat(lockFile)
+			if os.IsNotExist(err) {
+				return true
+			}
+			if err != nil {
+				ctxlog.Info(ctx, "error checking for lock file", "lock_file", lockFile, "error", err)
+				continue
+			}
+			ctxlog.Debug(ctx, "waiting for lock file removal", "lock_file", lockFile)
 		}
 	}
 }
