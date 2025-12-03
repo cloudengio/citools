@@ -9,7 +9,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -186,18 +185,12 @@ func unzip(ctx context.Context, prefix, src, dst string) error {
 		}
 		logger.Debug("extracting file", "zip_entry", f.Name, "stripped", stripped, "localized", localized, "destination", name)
 
+		if err := os.MkdirAll(filepath.Dir(name), 0755); err != nil {
+			return fmt.Errorf("creating directory for %q: %w", name, err)
+		}
 		out, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
 		if err != nil {
-			if !errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("creating file %q: %w", name, err)
-			}
-			if err := os.MkdirAll(filepath.Dir(name), 0700); err != nil {
-				return fmt.Errorf("creating directory for %q: %w", name, err)
-			}
-			out, err = os.Create(name)
-			if err != nil {
-				return fmt.Errorf("creating file %q after creating directory: %w", name, err)
-			}
+			return fmt.Errorf("creating file %q: %w", name, err)
 		}
 		n, err := io.Copy(out, rc)
 		if err != nil {

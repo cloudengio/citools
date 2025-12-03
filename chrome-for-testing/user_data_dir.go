@@ -33,14 +33,14 @@ func (d *downloadInstallCmd) userDataDirCmd(ctx context.Context, f any, args []s
 
 func getUserDataDir(goos string) (string, error) {
 	switch goos {
-	case "linux":
+	case "darwin":
 		home := os.Getenv("HOME")
 		if home == "" {
 			return "", fmt.Errorf("HOME environment variable not set")
 		}
 		return filepath.Join(home,
 			"Library", "Application Support", "Google", "Chrome for Testing"), nil
-	case "darwin":
+	case "linux":
 		home := os.Getenv("HOME")
 		if home == "" {
 			return "", fmt.Errorf("HOME environment variable not set")

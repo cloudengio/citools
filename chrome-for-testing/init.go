@@ -41,11 +41,11 @@ func (b browser) init(ctx context.Context) error {
 		"about:blank",
 	)...)
 	if b.debug {
-		cmd.Stderr = io.MultiWriter(stderr, os.Stderr)
 		cmd.Stdout = io.MultiWriter(stdout, os.Stdout)
+		cmd.Stderr = io.MultiWriter(stderr, os.Stderr)
 	} else {
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		cmd.Stdout = stdout
+		cmd.Stderr = stderr
 	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start command: %v: %w", strings.Join(cmd.Args, " "), err)

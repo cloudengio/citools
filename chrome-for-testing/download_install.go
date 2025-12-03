@@ -51,7 +51,7 @@ func (vf *VersionFlags) ParseRequestedDownload() (RequestedDownload, error) {
 type installFlags struct {
 	VersionFlags
 	CacheFlags
-	Debug      bool `subcmd:"debug,false,eenable debug output"`
+	Debug      bool `subcmd:"debug,false,enable debug output"`
 	Initialize bool `subcmd:"initialize,false,initialize browser profile after installation"`
 }
 
