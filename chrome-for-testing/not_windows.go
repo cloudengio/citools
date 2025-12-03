@@ -6,8 +6,42 @@
 
 package main
 
-import "context"
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+
+	"cloudeng.io/logging/ctxlog"
+)
 
 func prepareInstallDir(ctx context.Context, dir string) error {
 	return nil
+}
+
+func getVersion(ctx context.Context, debug bool, binaryPath string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	args := []string{"--version"}
+	ctxlog.Debug(ctx, "running", "binary", binaryPath, "args", args)
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd := exec.CommandContext(ctx, binaryPath, args...)
+	if debug {
+		cmd.Stderr = io.MultiWriter(stderr, os.Stderr)
+		cmd.Stdout = io.MultiWriter(stdout, os.Stdout)
+	} else {
+		cmd.Stderr = stderr
+		cmd.Stdout = stdout
+	}
+	err := cmd.Run()
+	if err != nil {
+		ctxlog.Debug(ctx, "command stdout", "stdout", stdout.String())
+		ctxlog.Debug(ctx, "command stderr", "stderr", stderr.String())
+		return "", fmt.Errorf("running %v: %w", strings.Join(cmd.Args, " "), err)
+	}
+	return string(bytes.TrimSpace(stdout.Bytes())), nil
 }

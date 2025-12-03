@@ -33,3 +33,21 @@ func prepareInstallDir(ctx context.Context, dir string) error {
 	ctxlog.Info(ctx, "configured sandbox permissions", "dir", dir)
 	return nil
 }
+
+func getVersion(ctx context.Context, debug bool, binaryPath string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	pwsh := powershell.New()
+	psCommand := fmt.Sprintf(`(Get-Item "%s").VersionInfo.ProductVersion`, binaryPath)
+	args := []string{"-NoProfile", "-Command", psCommand}
+	stdout, stderr, err := pwsh.Run(ctx, args...)
+	if err != nil {
+		ctxlog.Info(ctx, "failed to get version info", "binary", binaryPath, "command", strings.Join(args, " "), "error", err)
+		ctxlog.Debug(ctx, "command stdout", "stdout", stdout)
+		ctxlog.Debug(ctx, "command stderr", "stderr", stderr)
+		return "", fmt.Errorf("failed to get version info for %v: %w", binaryPath, err)
+	}
+	ctxlog.Info(ctx, "got version info", "binary", binaryPath, "version", strings.TrimSpace(stdout))
+	return strings.TrimSpace(stdout), nil
+
+}

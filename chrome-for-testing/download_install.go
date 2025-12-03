@@ -5,15 +5,11 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"runtime"
-	"strings"
 	"time"
 
 	"cloudeng.io/file/diskusage"
@@ -97,9 +93,11 @@ func (ic *downloadInstallCmd) installCmd(ctx context.Context, f any, args []stri
 			return fmt.Errorf("unzipping download: %w", err)
 		}
 
-		//if err := prepareInstallDir(ctx, installDir); err != nil {
-		//	return fmt.Errorf("preparing install dir: %w", err)
-		//}
+		// required on some platforms, eg. windows, to configure appropriate
+		// permissions for sandboxing etc.
+		if err := prepareInstallDir(ctx, installDir); err != nil {
+			return fmt.Errorf("preparing install dir: %w", err)
+		}
 	}
 
 	version, err := getVersion(ctx, fv.Debug, binaryPath)
@@ -175,27 +173,4 @@ func (downloadInstallCmd) getSelectedDownload(ctx context.Context, vf VersionFla
 		return sd, fmt.Errorf("getting selected download: %w", err)
 	}
 	return sd, nil
-}
-
-func getVersion(ctx context.Context, debug bool, binaryPath string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	args := []string{"--version", "--headless=new", "--disable-gpu"}
-	ctxlog.Debug(ctx, "running", "binary", binaryPath, "args", args)
-	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
-	cmd := exec.CommandContext(ctx, binaryPath, args...)
-	if debug {
-		cmd.Stderr = io.MultiWriter(stderr, os.Stderr)
-		cmd.Stdout = io.MultiWriter(stdout, os.Stdout)
-	} else {
-		cmd.Stderr = stderr
-		cmd.Stdout = stdout
-	}
-	err := cmd.Run()
-	if err != nil {
-		ctxlog.Debug(ctx, "command stdout", "stdout", stdout.String())
-		ctxlog.Debug(ctx, "command stderr", "stderr", stderr.String())
-		return "", fmt.Errorf("running %v: %w", strings.Join(cmd.Args, " "), err)
-	}
-	return string(bytes.TrimSpace(stdout.Bytes())), nil
 }
