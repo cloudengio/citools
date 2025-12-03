@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"runtime"
 	"runtime/debug"
 
@@ -51,7 +52,8 @@ func gitHashShort(h string) string {
 
 func main() {
 	if bi, ok := debug.ReadBuildInfo(); ok {
-		fmt.Printf("multimod: build info: %v %v\n",
+		fmt.Printf("%v: build info: %v %v\n",
+			os.Args[0],
 			gitHashShort(getSetting(bi.Settings, "vcs.revision")),
 			getSetting(bi.Settings, "vcs.time"))
 	}

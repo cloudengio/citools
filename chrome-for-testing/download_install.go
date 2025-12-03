@@ -97,9 +97,9 @@ func (ic *downloadInstallCmd) installCmd(ctx context.Context, f any, args []stri
 			return fmt.Errorf("unzipping download: %w", err)
 		}
 
-		if err := prepareInstallDir(ctx, installDir); err != nil {
-			return fmt.Errorf("preparing install dir: %w", err)
-		}
+		//if err := prepareInstallDir(ctx, installDir); err != nil {
+		//	return fmt.Errorf("preparing install dir: %w", err)
+		//}
 	}
 
 	version, err := getVersion(ctx, fv.Debug, binaryPath)
