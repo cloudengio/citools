@@ -17,8 +17,8 @@ import (
 
 func logError(ctx context.Context, msg, stdout, stderr string, args []string, err error) {
 	ctxlog.Info(ctx, msg, "command line", strings.Join(args, " "), "error", err)
-	ctxlog.Debug(ctx, msg, "stdout", stdout)
-	ctxlog.Debug(ctx, msg, "stderr", stderr)
+	ctxlog.Info(ctx, msg, "stdout", stdout)
+	ctxlog.Info(ctx, msg, "stderr", stderr)
 }
 
 func prepareInstallDir(ctx context.Context, dir string) error {
