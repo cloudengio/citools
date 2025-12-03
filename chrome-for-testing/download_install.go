@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -93,7 +94,7 @@ func (ic *downloadInstallCmd) installCmd(ctx context.Context, f any, args []stri
 			return fmt.Errorf("unzipping download: %w", err)
 		}
 	}
-	version, err := getVersion(ctx, binaryPath)
+	version, err := getVersion(ctx, fv.Debug, binaryPath)
 	if err != nil {
 		return fmt.Errorf("failed to get version for %q: %w", binaryPath, err)
 	}
@@ -144,11 +145,21 @@ func (downloadInstallCmd) getSelectedDownload(ctx context.Context, vf VersionFla
 	return sd, nil
 }
 
-func getVersion(ctx context.Context, binaryPath string) (string, error) {
-	cmd := exec.CommandContext(ctx, binaryPath, "--version")
-	out, err := cmd.Output()
+func getVersion(ctx context.Context, debug bool, binaryPath string) (string, error) {
+	args := []string{"--version"}
+	ctxlog.Debug(ctx, "running", "binary", binaryPath, "args", args)
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	cmd := exec.CommandContext(ctx, binaryPath, args...)
+	if debug {
+		cmd.Stderr = io.MultiWriter(stderr, os.Stderr)
+		cmd.Stdout = io.MultiWriter(stdout, os.Stdout)
+	} else {
+		cmd.Stderr = stderr
+		cmd.Stdout = stdout
+	}
+	err := cmd.Run()
 	if err != nil {
 		return "", fmt.Errorf("running %q --version: %w", binaryPath, err)
 	}
-	return string(bytes.TrimSpace(out)), nil
+	return string(bytes.TrimSpace(stdout.Bytes())), nil
 }
