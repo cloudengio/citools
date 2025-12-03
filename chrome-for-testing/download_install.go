@@ -193,6 +193,8 @@ func getVersion(ctx context.Context, debug bool, binaryPath string) (string, err
 	}
 	err := cmd.Run()
 	if err != nil {
+		ctxlog.Debug(ctx, "command stdout", "stdout", stdout.String())
+		ctxlog.Debug(ctx, "command stderr", "stderr", stderr.String())
 		return "", fmt.Errorf("running %v: %w", strings.Join(cmd.Args, " "), err)
 	}
 	return string(bytes.TrimSpace(stdout.Bytes())), nil
