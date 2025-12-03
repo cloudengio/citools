@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"strings"
 
 	"cloudeng.io/logging/ctxlog"
@@ -55,5 +56,14 @@ func terminateProcessByPath(ctx context.Context, debug bool, binaryPath string) 
 		return fmt.Errorf("failed to terminate process by path %v: %w", binaryPath, err)
 	}
 	ctxlog.Info(ctx, "terminated process by path", "binary_path", binaryPath)
+	return nil
+}
+
+func terminateChromeProcesses(ctx context.Context, cmd *exec.Cmd, binaryPath string, debug bool) error {
+	ctxlog.Info(ctx, "terminating browser process by path", "path", binaryPath)
+	err := terminateProcessByPath(ctx, debug, binaryPath)
+	if err != nil {
+		return err
+	}
 	return nil
 }

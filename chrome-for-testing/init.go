@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"cloudeng.io/logging/ctxlog"
-	"cloudeng.io/os/executil"
 )
 
 var initArgs = []string{
@@ -56,26 +55,7 @@ func (b browser) init(ctx context.Context) error {
 		ctxlog.Info(ctx, "browser profile has not been initialized", "profile_dir", profileDir, "time_taken", time.Since(now).String())
 		return nil
 	}
-	pid := cmd.Process.Pid
-	ctxlog.Info(ctx, "terminating browser process after profile init timeout", "pid", pid, "profile_dir", profileDir)
-	err := executil.SignalAndWait(ctx, time.Second, cmd, os.Interrupt, os.Kill)
-	if err != nil {
-		ctxlog.Info(ctx, "failed to terminate browser process", "command", strings.Join(cmd.Args, " "), "error", err)
-	}
-	if err == nil && executil.IsStopped(pid) {
-		return nil
-	}
-	ctxlog.Info(ctx, "browser process still running after termination attempt", "pid", pid)
-	ctxlog.Info(ctx, "attempting to terminate browser process by binary path", "binary_path", b.binaryPath)
-	if err := terminateProcessByPath(ctx, b.debug, b.binaryPath); err != nil {
-		ctxlog.Info(ctx, "failed tp terminate browser process by binary path", "binary_path", b.binaryPath)
-		return err
-	}
-	if !executil.IsStopped(pid) {
-		return fmt.Errorf("browser process %d and path %v still running after multiple termination attempts", pid, b.binaryPath)
-
-	}
-	return nil
+	return terminateChromeProcesses(ctx, cmd, b.binaryPath, b.debug)
 }
 
 func (b browser) waitForProfile(ctx context.Context, profileDir string) bool {

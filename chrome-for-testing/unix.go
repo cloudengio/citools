@@ -14,8 +14,10 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"cloudeng.io/logging/ctxlog"
+	"cloudeng.io/os/executil"
 )
 
 func prepareInstallDir(_ context.Context, _ string) error {
@@ -43,6 +45,17 @@ func getVersion(ctx context.Context, debug bool, binaryPath string) (string, err
 	return string(bytes.TrimSpace(stdout.Bytes())), nil
 }
 
-func terminateProcessByPath(ctx context.Context, debug bool, binaryPath string) error {
-	return nil
+func terminateChromeProcesses(ctx context.Context, cmd *exec.Cmd, binaryPath string, debug bool) error {
+	pid := cmd.Process.Pid
+	ctxlog.Info(ctx, "terminating browser process by pid", "pid", pid)
+	err := executil.SignalAndWait(ctx, time.Second, cmd, os.Interrupt, os.Kill)
+	if err != nil {
+		ctxlog.Info(ctx, "failed to terminate browser process by pid", "command", strings.Join(cmd.Args, " "), "error", err)
+		return fmt.Errorf("failed to terminate browser process with pid %v: %w", pid, err)
+	}
+	if executil.IsStopped(pid) {
+		ctxlog.Info(ctx, "browser process stopped", "pid", pid)
+		return nil
+	}
+	return fmt.Errorf("browser process with pid %v still running", pid)
 }
