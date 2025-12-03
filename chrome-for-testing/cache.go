@@ -156,7 +156,10 @@ func (t toolCache) fileExists(path string) bool {
 
 func unzip(ctx context.Context, prefix, src, dst string) error {
 	logger := ctxlog.Logger(ctx)
-	prefix = filepath.Clean(prefix) + string(filepath.Separator)
+	// file names in a zip file always use forward slashes
+	// and we want to strip the first level of the path for
+	// all extracted files.
+	prefix = filepath.Clean(prefix) + "/"
 	r, err := zip.OpenReader(src)
 	if err != nil {
 		return err
