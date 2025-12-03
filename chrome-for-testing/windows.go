@@ -10,7 +10,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"cloudeng.io/logging/ctxlog"
 	"cloudeng.io/windows/powershell"
@@ -23,8 +22,6 @@ func logError(ctx context.Context, msg, stdout, stderr string, args []string, er
 }
 
 func prepareInstallDir(ctx context.Context, dir string) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
 	pwsh := powershell.New()
 	args := []string{"icacls", dir, "/grant", "'ALL APPLICATION PACKAGES:(OI)(CI)(RX)'", "/grant", "'ALL RESTRICTED APPLICATION PACKAGES:(OI)(CI)(RX)'",
 		"/T", "/C"}
@@ -39,8 +36,6 @@ func prepareInstallDir(ctx context.Context, dir string) error {
 }
 
 func getVersion(ctx context.Context, debug bool, binaryPath string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
 	pwsh := powershell.New()
 	psCommand := fmt.Sprintf(`(Get-Item "%s").VersionInfo.ProductVersion`, binaryPath)
 	args := []string{"-NoProfile", "-Command", psCommand}

@@ -35,6 +35,7 @@ type browser struct {
 }
 
 func (b browser) init(ctx context.Context, timeout time.Duration) error {
+	now := time.Now()
 	stderr, stdout := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd := exec.CommandContext(ctx, b.binaryPath, append(initArgs,
 		"--user-data-dir="+b.userDataDir,
@@ -52,9 +53,12 @@ func (b browser) init(ctx context.Context, timeout time.Duration) error {
 	}
 	profileDir := filepath.Join(b.userDataDir, "Default")
 	if !b.waitForProfile(ctx, profileDir, timeout) {
-		ctxlog.Info(ctx, "browser profile has not been initialized", "profile_dir", profileDir)
+		ctxlog.Info(ctx, "browser profile has not been initialized", "profile_dir", profileDir, "time_taken", time.Since(now).String(), "timeout", timeout.String())
 		return nil
 	}
+	timeout -= time.Since(now)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	pid := cmd.Process.Pid
 	ctxlog.Info(ctx, "terminating browser process after profile init timeout", "pid", pid, "profile_dir", profileDir, "timeout", timeout.String())
 	err := executil.SignalAndWait(ctx, time.Second, cmd, os.Interrupt, os.Kill)
