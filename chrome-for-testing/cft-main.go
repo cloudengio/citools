@@ -6,7 +6,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"runtime"
+	"runtime/debug"
 
 	"cloudeng.io/cmdutil/subcmd"
 )
@@ -31,7 +33,28 @@ func cli() *subcmd.CommandSetYAML {
 	return cmd
 }
 
+func getSetting(s []debug.BuildSetting, key string) string {
+	for _, setting := range s {
+		if setting.Key == key {
+			return setting.Value
+		}
+	}
+	return ""
+}
+
+func gitHashShort(h string) string {
+	if len(h) > 8 {
+		return h[:8]
+	}
+	return h
+}
+
 func main() {
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		fmt.Printf("multimod: build info: %v %v\n",
+			gitHashShort(getSetting(bi.Settings, "vcs.revision")),
+			getSetting(bi.Settings, "vcs.time"))
+	}
 	subcmd.Dispatch(context.Background(), cli())
 }
 
