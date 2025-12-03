@@ -18,6 +18,8 @@ commands:
     summary: retrieve Chrome for Testing version and download info
   - name: install
     summary: install a version of Chrome for Testing
+  - name: user-data-dir
+    summary: determine the user data dir for Chrome for Testing based on OS
 `
 
 func cli() *subcmd.CommandSetYAML {
@@ -25,6 +27,7 @@ func cli() *subcmd.CommandSetYAML {
 	downloadInstallCmd := &downloadInstallCmd{}
 	cmd.Set("get-manifest").MustRunner((&endpointsCmd{}).Get, &endpointsFlags{})
 	cmd.Set("install").MustRunner(downloadInstallCmd.installCmd, &installFlags{})
+	cmd.Set("user-data-dir").MustRunner(downloadInstallCmd.userDataDirCmd, &installFlags{})
 	return cmd
 }
 
@@ -32,7 +35,7 @@ func main() {
 	subcmd.Dispatch(context.Background(), cli())
 }
 
-func defaultPlatform() string {
+func currentPlatform() string {
 	switch runtime.GOOS {
 	case "darwin":
 		if runtime.GOARCH == "arm64" {

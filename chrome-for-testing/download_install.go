@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"runtime"
 	"time"
 
 	"cloudeng.io/file/diskusage"
@@ -28,7 +29,7 @@ type VersionFlags struct {
 func (vf *VersionFlags) ParseRequestedDownload() (RequestedDownload, error) {
 	var rd RequestedDownload
 	if vf.Platform == "" {
-		vf.Platform = defaultPlatform()
+		vf.Platform = currentPlatform()
 	}
 	platform, err := ParsePlatform(vf.Platform)
 
@@ -53,7 +54,8 @@ func (vf *VersionFlags) ParseRequestedDownload() (RequestedDownload, error) {
 type installFlags struct {
 	VersionFlags
 	CacheFlags
-	Debug bool `subcmd:"debug,false,eenable debug output"`
+	Debug      bool `subcmd:"debug,false,eenable debug output"`
+	Initialize bool `subcmd:"initialize,false,initialize browser profile after installation"`
 }
 
 type downloadInstallCmd struct{}
@@ -94,13 +96,38 @@ func (ic *downloadInstallCmd) installCmd(ctx context.Context, f any, args []stri
 			return fmt.Errorf("unzipping download: %w", err)
 		}
 	}
+
 	version, err := getVersion(ctx, fv.Debug, binaryPath)
 	if err != nil {
 		return fmt.Errorf("failed to get version for %q: %w", binaryPath, err)
 	}
+
 	logger.Info("installation complete", "binary", binaryPath, "version", version)
 	if err := updateGithubActionOutput("chrome-path", binaryPath); err != nil {
 		return fmt.Errorf("updating github action output: %w", err)
+	}
+
+	if !fv.Initialize {
+		return nil
+	}
+
+	userDataDir, err := getUserDataDir(runtime.GOOS)
+	if err != nil {
+		return fmt.Errorf("determining user data dir: %w", err)
+	}
+	if err := updateGithubActionOutput("chrome-user-data-dir", userDataDir); err != nil {
+		return fmt.Errorf("updating github action output: %w", err)
+	}
+
+	browser := browser{
+		goos:        runtime.GOOS,
+		binaryPath:  binaryPath,
+		userDataDir: userDataDir,
+		debug:       fv.Debug,
+	}
+	logger.Info("initializing browser profile", "user_data_dir", userDataDir)
+	if err := browser.init(ctx, 30*time.Second); err != nil {
+		return fmt.Errorf("initializing browser profile: %w", err)
 	}
 	return nil
 }
@@ -146,7 +173,7 @@ func (downloadInstallCmd) getSelectedDownload(ctx context.Context, vf VersionFla
 }
 
 func getVersion(ctx context.Context, debug bool, binaryPath string) (string, error) {
-	args := []string{"--version"}
+	args := []string{"--version", "--no-sandbox"}
 	ctxlog.Debug(ctx, "running", "binary", binaryPath, "args", args)
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd := exec.CommandContext(ctx, binaryPath, args...)
