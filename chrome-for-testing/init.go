@@ -53,8 +53,8 @@ func (b browser) init(ctx context.Context, timeout time.Duration) error {
 		return fmt.Errorf("failed to start command: %v: %w", strings.Join(cmd.Args, " "), err)
 	}
 	profileDir := filepath.Join(b.userDataDir, "Default")
-	if b.waitForProfile(ctx, profileDir, timeout) {
-		ctxlog.Info(ctx, "browser profile initialized", "profile_dir", profileDir)
+	if !b.waitForProfile(ctx, profileDir, timeout) {
+		ctxlog.Info(ctx, "browser profile has not been initialized", "profile_dir", profileDir)
 		return nil
 	}
 	pid := cmd.Process.Pid
@@ -65,13 +65,20 @@ func (b browser) init(ctx context.Context, timeout time.Duration) error {
 	}
 	if !executil.IsStopped(pid) {
 		ctxlog.Info(ctx, "browser process still running after termination attempt", "pid", pid)
-	}
-	lockFile := filepath.Join(profileDir, "SingletonLock")
-	ctxlog.Info(ctx, "waiting for browser lock file removal", "lock_file", lockFile)
-	if !b.waitForLockFileRemoval(ctx, lockFile, timeout) {
-		return fmt.Errorf("browser lock file %q still present after timeout", lockFile)
+		return fmt.Errorf("browser process %d still running after termination attempt", pid)
 	}
 	return nil
+
+	/*
+	   lockFile := filepath.Join(profileDir, "SingletonLock")
+	   ctxlog.Info(ctx, "waiting for browser lock file removal", "lock_file", lockFile)
+
+	   	if !b.waitForLockFileRemoval(ctx, lockFile, timeout) {
+	   		return fmt.Errorf("browser lock file %q still present after timeout", lockFile)
+	   	}
+
+	   return nil
+	*/
 }
 
 func (b browser) waitForProfile(ctx context.Context, profileDir string, timeout time.Duration) bool {
@@ -102,6 +109,7 @@ func (b browser) waitForProfile(ctx context.Context, profileDir string, timeout 
 	}
 }
 
+/*
 func (b browser) waitForLockFileRemoval(ctx context.Context, lockFile string, timeout time.Duration) bool {
 	ticker := time.NewTicker(1 * time.Second)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -125,3 +133,4 @@ func (b browser) waitForLockFileRemoval(ctx context.Context, lockFile string, ti
 		}
 	}
 }
+*/
