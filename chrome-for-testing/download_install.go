@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	"cloudeng.io/file/diskusage"
@@ -173,6 +174,8 @@ func (downloadInstallCmd) getSelectedDownload(ctx context.Context, vf VersionFla
 }
 
 func getVersion(ctx context.Context, debug bool, binaryPath string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	args := []string{"--version", "--no-sandbox"}
 	ctxlog.Debug(ctx, "running", "binary", binaryPath, "args", args)
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
@@ -186,7 +189,7 @@ func getVersion(ctx context.Context, debug bool, binaryPath string) (string, err
 	}
 	err := cmd.Run()
 	if err != nil {
-		return "", fmt.Errorf("running %q --version: %w", binaryPath, err)
+		return "", fmt.Errorf("running %v: %w", strings.Join(cmd.Args, " "), err)
 	}
 	return string(bytes.TrimSpace(stdout.Bytes())), nil
 }
