@@ -156,7 +156,7 @@ func (t toolCache) fileExists(path string) bool {
 
 func unzip(ctx context.Context, prefix, src, dst string) error {
 	logger := ctxlog.Logger(ctx)
-	prefix = filepath.Clean(prefix) + string(os.PathSeparator)
+	prefix = filepath.Clean(prefix) + string(filepath.Separator)
 	r, err := zip.OpenReader(src)
 	if err != nil {
 		return err
