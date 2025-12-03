@@ -20,7 +20,7 @@ func prepareInstallDir(ctx context.Context, dir string) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	pwsh := powershell.New()
-	args := []string{"icacls", dir, "/grant", "ALL APPLICATION PACKAGES:(OI)(CI)(RX)", "/grant", "ALL RESTRICTED APPLICATION PACKAGES:(OI)(CI)(RX)",
+	args := []string{"icacls", dir, "/grant", "'ALL APPLICATION PACKAGES:(OI)(CI)(RX)'", "/grant", "'ALL RESTRICTED APPLICATION PACKAGES:(OI)(CI)(RX)'",
 		"/T", "/C"}
 	ctxlog.Debug(ctx, "configuring sandbox permissions", "command", strings.Join(args, " "))
 	stdout, stderr, err := pwsh.Run(ctx, args...)

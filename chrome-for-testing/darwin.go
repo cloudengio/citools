@@ -8,6 +8,6 @@ package main
 
 import "context"
 
-func prepareInstallDir(ctx context.Context, dir string) error {
+func prepareInstallDir(_ context.Context, _ string) error {
 	return nil
 }

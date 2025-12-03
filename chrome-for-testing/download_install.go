@@ -180,7 +180,7 @@ func (downloadInstallCmd) getSelectedDownload(ctx context.Context, vf VersionFla
 func getVersion(ctx context.Context, debug bool, binaryPath string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	args := []string{"--version"}
+	args := []string{"--version", "--headless=new", "--disable-gpu"}
 	ctxlog.Debug(ctx, "running", "binary", binaryPath, "args", args)
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd := exec.CommandContext(ctx, binaryPath, args...)
