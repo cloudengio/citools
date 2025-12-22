@@ -293,7 +293,6 @@ func runInDirs(ctx context.Context, dirs []string, action string, cmdSpec []stri
 	for _, cmdargs := range allCmds {
 		cmds, envs := extraceEnv(cmdargs)
 		envs = append(envs, globalEnvs...)
-		fmt.Printf("Running %v - [%v] %v\n", cmdargs, cmds, envs)
 		cmd := cmds[0]
 		args := []string{}
 		if len(cmds) > 1 {
@@ -315,8 +314,9 @@ func runInDirs(ctx context.Context, dirs []string, action string, cmdSpec []stri
 
 func runInDir(ctx context.Context, dir string, binary string, envs []string, args []string) error {
 	if verboseFlag {
-		fmt.Printf("%v: %v %v\n", dir, binary, strings.Join(args, " "))
+		fmt.Printf("%v: %v %v [%v]\n", dir, binary, strings.Join(args, " "), strings.Join(args, " "))
 	}
+	fmt.Printf("%v... starting\n", dir)
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = dir
 	if len(envs) > 0 {
