@@ -61,9 +61,11 @@ annotate:
 usage: ["gousage", "--overwrite", "./..."]
 update: ["go", "get", "-u", "./...", ";",
          "go", "mod", "tidy"]
+build: ["go", "build", "./..."]
 `
 
 type config struct {
+	Env        []string            `yaml:"env"`
 	Commands   map[string][]string `yaml:",inline"`
 	Exclusions map[string][]string `yaml:"exclusions"`
 }
@@ -227,7 +229,7 @@ func main() {
 				fmt.Printf("Excluding module %q from action %q\n", mod, script.action)
 			}
 		}
-		if err := runInDirs(ctx, allowedMods, script.action, script.commands); err != nil {
+		if err := runInDirs(ctx, allowedMods, script.action, script.commands, cfg.Env); err != nil {
 			done(fmt.Sprintf("running %v", script.action), err)
 		}
 	}
@@ -268,22 +270,40 @@ func splitCmd(cmdargs []string) [][]string {
 	return cmds
 }
 
-func runInDirs(ctx context.Context, dirs []string, action string, cmdSpec []string) error {
+func extraceEnv(cmdargs []string) ([]string, []string) {
+	cmds := []string{}
+	envs := []string{}
+	done := false
+	for _, arg := range cmdargs {
+		if !done && strings.HasPrefix(arg, "env:") {
+			envs = append(envs, arg[4:])
+		} else {
+			cmds = append(cmds, arg)
+			done = true
+		}
+	}
+	return cmds, envs
+}
+
+func runInDirs(ctx context.Context, dirs []string, action string, cmdSpec []string, globalEnvs []string) error {
 	if len(cmdSpec) == 0 {
 		return fmt.Errorf("missing command")
 	}
 	allCmds := splitCmd(cmdSpec)
 	for _, cmdargs := range allCmds {
-		cmd := cmdargs[0]
+		cmds, envs := extraceEnv(cmdargs)
+		envs = append(envs, globalEnvs...)
+		fmt.Printf("Running %v - [%v] %v\n", cmdargs, cmds, envs)
+		cmd := cmds[0]
 		args := []string{}
-		if len(cmdargs) > 1 {
-			args = cmdargs[1:]
+		if len(cmds) > 1 {
+			args = cmds[1:]
 		}
 		var errs errors.M
 		for _, dir := range dirs {
-			if err := runInDir(ctx, dir, cmd, args); err != nil {
+			if err := runInDir(ctx, dir, cmd, envs, args); err != nil {
 				fmt.Fprintf(os.Stderr, "%v: failed: %v\n", dir, err)
-				errs.Append(fmt.Errorf("action in %v: %v %v %w", dir, action, strings.Join(cmdargs, " "), err))
+				errs.Append(fmt.Errorf("action in %v: %v %v %w", dir, action, strings.Join(cmds, " "), err))
 			}
 		}
 		if err := errs.Err(); err != nil {
@@ -293,12 +313,16 @@ func runInDirs(ctx context.Context, dirs []string, action string, cmdSpec []stri
 	return nil
 }
 
-func runInDir(ctx context.Context, dir string, binary string, args []string) error {
+func runInDir(ctx context.Context, dir string, binary string, envs []string, args []string) error {
 	if verboseFlag {
 		fmt.Printf("%v: %v %v\n", dir, binary, strings.Join(args, " "))
 	}
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = dir
+	if len(envs) > 0 {
+		cmd.Env = os.Environ()
+		cmd.Env = append(cmd.Env, envs...)
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()
@@ -368,10 +392,10 @@ func goworkUpdate(ctx context.Context, mods, internalModsToConsider []string) er
 		for _, update := range externalUpdates {
 			merged = append(merged, update.update)
 		}
-		if err := runInDir(ctx, modpath, "go", merged); err != nil {
+		if err := runInDir(ctx, modpath, "go", nil, merged); err != nil {
 			return fmt.Errorf("%v: go %v: failed %w", modpath, strings.Join(merged, " "), err)
 		}
-		if err := runInDir(ctx, modpath, "go", []string{"mod", "tidy"}); err != nil {
+		if err := runInDir(ctx, modpath, "go", nil, []string{"mod", "tidy"}); err != nil {
 			return fmt.Errorf("%v: go mod tidy: failed %w", modpath, err)
 		}
 	}
@@ -401,10 +425,10 @@ func goworkUpdate(ctx context.Context, mods, internalModsToConsider []string) er
 		}
 		merged := []string{"get"}
 		merged = append(merged, otherUpdates...)
-		if err := runInDir(ctx, modpath, "go", merged); err != nil {
+		if err := runInDir(ctx, modpath, "go", nil, merged); err != nil {
 			return fmt.Errorf("%v: go %v: failed %w", modpath, strings.Join(merged, " "), err)
 		}
-		if err := runInDir(ctx, modpath, "go", []string{"mod", "tidy"}); err != nil {
+		if err := runInDir(ctx, modpath, "go", nil, []string{"mod", "tidy"}); err != nil {
 			return fmt.Errorf("%v: go mod tidy: failed %w", modpath, err)
 		}
 	}
