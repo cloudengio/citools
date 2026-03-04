@@ -24,6 +24,7 @@ var initArgs = []string{
 	"--no-sandbox",
 	"--remote-debugging-port=9222",
 	"--no-default-browser-check",
+	"--disable-crash-reporter",
 }
 
 type browser struct {
