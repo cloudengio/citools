@@ -54,7 +54,7 @@ func (b browser) init(ctx context.Context) error {
 	}
 	for _, dir := range []string{
 		"Default",
-		"ClientCertificates",
+		filepath.Join("Default", "ClientCertificates"),
 		filepath.Join("shared_proto_db", "metadata"),
 	} {
 		dir := filepath.Join(b.userDataDir, dir)
