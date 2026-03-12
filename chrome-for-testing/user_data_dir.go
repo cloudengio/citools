@@ -13,7 +13,7 @@ import (
 )
 
 type userDataDirFlags struct {
-	OS string `subcmd:"os,,operating system for which to determine the user data dir (linux, darwin, windows). If not specified, the current OS is used."`
+	OS string `subcmd:"os,,'operating system for which to determine the user data dir (linux, darwin, windows). If not specified, the current OS is used.'"`
 }
 
 func (d *downloadInstallCmd) userDataDirCmd(ctx context.Context, f any, args []string) error {
@@ -28,7 +28,6 @@ func (d *downloadInstallCmd) userDataDirCmd(ctx context.Context, f any, args []s
 	}
 	fmt.Println(udDir)
 	return nil
-
 }
 
 func getUserDataDir(goos string) (string, error) {
