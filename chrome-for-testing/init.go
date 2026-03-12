@@ -63,12 +63,14 @@ func (b browser) init(ctx context.Context) error {
 			ctxlog.Info(ctx, "browser profile has not been initialized", "profile_dir", dir, "time_taken", time.Since(now).String())
 			return nil
 		}
+		ctxlog.Info(ctx, "dir exists", "dir", dir)
 	}
 	if len(b.nssDir) > 0 {
 		if !b.waitForDir(ctx, b.nssDir) {
 			ctxlog.Info(ctx, "nss dir has not been initialized", "nss_dir", b.nssDir, "time_taken", time.Since(now).String())
 			return nil
 		}
+		ctxlog.Info(ctx, "nss dir exists", "nss_dir", b.nssDir)
 	}
 	return terminateChromeProcesses(ctx, cmd, b.binaryPath, b.debug)
 }
