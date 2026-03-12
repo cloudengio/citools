@@ -51,8 +51,9 @@ func (vf *VersionFlags) ParseRequestedDownload() (RequestedDownload, error) {
 type installFlags struct {
 	VersionFlags
 	CacheFlags
-	Debug      bool `subcmd:"debug,false,enable debug output"`
-	Initialize bool `subcmd:"initialize,false,initialize browser profile after installation"`
+	Debug      bool   `subcmd:"debug,false,enable debug output"`
+	Initialize bool   `subcmd:"initialize,false,initialize browser profile after installation"`
+	NSSDir     string `subcmd:"nssdir,,location of nss database"`
 }
 
 type downloadInstallCmd struct{}
@@ -128,6 +129,7 @@ func (ic *downloadInstallCmd) installCmd(ctx context.Context, f any, args []stri
 		goos:        runtime.GOOS,
 		binaryPath:  binaryPath,
 		userDataDir: userDataDir,
+		nssDir:      os.ExpandEnv(fv.NSSDir),
 		debug:       fv.Debug,
 	}
 	logger.Info("initializing browser profile", "user_data_dir", userDataDir)

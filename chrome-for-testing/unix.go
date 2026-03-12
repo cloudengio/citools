@@ -45,7 +45,7 @@ func getVersion(ctx context.Context, debug bool, binaryPath string) (string, err
 	return string(bytes.TrimSpace(stdout.Bytes())), nil
 }
 
-func terminateChromeProcesses(ctx context.Context, cmd *exec.Cmd, binaryPath string, debug bool) error {
+func terminateChromeProcesses(ctx context.Context, cmd *exec.Cmd, _ string, _ bool) error {
 	pid := cmd.Process.Pid
 	ctxlog.Info(ctx, "terminating browser process by pid", "pid", pid)
 	err := executil.SignalAndWait(ctx, time.Second, cmd, os.Interrupt, os.Kill)
