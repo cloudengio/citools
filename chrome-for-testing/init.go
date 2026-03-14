@@ -61,7 +61,7 @@ func (b browser) init(ctx context.Context) error {
 		dir := filepath.Join(b.userDataDir, dir)
 		if !b.waitForDir(ctx, dir) {
 			ctxlog.Info(ctx, "browser profile has not been initialized", "profile_dir", dir, "time_taken", time.Since(now).String())
-			return nil
+			return fmt.Errorf("%v not available after %v", dir, time.Since(now).String())
 		}
 		ctxlog.Info(ctx, "dir exists", "dir", dir)
 	}
