@@ -30,7 +30,7 @@ func cli() *subcmd.CommandSetYAML {
 	downloadInstallCmd := &downloadInstallCmd{}
 	cmd.Set("get-manifest").MustRunner((&endpointsCmd{}).Get, &endpointsFlags{})
 	cmd.Set("install").MustRunner(downloadInstallCmd.installCmd, &installFlags{})
-	cmd.Set("user-data-dir").MustRunner(downloadInstallCmd.userDataDirCmd, &installFlags{})
+	cmd.Set("user-data-dir").MustRunner(downloadInstallCmd.userDataDirCmd, &userDataDirFlags{})
 	return cmd
 }
 

@@ -131,7 +131,7 @@ func (ic *downloadInstallCmd) installCmd(ctx context.Context, f any, args []stri
 		debug:       fv.Debug,
 	}
 	logger.Info("initializing browser profile", "user_data_dir", userDataDir)
-	ictx, icancel := context.WithTimeout(ctx, time.Minute)
+	ictx, icancel := context.WithTimeout(ctx, time.Minute*3)
 	defer icancel()
 	if err := browser.init(ictx); err != nil {
 		return fmt.Errorf("initializing browser profile: %w", err)

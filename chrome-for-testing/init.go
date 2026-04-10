@@ -24,12 +24,14 @@ var initArgs = []string{
 	"--no-sandbox",
 	"--remote-debugging-port=9222",
 	"--no-default-browser-check",
+	"--disable-crash-reporter",
 }
 
 type browser struct {
 	goos        string
 	binaryPath  string
 	userDataDir string
+	nssDir      string
 	debug       bool
 }
 
@@ -50,37 +52,45 @@ func (b browser) init(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start command: %v: %w", strings.Join(cmd.Args, " "), err)
 	}
-	profileDir := filepath.Join(b.userDataDir, "Default")
-	if !b.waitForProfile(ctx, profileDir) {
-		ctxlog.Info(ctx, "browser profile has not been initialized", "profile_dir", profileDir, "time_taken", time.Since(now).String())
-		return nil
+	for _, dir := range []string{
+		"Default",
+		filepath.Join("Default", "ClientCertificates"),
+		filepath.Join("Default", "shared_proto_db", "metadata"),
+		"segmentation_platform",
+	} {
+		dir := filepath.Join(b.userDataDir, dir)
+		if !b.waitForDir(ctx, dir) {
+			ctxlog.Info(ctx, "browser profile has not been initialized", "profile_dir", dir, "time_taken", time.Since(now).String())
+			return fmt.Errorf("%v not available after %v", dir, time.Since(now).String())
+		}
+		ctxlog.Info(ctx, "dir exists", "dir", dir)
 	}
 	return terminateChromeProcesses(ctx, cmd, b.binaryPath, b.debug)
 }
 
-func (b browser) waitForProfile(ctx context.Context, profileDir string) bool {
+func (b browser) waitForDir(ctx context.Context, dir string) bool {
 	start := time.Now()
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			ctxlog.Info(ctx, "timed out waiting for profile dir", "profile_dir", profileDir, "after", time.Since(start).String(), "error", ctx.Err())
+			ctxlog.Info(ctx, "timed out waiting for dir", "dir", dir, "after", time.Since(start).String(), "error", ctx.Err())
 			return false
 		case <-ticker.C:
-			fi, err := os.Stat(profileDir)
+			fi, err := os.Stat(dir)
 			if err == nil {
 				if !fi.IsDir() {
-					ctxlog.Info(ctx, "profile dir is not a directory", "profile_dir", profileDir)
+					ctxlog.Info(ctx, "dir is not a directory", "dir", dir)
 					return false
 				}
 				return true
 			}
 			if !os.IsNotExist(err) {
-				ctxlog.Info(ctx, "error checking for profile dir", "profile_dir", profileDir, "error", err)
+				ctxlog.Info(ctx, "error checking for dir", "dir", dir, "error", err)
 				continue
 			}
-			ctxlog.Debug(ctx, "waiting for profile dir", "profile_dir", profileDir, "error", err)
+			ctxlog.Debug(ctx, "waiting for dir", "dir", dir, "error", err)
 		}
 	}
 }

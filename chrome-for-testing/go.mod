@@ -19,7 +19,13 @@ require (
 	cloudeng.io/sys v0.0.0-20251202225320-0bbed8e69d21 // indirect
 	cloudeng.io/text v0.0.13 // indirect
 	cloudeng.io/windows v0.0.0-20251203211350-c30caae1cc5e // indirect
+	github.com/cloudengio/mkcert v0.0.0-20260313001854-3e0d8e2ee344 // indirect
 	github.com/kr/text v0.2.0 // indirect
+	golang.org/x/crypto v0.44.0 // indirect
+	golang.org/x/net v0.47.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/text v0.31.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+	howett.net/plist v1.0.0 // indirect
+	software.sslmate.com/src/go-pkcs12 v0.2.0 // indirect
 )
