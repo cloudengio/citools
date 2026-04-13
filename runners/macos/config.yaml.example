@@ -1,0 +1,18 @@
+# macOS Tart Orchestrator Configuration
+
+base_vm_name: "macos-ci"
+poll_interval: 15s
+
+# macOS Virtualization.framework limit is 2
+max_concurrent_vms: 2
+
+repositories:
+  - owner: "your_org"
+    repo:  "repo-a"
+    target_idle: 1
+  - owner: "your_org"
+    repo:  "repo-b"
+    target_idle: 2
+
+# Optional: if github_token is not set, it will use 'gh auth token'
+# github_token: "your_token"

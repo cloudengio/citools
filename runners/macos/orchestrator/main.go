@@ -23,26 +23,41 @@ type Repository struct {
 }
 
 type Config struct {
-	GitHubToken      string        `yaml:"github_token"`
-	Repositories     []Repository  `yaml:"repositories"`
-	BaseVMName       string        `yaml:"base_vm_name"`
-	PollInterval     time.Duration `yaml:"poll_interval"`
-	MaxConcurrentVMs int           `yaml:"max_concurrent_vms"`
+	GitHubToken        string        `yaml:"github_token"`
+	Repositories       []Repository  `yaml:"repositories"`
+	BaseVMName         string        `yaml:"base_vm_name"`
+	PollInterval       time.Duration `yaml:"poll_interval"`
+	MaxConcurrentVMs   int           `yaml:"max_concurrent_vms"`
+	KeepFailedDuration time.Duration `yaml:"keep_failed_duration"`
 }
+
+type VMState string
+
+const (
+	StateProvisioning VMState = "provisioning"
+	StateIdle         VMState = "idle"
+	StateAssigned     VMState = "assigned"
+	StateFailed       VMState = "failed"
+	StateStopping     VMState = "stopping"
+)
 
 type ManagedVM struct {
 	Name       string
 	Owner      string
 	Repo       string
 	CancelFunc context.CancelFunc
-	Busy       bool
+	State      VMState
+	IP         string
+	AssignedAt time.Time
 }
 
 var verbose bool
+var keepFailedDur time.Duration
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "Path to YAML configuration file")
 	flag.BoolVar(&verbose, "v", false, "Enable verbose logging")
+	flag.DurationVar(&keepFailedDur, "keep-failed", 0, "Duration to keep failed VMs alive (e.g. 30m, 1h)")
 	flag.Parse()
 
 	if verbose {
@@ -57,6 +72,11 @@ func main() {
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		log.Fatalf("Error parsing config file: %v", err)
+	}
+
+	// Flag overrides config
+	if keepFailedDur > 0 {
+		cfg.KeepFailedDuration = keepFailedDur
 	}
 
 	if cfg.BaseVMName == "" {
@@ -93,136 +113,192 @@ func main() {
 	ticker := time.NewTicker(cfg.PollInterval)
 	defer ticker.Stop()
 
-	log.Printf("Starting orchestrator for %d repos. Max Concurrent VMs: %d", len(cfg.Repositories), cfg.MaxConcurrentVMs)
+	log.Printf("Starting orchestrator. Max Concurrent VMs (Pool Size): %d", cfg.MaxConcurrentVMs)
 
 	for {
-		// 1. Collect needs across all repos
-		for _, repo := range cfg.Repositories {
-			// If not set, default to 1 so we always have a warm VM
-			if repo.TargetIdle == 0 {
-				repo.TargetIdle = 1
+		mu.Lock()
+		currentRunningCount := len(activeVMs)
+		
+		// 1. Maintain Pool Size
+		if currentRunningCount < cfg.MaxConcurrentVMs {
+			countToStart := cfg.MaxConcurrentVMs - currentRunningCount
+			for i := 0; i < countToStart; i++ {
+				vmName := fmt.Sprintf("%s-%d", cfg.BaseVMName, time.Now().UnixNano()/1e6)
+				log.Printf("[%s] Starting new pooled VM", vmName)
+				vmCtx, vmCancel := context.WithCancel(ctx)
+				vm := &ManagedVM{
+					Name:       vmName,
+					State:      StateProvisioning,
+					CancelFunc: vmCancel,
+				}
+				activeVMs[vmName] = vm
+
+				wg.Add(1)
+				go func(name string, vctx context.Context, vcancel context.CancelFunc) {
+					defer wg.Done()
+					defer vcancel()
+					
+					// Provisioning phase
+					if err := tart.Clone(vctx, name); err != nil {
+						log.Printf("[%s] Clone failed: %v", name, err)
+						mu.Lock()
+						delete(activeVMs, name)
+						mu.Unlock()
+						return
+					}
+
+					if _, err := tart.Run(vctx, name); err != nil {
+						log.Printf("[%s] Run failed: %v", name, err)
+						_ = tart.Delete(context.Background(), name)
+						mu.Lock()
+						delete(activeVMs, name)
+						mu.Unlock()
+						return
+					}
+
+					ip, err := tart.GetIP(vctx, name)
+					if err != nil {
+						log.Printf("[%s] Failed to get IP: %v", name, err)
+						mu.Lock()
+						delete(activeVMs, name)
+						mu.Unlock()
+						_ = tart.Delete(context.Background(), name)
+						return
+					}
+
+					mu.Lock()
+					if v, ok := activeVMs[name]; ok {
+						v.IP = ip
+						v.State = StateIdle
+						log.Printf("[%s] VM is now IDLE and ready for assignment (IP: %s)", name, ip)
+					}
+					mu.Unlock()
+
+					// Keep running until context is cancelled (either assigned job finishes or orchestrator stops)
+					<-vctx.Done()
+					log.Printf("[%s] VM context done, cleaning up...", name)
+					
+					// Cleanup
+					mu.Lock()
+					delete(activeVMs, name)
+					mu.Unlock()
+					_ = tart.Delete(context.Background(), name)
+				}(vmName, vmCtx, vmCancel)
+				
+				time.Sleep(100 * time.Millisecond)
 			}
+		}
+		mu.Unlock()
 
+		// 2. Check for Queued Jobs and Assign Idle VMs
+		for _, repo := range cfg.Repositories {
 			gh := &GitHub{Token: cfg.GitHubToken, Owner: repo.Owner, Repo: repo.Repo, Verbose: verbose}
-
 			queued, err := gh.GetQueuedRunCount(ctx)
 			if err != nil {
 				log.Printf("[%s/%s] Error getting queued count: %v", repo.Owner, repo.Repo, err)
 				continue
 			}
-			runners, err := gh.GetRunners(ctx)
-			if err != nil {
-				log.Printf("[%s/%s] Error getting runners: %v", repo.Owner, repo.Repo, err)
-				continue
-			}
 
-			idleCount := 0
-			busyCount := 0
-			for _, r := range runners {
-				if strings.HasPrefix(r.Name, cfg.BaseVMName) && r.Status == "online" {
-					if r.Busy {
-						busyCount++
-					} else {
-						idleCount++
-					}
-					// Update local tracking
-					mu.Lock()
-					if vm, ok := activeVMs[r.Name]; ok {
-						vm.Busy = r.Busy
-					}
-					mu.Unlock()
-				}
-			}
-
-			if verbose {
-				log.Printf("[%s/%s] Queued: %d, Idle: %d, Busy: %d, TargetIdle: %d", repo.Owner, repo.Repo, queued, idleCount, busyCount, repo.TargetIdle)
-			}
-
-			// Decision logic:
-			// If we have queued jobs and no idle runners, we need a VM URGENTLY.
-			// Else if we have less than target_idle runners, we need a VM.
-			
-			needsVM := false
-			urgent := false
-			reason := ""
-			if queued > idleCount {
-				needsVM = true
-				urgent = true
-				reason = fmt.Sprintf("queued jobs (%d) > idle runners (%d)", queued, idleCount)
-			} else if idleCount < repo.TargetIdle {
-				needsVM = true
-				reason = fmt.Sprintf("idle runners (%d) < target idle (%d)", idleCount, repo.TargetIdle)
-			}
-
-			if needsVM {
-				mu.Lock()
-				currentVMCount := len(activeVMs)
-				canStart := currentVMCount < cfg.MaxConcurrentVMs
-				mu.Unlock()
-
-				if verbose {
-					log.Printf("[%s/%s] Needs VM: %s. canStart: %v (active: %d, max: %d)", repo.Owner, repo.Repo, reason, canStart, currentVMCount, cfg.MaxConcurrentVMs)
+			if queued > 0 {
+				runners, err := gh.GetRunners(ctx)
+				if err != nil {
+					log.Printf("[%s/%s] Error getting runners: %v", repo.Owner, repo.Repo, err)
+					continue
 				}
 
-				if !canStart && urgent {
-					// Reallocation logic: can we kill an idle VM from ANOTHER repo?
-					mu.Lock()
-					var victim *ManagedVM
-					for name, vm := range activeVMs {
-						if !vm.Busy && (vm.Owner != repo.Owner || vm.Repo != repo.Repo) {
-							victim = vm
-							delete(activeVMs, name)
-							break
+				activeRunners := 0
+				for _, r := range runners {
+					if r.Status == "online" {
+						activeRunners++
+					}
+				}
+
+				if queued > activeRunners {
+					needed := queued - activeRunners
+					for i := 0; i < needed; i++ {
+						mu.Lock()
+						var idleVM *ManagedVM
+						for _, v := range activeVMs {
+							if v.State == StateIdle {
+								idleVM = v
+								break
+							}
 						}
-					}
-					mu.Unlock()
 
-					if victim != nil {
-						log.Printf("[%s/%s] Urgent need. Stopping idle VM %s from %s/%s to free slot.", repo.Owner, repo.Repo, victim.Name, victim.Owner, victim.Repo)
-						victim.CancelFunc() // Stop the VM
-						// Wait a moment for slot to actually clear
-						time.Sleep(2 * time.Second)
-						canStart = true
-					}
-				}
-
-				if canStart {
-					vmName := fmt.Sprintf("%s-%s-%d", cfg.BaseVMName, strings.ToLower(repo.Repo), time.Now().Unix())
-					log.Printf("[%s/%s] Decided to start new VM: %s", repo.Owner, repo.Repo, vmName)
-					vmCtx, vmCancel := context.WithCancel(ctx)
-					
-					mu.Lock()
-					activeVMs[vmName] = &ManagedVM{
-						Name:       vmName,
-						Owner:      repo.Owner,
-						Repo:       repo.Repo,
-						CancelFunc: vmCancel,
-					}
-					mu.Unlock()
-
-					wg.Add(1)
-					go func(r Repository, g *GitHub, name string, vctx context.Context, vcancel context.CancelFunc) {
-						defer wg.Done()
-						defer vcancel()
-						defer func() {
-							mu.Lock()
-							delete(activeVMs, name)
-							log.Printf("[%s] Removed from tracking. Active VMs: %d", name, len(activeVMs))
+						if idleVM != nil {
+							log.Printf("[%s/%s] Found %d queued jobs. Assigning VM %s", repo.Owner, repo.Repo, queued, idleVM.Name)
+							idleVM.State = StateAssigned
+							idleVM.Owner = repo.Owner
+							idleVM.Repo = repo.Repo
+							idleVM.AssignedAt = time.Now()
 							mu.Unlock()
-						}()
 
-						if err := provisionAndRunVM(vctx, tart, g, name); err != nil {
-							log.Printf("[%s] VM Failed: %v", name, err)
+							// Start assignment in background
+							go func(vm *ManagedVM, g *GitHub, r Repository) {
+								token := r.Token
+								if token == "" {
+									var err error
+									token, err = g.CreateRegistrationToken(ctx)
+									if err != nil {
+										log.Printf("[%s] Failed to create registration token for %s/%s: %v", vm.Name, vm.Owner, vm.Repo, err)
+										vm.CancelFunc()
+										return
+									}
+								}
+
+								url := r.URL
+								if url == "" {
+									url = fmt.Sprintf("https://github.com/%s/%s", g.Owner, g.Repo)
+								}
+
+								labels := r.Labels
+								if labels == "" {
+									labels = "macos,arm64,macos-sequoia"
+								}
+
+								if err := tart.InjectConfig(ctx, vm.IP, url, token, vm.Name, labels); err != nil {
+									log.Printf("[%s] Failed to inject config: %v", vm.Name, err)
+									vm.CancelFunc()
+									return
+								}
+								log.Printf("[%s] Successfully assigned to %s/%s. Runner is starting.", vm.Name, vm.Owner, vm.Repo)
+								
+								go monitorJob(ctx, vm, g, cfg.KeepFailedDuration)
+							}(idleVM, gh, repo)
+						} else {
+							mu.Unlock()
+							if verbose {
+								log.Printf("[%s/%s] Needs VM for queued job, but pool is empty/provisioning.", repo.Owner, repo.Repo)
+							}
+							break 
 						}
-					}(repo, gh, vmName, vmCtx, vmCancel)
+					}
 				}
 			}
 		}
 
 		mu.Lock()
-		currentRunningCount := len(activeVMs)
+		statusProvisioning := 0
+		statusIdle := 0
+		statusAssigned := 0
+		statusFailed := 0
+		for _, v := range activeVMs {
+			switch v.State {
+			case StateProvisioning:
+				statusProvisioning++
+			case StateIdle:
+				statusIdle++
+			case StateAssigned:
+				statusAssigned++
+			case StateFailed:
+				statusFailed++
+			}
+		}
+		total := len(activeVMs)
 		mu.Unlock()
-		log.Printf("Status: %d/%d VMs running", currentRunningCount, cfg.MaxConcurrentVMs)
+		
+		log.Printf("Pool Status: %d Provisioning, %d Idle, %d Assigned, %d Failed (kept alive). Total: %d/%d", 
+			statusProvisioning, statusIdle, statusAssigned, statusFailed, total, cfg.MaxConcurrentVMs)
 
 		select {
 		case <-ticker.C:
@@ -233,73 +309,69 @@ func main() {
 	}
 }
 
-func provisionAndRunVM(ctx context.Context, tart *Tart, gh *GitHub, vmName string) error {
-	log.Printf("[%s] Provisioning...", vmName)
-	if err := tart.Clone(ctx, vmName); err != nil {
-		if verbose {
-			log.Printf("[%s] Clone failed: %v", vmName, err)
+func monitorJob(ctx context.Context, vm *ManagedVM, gh *GitHub, keepFailedDuration time.Duration) {
+	// Wait a bit for the runner to actually start and pick up the job
+	time.Sleep(30 * time.Second)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
 		}
-		return err
-	}
 
-	cmd, err := tart.Run(ctx, vmName)
-	if err != nil {
-		if verbose {
-			log.Printf("[%s] Run failed: %v", vmName, err)
+		// Check if job finished
+		conclusion, err := gh.GetRunnerJobConclusion(ctx, vm.Name)
+		if err == nil {
+			if conclusion != "" {
+				log.Printf("[%s] Job finished with conclusion: %s", vm.Name, conclusion)
+				if conclusion == "success" {
+					log.Printf("[%s] Success! Releasing VM for cleanup.", vm.Name)
+				} else {
+					log.Printf("[%s] Job failed (%s).", vm.Name, conclusion)
+					if keepFailedDuration > 0 {
+						log.Printf("[%s] Keeping VM alive for %v for debugging.", vm.Name, keepFailedDuration)
+						vm.State = StateFailed
+						select {
+						case <-time.After(keepFailedDuration):
+						case <-ctx.Done():
+						}
+					}
+					log.Printf("[%s] Releasing VM for cleanup (will be deleted).", vm.Name)
+				}
+				vm.CancelFunc()
+				return
+			}
 		}
-		_ = tart.Delete(context.Background(), vmName)
-		return err
-	}
 
-	// Lifecycle in background
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-
-	// Pre-stage
-	ip, err := tart.GetIP(ctx, vmName)
-	if err != nil {
-		if verbose {
-			log.Printf("[%s] Failed to get IP: %v", vmName, err)
+		// Also check if the runner is still online
+		runners, err := gh.GetRunners(ctx)
+		if err == nil {
+			found := false
+			for _, r := range runners {
+				if r.Name == vm.Name {
+					found = true
+					if r.Status == "offline" {
+						log.Printf("[%s] Runner went offline. Cleaning up.", vm.Name)
+						vm.CancelFunc()
+						return
+					}
+					break
+				}
+			}
+			// If we assigned it but it never showed up or was deleted from GH
+			if !found && time.Since(vm.AssignedAt) > 5*time.Minute {
+				log.Printf("[%s] Runner not found in GitHub after 5m. Cleaning up.", vm.Name)
+				vm.CancelFunc()
+				return
+			}
 		}
-		return fmt.Errorf("failed to get IP: %w", err)
-	}
 
-	token, err := gh.CreateRegistrationToken(ctx)
-	if err != nil {
-		if verbose {
-			log.Printf("[%s] Failed to create registration token: %v", vmName, err)
+		select {
+		case <-time.After(20 * time.Second):
+		case <-ctx.Done():
+			return
 		}
-		return fmt.Errorf("failed to create registration token: %w", err)
 	}
-
-	url := fmt.Sprintf("https://github.com/%s/%s", gh.Owner, gh.Repo)
-	if err := tart.InjectConfig(ctx, ip, url, token, vmName, "macos-sequoia,arm64"); err != nil {
-		if verbose {
-			log.Printf("[%s] Failed to inject config: %v", vmName, err)
-		}
-		return fmt.Errorf("failed to inject config: %w", err)
-	}
-	log.Printf("[%s] Ready for %s/%s", vmName, gh.Owner, gh.Repo)
-
-	select {
-	case <-ctx.Done():
-		// Forced stop (e.g. reallocation or shutdown)
-		log.Printf("[%s] Stopping VM (context cancelled)", vmName)
-		if cmd.Process != nil {
-			_ = cmd.Process.Signal(os.Interrupt)
-		}
-		<-done
-	case err := <-done:
-		log.Printf("[%s] Finished (exited: %v)", vmName, err)
-	}
-
-	// Cleanup logic
-	time.Sleep(10 * time.Second)
-	conclusion, _ := gh.GetRunnerJobConclusion(context.Background(), vmName)
-	if conclusion == "success" || conclusion == "" {
-		_ = tart.Delete(context.Background(), vmName)
-	} else {
-		log.Printf("[%s] Job failed (%s). RETAINING VM.", vmName, conclusion)
-	}
-	return nil
 }
+

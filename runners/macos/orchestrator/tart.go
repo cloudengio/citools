@@ -80,7 +80,7 @@ func (t *Tart) Delete(ctx context.Context, vmName string) error {
 }
 
 func (t *Tart) InjectConfig(ctx context.Context, ip, url, token, name, labels string) error {
-	t.log("Injecting runner config into %s via SSH...", ip)
+	t.log("Configuring and starting runner on %s via SSH...", ip)
 	config := &ssh.ClientConfig{
 		User: "admin",
 		Auth: []ssh.AuthMethod{
@@ -92,8 +92,8 @@ func (t *Tart) InjectConfig(ctx context.Context, ip, url, token, name, labels st
 
 	var client *ssh.Client
 	var err error
-	for i := 0; i < 10; i++ {
-		t.log("Attempting SSH connection to %s (%d/10)...", ip, i+1)
+	for i := 0; i < 15; i++ { // More retries for SSH boot
+		t.log("Attempting SSH connection to %s (%d/15)...", ip, i+1)
 		client, err = ssh.Dial("tcp", net.JoinHostPort(ip, "22"), config)
 		if err == nil {
 			t.log("SSH connection established to %s", ip)
@@ -118,28 +118,35 @@ func (t *Tart) InjectConfig(ctx context.Context, ip, url, token, name, labels st
 	}
 	defer session.Close()
 
-	content := fmt.Sprintf("RUNNER_URL=%s\nRUNNER_TOKEN=%s\nRUNNER_NAME=%s\nRUNNER_LABELS=%s\n", url, token, name, labels)
-	remotePath := "/Users/admin/.github-runner-config"
+	// Direct configuration and startup.
+	// We use nohup or & to ensure the session doesn't block the orchestrator indefinitely if we want,
+	// but here we actually want it to run. However, the runner .run.sh blocks.
+	// So we'll run the config command and then run.sh in the background OR as part of a script that handles it.
+	
+	setupCmd := fmt.Sprintf(`cd /Users/admin/actions-runner && \
+./config.sh --url %s --token %s --name %s --labels %s --unattended --ephemeral --replace && \
+./run.sh && \
+sudo shutdown -h now`, url, token, name, labels)
 
-	// Using a simple heredoc to write the file
-	cmd := fmt.Sprintf("cat << 'EOF' > %s\n%sEOF\n", remotePath, content)
-	t.log("Writing runner config to %s via SSH...", remotePath)
-	if err := session.Run(cmd); err != nil {
-		t.log("Failed to write config file via SSH: %v", err)
-		return fmt.Errorf("failed to write config file via SSH: %v", err)
-	}
-
-	// Kick the service to make sure it picks up the new config if it already started
-	t.log("Kicking Github runner service via SSH...")
-	session2, err := client.NewSession()
-	if err == nil {
-		if err := session2.Run("launchctl kickstart -k gui/$(id -u admin)/com.github.actions.runner"); err != nil {
-			t.log("Failed to kickstart runner service: %v (ignoring)", err)
-		}
-		session2.Close()
+	t.log("Running configuration and startup command on %s...", ip)
+	// We run this in the background on the remote host so we don't hang the SSH session if it blocks.
+	// But ./run.sh IS blocking. If we want the orchestrator to continue, we might want to background it.
+	// Actually, the session.Run will wait for the command to finish.
+	// Since ./run.sh finishes when the job is done, this is fine, but we might want a timeout or to run it in background.
+	// Better to run it in background remote and exit session.
+	
+	bgCmd := fmt.Sprintf("nohup bash -c %s > /Users/admin/actions-runner/orch.log 2>&1 &", q(setupCmd))
+	
+	if err := session.Run(bgCmd); err != nil {
+		t.log("Failed to start runner via SSH: %v", err)
+		return fmt.Errorf("failed to start runner via SSH: %v", err)
 	}
 
 	return nil
+}
+
+func q(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 // Just in case we need to copy a file directly
