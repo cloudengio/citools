@@ -55,6 +55,7 @@ import (
 	"sort"
 	"strings"
 
+	"golang.org/x/mod/modfile"
 	"golang.org/x/tools/imports"
 )
 
@@ -63,8 +64,8 @@ const marker = "//cicd:astest"
 // stringSliceFlag is a repeatable string flag (flag.Var).
 type stringSliceFlag []string
 
-func (f *stringSliceFlag) String() string        { return strings.Join(*f, ", ") }
-func (f *stringSliceFlag) Set(v string) error    { *f = append(*f, v); return nil }
+func (f *stringSliceFlag) String() string     { return strings.Join(*f, ", ") }
+func (f *stringSliceFlag) Set(v string) error { *f = append(*f, v); return nil }
 
 func main() {
 	pkgPathFlag := flag.Bool("pkg-path", false, "treat first argument as an import path rather than a directory")
@@ -203,13 +204,17 @@ func findMarkedFunctions(dir string) (funcs []string, pkgName string, err error)
 
 // isEligibleTestFunc reports whether fn looks like a test-helper function:
 //   - name begins with "Test"
+//   - is a package-level function, not a method
 //   - exactly one parameter
 //   - parameter type is not *testing.T (i.e. it uses a custom interface)
 func isEligibleTestFunc(fn *ast.FuncDecl) bool {
 	if !strings.HasPrefix(fn.Name.Name, "Test") {
 		return false
 	}
-	if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
+	if fn.Recv != nil {
+		return false
+	}
+	if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 || len(fn.Type.Params.List[0].Names) > 1 {
 		return false
 	}
 	// Exclude functions already using *testing.T — wrapping them would
@@ -374,10 +379,14 @@ func findImportPath(dir string) (string, error) {
 	for {
 		modPath := filepath.Join(d, "go.mod")
 		if data, err := os.ReadFile(modPath); err == nil {
-			modulePath := parseModulePath(data)
-			if modulePath == "" {
-				return "", fmt.Errorf("cannot parse module path from %s", modPath)
+			f, err := modfile.ParseLax(modPath, data, nil)
+			if err != nil {
+				return "", fmt.Errorf("parsing %s: %w", modPath, err)
 			}
+			if f.Module == nil {
+				return "", fmt.Errorf("no module directive in %s", modPath)
+			}
+			modulePath := f.Module.Mod.Path
 			rel, err := filepath.Rel(d, dir)
 			if err != nil {
 				return "", err
@@ -394,15 +403,4 @@ func findImportPath(dir string) (string, error) {
 		d = parent
 	}
 	return "", fmt.Errorf("no go.mod found in %s or any parent directory", dir)
-}
-
-// parseModulePath extracts the module path from go.mod content.
-func parseModulePath(data []byte) string {
-	for line := range strings.SplitSeq(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if after, ok := strings.CutPrefix(line, "module "); ok {
-			return strings.TrimSpace(after)
-		}
-	}
-	return ""
 }

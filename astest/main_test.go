@@ -140,6 +140,14 @@ func TestMultiParams(t T, x int) {}`,
 			funcName: "TestMultiParams",
 			want:     false, // more than one parameter
 		},
+		{
+			src: `package p
+type T interface{}
+type Suite struct{}
+func (s *Suite) TestMethod(t T) {}`,
+			funcName: "TestMethod",
+			want:     false, // methods are not eligible; generated wrapper would not compile
+		},
 	}
 
 	for _, tc := range cases {
