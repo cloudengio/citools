@@ -32,6 +32,10 @@ or --import are added to (or removed from) the import block automatically.
 
     --pkg-path            treat the first argument as an import path rather than
                           a directory; the directory is resolved via go list
+    --internal_test       use an internal test package (package <pkg>);
+                          default is the external form (package <pkg>_test)
+    --match <regexp>      only generate wrappers for marked functions whose
+                          names match the regular expression (default: all)
     --preamble <code>     Go statements inserted at the top of every generated
                           function body; use \n to separate multiple statements
     --import <spec>       extra import added to the generated file; may be
