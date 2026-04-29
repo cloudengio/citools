@@ -33,6 +33,10 @@
 //
 //	--pkg-path            treat the first argument as an import path rather than
 //	                      a directory; the directory is resolved via go list
+//	--internal_test       use an internal test package (package <pkg>);
+//	                      default is the external form (package <pkg>_test)
+//	--match <regexp>      only generate wrappers for marked functions whose
+//	                      names match the regular expression (default: all)
 //	--preamble <code>     Go statements inserted at the top of every generated
 //	                      function body; use \n to separate multiple statements
 //	--import <spec>       extra import added to the generated file; may be
@@ -47,11 +51,13 @@ import (
 	"fmt"
 	"go/ast"
 	"go/parser"
+	"go/printer"
 	"go/token"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -61,14 +67,90 @@ import (
 
 const marker = "//cicd:astest"
 
+// funcInfo holds the name and extra (non-testing-T) parameters of a marked function.
+type funcInfo struct {
+	name        string
+	extraParams []paramField
+}
+
+// paramField holds the names and rendered type string of one parameter field.
+type paramField struct {
+	names []string
+	typ   string
+}
+
+// builtinIdents is the set of predeclared Go type identifiers that must not be
+// qualified with a package name when rendering a type expression.
+var builtinIdents = map[string]bool{
+	"bool": true, "byte": true, "complex64": true, "complex128": true,
+	"error": true, "float32": true, "float64": true,
+	"int": true, "int8": true, "int16": true, "int32": true, "int64": true,
+	"rune": true, "string": true,
+	"uint": true, "uint8": true, "uint16": true, "uint32": true, "uint64": true,
+	"uintptr": true, "any": true, "comparable": true,
+}
+
+// renderType converts an AST type expression to its string representation,
+// qualifying bare identifiers (types local to the source package) with srcPkg.
+// Types that are already selector expressions (pkg.Type) are emitted as-is.
+// go/printer is used as a fallback for uncommon composite forms.
+func renderType(expr ast.Expr, srcPkg string) string {
+	switch e := expr.(type) {
+	case *ast.Ident:
+		if builtinIdents[e.Name] {
+			return e.Name
+		}
+		return srcPkg + "." + e.Name
+	case *ast.SelectorExpr:
+		if id, ok := e.X.(*ast.Ident); ok {
+			return id.Name + "." + e.Sel.Name
+		}
+	case *ast.StarExpr:
+		return "*" + renderType(e.X, srcPkg)
+	case *ast.ArrayType:
+		if e.Len == nil {
+			return "[]" + renderType(e.Elt, srcPkg)
+		}
+		if lit, ok := e.Len.(*ast.BasicLit); ok {
+			return "[" + lit.Value + "]" + renderType(e.Elt, srcPkg)
+		}
+	case *ast.MapType:
+		return "map[" + renderType(e.Key, srcPkg) + "]" + renderType(e.Value, srcPkg)
+	case *ast.ChanType:
+		prefix := "chan "
+		switch e.Dir {
+		case ast.SEND:
+			prefix = "chan<- "
+		case ast.RECV:
+			prefix = "<-chan "
+		}
+		return prefix + renderType(e.Value, srcPkg)
+	case *ast.Ellipsis:
+		return "..." + renderType(e.Elt, srcPkg)
+	}
+	var buf bytes.Buffer
+	printer.Fprint(&buf, token.NewFileSet(), expr) //nolint:errcheck
+	return buf.String()
+}
+
 // stringSliceFlag is a repeatable string flag (flag.Var).
 type stringSliceFlag []string
 
 func (f *stringSliceFlag) String() string     { return strings.Join(*f, ", ") }
-func (f *stringSliceFlag) Set(v string) error { *f = append(*f, v); return nil }
+func (f *stringSliceFlag) Set(v string) error { *f = append(*f, stripQuotes(v)); return nil }
+
+// stripQuotes removes a single matching pair of outer ' or " quotes, if present.
+func stripQuotes(s string) string {
+	if len(s) >= 2 && ((s[0] == '\'' && s[len(s)-1] == '\'') || (s[0] == '"' && s[len(s)-1] == '"')) {
+		return s[1 : len(s)-1]
+	}
+	return s
+}
 
 func main() {
 	pkgPathFlag := flag.Bool("pkg-path", false, "treat first argument as an import path rather than a directory")
+	internalTestFlag := flag.Bool("internal_test", false, "use an internal test package (package <pkg>) instead of an external one (package <pkg>_test) when the output file is in the same directory as the source")
+	matchFlag := flag.String("match", "", "regular expression; only marked functions whose names match are generated (default: all marked functions)")
 	preambleFlag := flag.String("preamble", "", "Go code inserted as the first statement(s) in every generated function; use \\n for multiple lines")
 	var extraImports stringSliceFlag
 	flag.Var(&extraImports, "import", "extra import spec added to generated file; may be repeated.\n\tbare path: context  aliased: mypkg \"some/pkg\"  blank: _ \"some/pkg\"")
@@ -77,6 +159,8 @@ func main() {
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+	*matchFlag = stripQuotes(*matchFlag)
+	*preambleFlag = stripQuotes(*preambleFlag)
 
 	if flag.NArg() != 2 {
 		flag.Usage()
@@ -107,7 +191,15 @@ func main() {
 		log.Fatalf("resolving output file: %v", err)
 	}
 
-	funcs, srcPkgName, err := findMarkedFunctions(pkgDir)
+	var matchRE *regexp.Regexp
+	if *matchFlag != "" {
+		matchRE, err = regexp.Compile(*matchFlag)
+		if err != nil {
+			log.Fatalf("compiling --match regexp: %v", err)
+		}
+	}
+
+	funcs, srcPkgName, err := findMarkedFunctions(pkgDir, matchRE)
 	if err != nil {
 		log.Fatalf("parsing package: %v", err)
 	}
@@ -120,12 +212,15 @@ func main() {
 	outDir := filepath.Dir(outFile)
 	var outPkgName string
 	if outDir == pkgDir {
-		outPkgName = srcPkgName + "_test"
+		outPkgName = srcPkgName
 	} else {
 		outPkgName, err = inferPackageName(outDir)
 		if err != nil {
 			log.Fatalf("inferring output package name: %v", err)
 		}
+	}
+	if !*internalTestFlag {
+		outPkgName += "_test"
 	}
 
 	code, err := generateCode(outPkgName, srcPkgName, importPath, strings.ReplaceAll(*preambleFlag, `\n`, "\n"), outFile, []string(extraImports), funcs)
@@ -139,15 +234,18 @@ func main() {
 	fmt.Printf("wrote %s (%d function(s))\n", outFile, len(funcs))
 }
 
-// findMarkedFunctions parses the non-test Go files in dir and returns the
-// names of all functions that:
+// findMarkedFunctions parses the non-test Go files in dir and returns info
+// about all functions that:
 //   - start with "Test"
-//   - accept exactly one parameter whose type is not *testing.T
+//   - have at least one parameter (first field must have exactly one name and
+//     not be *testing.T)
 //   - carry the //cicd:astest marker in the doc-comment or as the first
 //     comment inside the function body
+//   - match filter (if non-nil)
 //
-// It also returns the package name.
-func findMarkedFunctions(dir string) (funcs []string, pkgName string, err error) {
+// Extra parameters beyond the first are collected for forwarding in the
+// generated wrapper. It also returns the package name.
+func findMarkedFunctions(dir string, filter *regexp.Regexp) (funcs []funcInfo, pkgName string, err error) {
 	fset := token.NewFileSet()
 
 	entries, err := os.ReadDir(dir)
@@ -191,22 +289,40 @@ func findMarkedFunctions(dir string) (funcs []string, pkgName string, err error)
 				continue
 			}
 			name := fn.Name.Name
-			if !seen[name] {
-				seen[name] = true
-				funcs = append(funcs, name)
+			if seen[name] {
+				continue
 			}
+			if filter != nil && !filter.MatchString(name) {
+				continue
+			}
+			seen[name] = true
+			info := funcInfo{name: name}
+			for _, field := range fn.Type.Params.List[1:] {
+				var names []string
+				for _, n := range field.Names {
+					names = append(names, n.Name)
+				}
+				info.extraParams = append(info.extraParams, paramField{
+					names: names,
+					typ:   renderType(field.Type, pkgName),
+				})
+			}
+			funcs = append(funcs, info)
 		}
 	}
 
-	sort.Strings(funcs)
+	sort.Slice(funcs, func(i, j int) bool { return funcs[i].name < funcs[j].name })
 	return funcs, pkgName, nil
 }
 
 // isEligibleTestFunc reports whether fn looks like a test-helper function:
 //   - name begins with "Test"
 //   - is a package-level function, not a method
-//   - exactly one parameter
-//   - parameter type is not *testing.T (i.e. it uses a custom interface)
+//   - at least one parameter, with exactly one name in the first field
+//   - first parameter type is not *testing.T (i.e. it uses a custom interface)
+//
+// Additional parameters beyond the first are allowed and will be forwarded in
+// the generated wrapper via zero-value var declarations.
 func isEligibleTestFunc(fn *ast.FuncDecl) bool {
 	if !strings.HasPrefix(fn.Name.Name, "Test") {
 		return false
@@ -214,7 +330,7 @@ func isEligibleTestFunc(fn *ast.FuncDecl) bool {
 	if fn.Recv != nil {
 		return false
 	}
-	if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 || len(fn.Type.Params.List[0].Names) > 1 {
+	if fn.Type.Params == nil || len(fn.Type.Params.List) == 0 || len(fn.Type.Params.List[0].Names) != 1 {
 		return false
 	}
 	// Exclude functions already using *testing.T — wrapping them would
@@ -345,7 +461,7 @@ func importSpec(s string) string {
 // extraImports are additional import specs written into the import block.
 // outFile is the destination path passed to goimports for module-aware import
 // resolution.
-func generateCode(outPkg, srcPkg, importPath, preamble, outFile string, extraImports, funcs []string) ([]byte, error) {
+func generateCode(outPkg, srcPkg, importPath, preamble, outFile string, extraImports []string, funcs []funcInfo) ([]byte, error) {
 	var buf bytes.Buffer
 
 	fmt.Fprintf(&buf, "// Code generated by astest. DO NOT EDIT.\n\n")
@@ -359,13 +475,21 @@ func generateCode(outPkg, srcPkg, importPath, preamble, outFile string, extraImp
 	fmt.Fprintf(&buf, ")\n\n")
 
 	for _, fn := range funcs {
-		fmt.Fprintf(&buf, "func %s(t *testing.T) {\n", fn)
+		fmt.Fprintf(&buf, "func %s(t *testing.T) {\n", fn.name)
+		var callArgs strings.Builder
+		callArgs.WriteString("t")
+		for _, p := range fn.extraParams {
+			nameList := strings.Join(p.names, ", ")
+			fmt.Fprintf(&buf, "\tvar %s %s\n", nameList, p.typ)
+			callArgs.WriteString(", ")
+			callArgs.WriteString(nameList)
+		}
 		if preamble != "" {
 			for line := range strings.SplitSeq(preamble, "\n") {
 				fmt.Fprintf(&buf, "\t%s\n", line)
 			}
 		}
-		fmt.Fprintf(&buf, "\t%s.%s(t)\n", srcPkg, fn)
+		fmt.Fprintf(&buf, "\t%s.%s(%s)\n", srcPkg, fn.name, callArgs.String())
 		fmt.Fprintf(&buf, "}\n\n")
 	}
 
