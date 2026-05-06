@@ -2,10 +2,12 @@
 // Use of this source code is governed by the Apache-2.0
 // license that can be found in the LICENSE file.
 
-// Command astest generates *testing.T wrapper functions for functions that
-// accept a TestingT interface and carry the //cicd:astest marker. This lets
+// Command astest generates wrapper functions for functions that accept a
+// TestingT interface and carry the //cicd:astest marker. This lets
 // test-helper packages expose reusable test logic (callable with any TestingT
 // implementation) while also making that logic directly runnable by `go test`.
+// By default the generated wrapper parameter type is *testing.T; use
+// --testing-t-type to select a different type such as testing.TB.
 //
 // For every function of the form
 //
@@ -31,17 +33,33 @@
 //
 // Flags:
 //
-//	--pkg-path            treat the first argument as an import path rather than
-//	                      a directory; the directory is resolved via go list
-//	--internal_test       use an internal test package (package <pkg>);
-//	                      default is the external form (package <pkg>_test)
-//	--match <regexp>      only generate wrappers for marked functions whose
-//	                      names match the regular expression (default: all)
-//	--preamble <code>     Go statements inserted at the top of every generated
-//	                      function body; use \n to separate multiple statements
-//	--import <spec>       extra import added to the generated file; may be
-//	                      repeated. Accepts bare paths (context), aliased specs
-//	                      (mypkg "some/pkg"), or blank imports (_ "some/pkg")
+//	--pkg-path             treat the first argument as an import path rather than
+//	                       a directory; the directory is resolved via go list
+//	--internal_test        use an internal test package (package <pkg>);
+//	                       default is the external form (package <pkg>_test)
+//	--match <regexp>       only generate wrappers for marked functions whose
+//	                       names match the regular expression (default: all)
+//	--preamble <code>      Go statements inserted at the top of every generated
+//	                       function body, before the fixture call;
+//	                       use \n to separate multiple statements
+//	--postamble <code>     Go statements inserted at the bottom of every generated
+//	                       function body, after the fixture call;
+//	                       use \n to separate multiple statements
+//	--wrapper <expr>       expression used to wrap the first argument (t) in each
+//	                       generated call; e.g. --wrapper mypkg.NewT produces
+//	                       pkg.TestFoo(mypkg.NewT(t), ...)
+//	--variadic <name>      variable name to use in the wrapper for a fixture variadic
+//	                       parameter named _; if set, the variable is declared and
+//	                       suppressed (_ = <name>) so preamble/postamble can reference it;
+//	                       if unset (default), blank variadic parameters are omitted
+//	--testing-t-type <type> type of the first parameter (t) in every generated wrapper
+//	                       function (default: *testing.T); use e.g. testing.TB to accept
+//	                       any standard testing interface
+//	--test-all             generate a TestAll function that calls every generated wrapper
+//	                       in alphabetical order
+//	--import <spec>        extra import added to the generated file; may be
+//	                       repeated. Accepts bare paths (context), aliased specs
+//	                       (mypkg "some/pkg"), or blank imports (_ "some/pkg")
 package main
 
 import (
@@ -75,8 +93,9 @@ type funcInfo struct {
 
 // paramField holds the names and rendered type string of one parameter field.
 type paramField struct {
-	names []string
-	typ   string
+	names    []string
+	typ      string
+	variadic bool
 }
 
 // builtinIdents is the set of predeclared Go type identifiers that must not be
@@ -152,6 +171,11 @@ func main() {
 	internalTestFlag := flag.Bool("internal_test", false, "use an internal test package (package <pkg>) instead of an external one (package <pkg>_test) when the output file is in the same directory as the source")
 	matchFlag := flag.String("match", "", "regular expression; only marked functions whose names match are generated (default: all marked functions)")
 	preambleFlag := flag.String("preamble", "", "Go code inserted as the first statement(s) in every generated function; use \\n for multiple lines")
+	postambleFlag := flag.String("postamble", "", "Go code inserted after the fixture call in every generated function; use \\n for multiple lines")
+	wrapperFlag := flag.String("wrapper", "", "expression used to wrap the first argument in each generated call;\n\te.g. --wrapper mypkg.NewT produces pkg.TestFoo(mypkg.NewT(t), ...)")
+	variadicFlag := flag.String("variadic", "", "variable name to use in the wrapper for a fixture variadic parameter named _;\n\tif set, the variable is declared and suppressed (_ = <name>) so preamble/postamble can reference it;\n\tif unset (default), blank variadic parameters are omitted from the generated wrapper")
+	testingTTypeFlag := flag.String("testing-t-type", "*testing.T", "type of the first parameter in every generated wrapper function (default: *testing.T);\n\tuse e.g. testing.TB to accept any testing interface")
+	testAllFlag := flag.Bool("test-all", false, "generate a TestAll function that calls every generated wrapper in alphabetical order")
 	var extraImports stringSliceFlag
 	flag.Var(&extraImports, "import", "extra import spec added to generated file; may be repeated.\n\tbare path: context  aliased: mypkg \"some/pkg\"  blank: _ \"some/pkg\"")
 	flag.Usage = func() {
@@ -161,6 +185,7 @@ func main() {
 	flag.Parse()
 	*matchFlag = stripQuotes(*matchFlag)
 	*preambleFlag = stripQuotes(*preambleFlag)
+	*postambleFlag = stripQuotes(*postambleFlag)
 
 	if flag.NArg() != 2 {
 		flag.Usage()
@@ -223,7 +248,7 @@ func main() {
 		outPkgName += "_test"
 	}
 
-	code, err := generateCode(outPkgName, srcPkgName, importPath, strings.ReplaceAll(*preambleFlag, `\n`, "\n"), outFile, []string(extraImports), funcs)
+	code, err := generateCode(outPkgName, srcPkgName, importPath, strings.ReplaceAll(*preambleFlag, `\n`, "\n"), strings.ReplaceAll(*postambleFlag, `\n`, "\n"), outFile, *wrapperFlag, *variadicFlag, *testingTTypeFlag, []string(extraImports), *testAllFlag, funcs)
 	if err != nil {
 		log.Fatalf("generating code: %v", err)
 	}
@@ -302,9 +327,11 @@ func findMarkedFunctions(dir string, filter *regexp.Regexp) (funcs []funcInfo, p
 				for _, n := range field.Names {
 					names = append(names, n.Name)
 				}
+				_, isVariadic := field.Type.(*ast.Ellipsis)
 				info.extraParams = append(info.extraParams, paramField{
-					names: names,
-					typ:   renderType(field.Type, pkgName),
+					names:    names,
+					typ:      renderType(field.Type, pkgName),
+					variadic: isVariadic,
 				})
 			}
 			funcs = append(funcs, info)
@@ -461,7 +488,7 @@ func importSpec(s string) string {
 // extraImports are additional import specs written into the import block.
 // outFile is the destination path passed to goimports for module-aware import
 // resolution.
-func generateCode(outPkg, srcPkg, importPath, preamble, outFile string, extraImports []string, funcs []funcInfo) ([]byte, error) {
+func generateCode(outPkg, srcPkg, importPath, preamble, postamble, outFile, wrapper, variadic, tType string, extraImports []string, testAll bool, funcs []funcInfo) ([]byte, error) {
 	var buf bytes.Buffer
 
 	fmt.Fprintf(&buf, "// Code generated by astest. DO NOT EDIT.\n\n")
@@ -475,12 +502,34 @@ func generateCode(outPkg, srcPkg, importPath, preamble, outFile string, extraImp
 	fmt.Fprintf(&buf, ")\n\n")
 
 	for _, fn := range funcs {
-		fmt.Fprintf(&buf, "func %s(t *testing.T) {\n", fn.name)
+		fmt.Fprintf(&buf, "func %s(t %s) {\n", fn.name, tType)
 		var callArgs strings.Builder
-		callArgs.WriteString("t")
+		if wrapper != "" {
+			callArgs.WriteString(wrapper + "(t)")
+		} else {
+			callArgs.WriteString("t")
+		}
 		for _, p := range fn.extraParams {
 			nameList := strings.Join(p.names, ", ")
-			fmt.Fprintf(&buf, "\tvar %s %s\n", nameList, p.typ)
+			varTyp := p.typ
+			if p.variadic {
+				if nameList == "_" {
+					if variadic == "" {
+						continue
+					}
+					nameList = variadic
+					varTyp = "[]" + strings.TrimPrefix(varTyp, "...")
+					fmt.Fprintf(&buf, "\tvar %s %s\n", nameList, varTyp)
+					fmt.Fprintf(&buf, "\t_ = %s\n", nameList)
+					continue
+				}
+				varTyp = "[]" + strings.TrimPrefix(varTyp, "...")
+				fmt.Fprintf(&buf, "\tvar %s %s\n", nameList, varTyp)
+				callArgs.WriteString(", ")
+				callArgs.WriteString(nameList + "...")
+				continue
+			}
+			fmt.Fprintf(&buf, "\tvar %s %s\n", nameList, varTyp)
 			callArgs.WriteString(", ")
 			callArgs.WriteString(nameList)
 		}
@@ -489,11 +538,30 @@ func generateCode(outPkg, srcPkg, importPath, preamble, outFile string, extraImp
 				fmt.Fprintf(&buf, "\t%s\n", line)
 			}
 		}
+
 		fmt.Fprintf(&buf, "\t%s.%s(%s)\n", srcPkg, fn.name, callArgs.String())
+		if postamble != "" {
+			for line := range strings.SplitSeq(postamble, "\n") {
+				fmt.Fprintf(&buf, "\t%s\n", line)
+			}
+		}
 		fmt.Fprintf(&buf, "}\n\n")
 	}
 
-	return imports.Process(outFile, buf.Bytes(), nil)
+	if testAll {
+		fmt.Fprintf(&buf, "func TestAll(t %s) {\n", tType)
+		for _, fn := range funcs {
+			fmt.Fprintf(&buf, "\t%s(t)\n", fn.name)
+		}
+		fmt.Fprintf(&buf, "}\n\n")
+	}
+
+	data, err := imports.Process(outFile, buf.Bytes(), nil)
+	if err != nil {
+		fmt.Printf("failing unformatted code:\n%s\n", buf.String())
+		return nil, fmt.Errorf("processing imports: %w", err)
+	}
+	return data, nil
 }
 
 // findImportPath walks up from dir to locate the nearest go.mod and derives

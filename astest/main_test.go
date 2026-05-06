@@ -45,13 +45,13 @@ func TestStripQuotes(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{`'hello'`, "hello"},
 		{`"hello"`, "hello"},
-		{"hello", "hello"},           // no quotes
-		{"'hello\"", "'hello\""},     // mismatched
-		{"'", "'"},                   // too short
-		{"''", ""},                   // empty single-quoted
-		{`""`, ""},                   // empty double-quoted
-		{`'it's'`, `it's`},           // inner quote preserved
-		{`"say "hi""`, `say "hi"`},   // inner quotes preserved
+		{"hello", "hello"},         // no quotes
+		{"'hello\"", "'hello\""},   // mismatched
+		{"'", "'"},                 // too short
+		{"''", ""},                 // empty single-quoted
+		{`""`, ""},                 // empty double-quoted
+		{`'it's'`, `it's`},         // inner quote preserved
+		{`"say "hi""`, `say "hi"`}, // inner quotes preserved
 	}
 	for _, tc := range cases {
 		if got := stripQuotes(tc.in); got != tc.want {
@@ -324,6 +324,10 @@ func TestGenerateCode(t *testing.T) {
 		name        string
 		outPkg      string
 		preamble    string
+		postamble   string
+		variadic    string
+		tType       string
+		testAll     bool
 		funcs       []funcInfo
 		wantAll     []string
 		wantOrdered []string // each entry must appear after the previous one in the output
@@ -354,8 +358,19 @@ func TestGenerateCode(t *testing.T) {
 			},
 		},
 		{
-			name:   "var decls before preamble",
-			outPkg: "mypkg_test",
+			name:      "postamble after fixture call",
+			outPkg:    "mypkg_test",
+			postamble: "t.Log(\"done\")",
+			funcs:     []funcInfo{{name: "TestPost"}},
+			wantAll: []string{
+				"mypkg.TestPost(t)",
+				`t.Log("done")`,
+			},
+			wantOrdered: []string{"mypkg.TestPost(t)", `t.Log("done")`},
+		},
+		{
+			name:     "var decls before preamble",
+			outPkg:   "mypkg_test",
 			preamble: "t.Parallel()",
 			funcs: []funcInfo{{
 				name: "TestOrdered",
@@ -387,6 +402,79 @@ func TestGenerateCode(t *testing.T) {
 			},
 		},
 		{
+			name:   "named variadic param passed to fixture",
+			outPkg: "mypkg_test",
+			funcs: []funcInfo{{
+				name: "TestVariadic",
+				extraParams: []paramField{
+					{names: []string{"n"}, typ: "int"},
+					{names: []string{"opts"}, typ: "...mypkg.Option", variadic: true},
+				},
+			}},
+			wantAll: []string{
+				"var n int",
+				"var opts []mypkg.Option",
+				"mypkg.TestVariadic(t, n, opts...)",
+			},
+		},
+		{
+			name:   "blank variadic param skipped entirely",
+			outPkg: "mypkg_test",
+			funcs: []funcInfo{{
+				name: "TestBlankVariadic",
+				extraParams: []paramField{
+					{names: []string{"n"}, typ: "int"},
+					{names: []string{"_"}, typ: "...mypkg.Option", variadic: true},
+				},
+			}},
+			wantAll: []string{
+				"var n int",
+				"mypkg.TestBlankVariadic(t, n)",
+			},
+		},
+		{
+			name:     "--variadic renames blank variadic param",
+			outPkg:   "mypkg_test",
+			variadic: "opts",
+			funcs: []funcInfo{{
+				name: "TestNamedBlankVariadic",
+				extraParams: []paramField{
+					{names: []string{"n"}, typ: "int"},
+					{names: []string{"_"}, typ: "...mypkg.Option", variadic: true},
+				},
+			}},
+			wantAll: []string{
+				"var n int",
+				"var opts []mypkg.Option",
+				"_ = opts",
+				"mypkg.TestNamedBlankVariadic(t, n)",
+			},
+		},
+		{
+			name:   "custom testing-t-type",
+			outPkg: "mypkg_test",
+			tType:  "testing.TB",
+			funcs:  []funcInfo{{name: "TestTB"}},
+			wantAll: []string{
+				"func TestTB(t testing.TB) {",
+				"mypkg.TestTB(t)",
+			},
+		},
+		{
+			name:    "--test-all generates aggregator function",
+			outPkg:  "mypkg_test",
+			testAll: true,
+			funcs:   []funcInfo{{name: "TestFoo"}, {name: "TestBar"}},
+			wantAll: []string{
+				"func TestFoo(t *testing.T) {",
+				"func TestBar(t *testing.T) {",
+				"func TestAll(t *testing.T) {",
+				"TestFoo(t)",
+				"TestBar(t)",
+			},
+			wantOrdered: []string{"func TestFoo", "func TestBar", "func TestAll"},
+		},
+		{
 			name:   "multiple params of different types",
 			outPkg: "mypkg_test",
 			funcs: []funcInfo{{
@@ -414,7 +502,11 @@ func TestGenerateCode(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			code, err := generateCode(tc.outPkg, "mypkg", "example.com/mypkg", tc.preamble, filepath.Join(t.TempDir(), "out_test.go"), nil, tc.funcs)
+			tType := tc.tType
+			if tType == "" {
+				tType = "*testing.T"
+			}
+			code, err := generateCode(tc.outPkg, "mypkg", "example.com/mypkg", tc.preamble, tc.postamble, filepath.Join(t.TempDir(), "out_test.go"), "", tc.variadic, tType, nil, tc.testAll, tc.funcs)
 			if err != nil {
 				t.Fatalf("generateCode: %v", err)
 			}
