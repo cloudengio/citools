@@ -56,7 +56,7 @@
 //	                       function (default: *testing.T); use e.g. testing.TB to accept
 //	                       any standard testing interface
 //	--test-all             generate a TestAll function that calls every generated wrapper
-//	                       in declaration order
+//	                       in alphabetical order
 //	--import <spec>        extra import added to the generated file; may be
 //	                       repeated. Accepts bare paths (context), aliased specs
 //	                       (mypkg "some/pkg"), or blank imports (_ "some/pkg")
@@ -175,7 +175,7 @@ func main() {
 	wrapperFlag := flag.String("wrapper", "", "expression used to wrap the first argument in each generated call;\n\te.g. --wrapper mypkg.NewT produces pkg.TestFoo(mypkg.NewT(t), ...)")
 	variadicFlag := flag.String("variadic", "", "variable name to use in the wrapper for a fixture variadic parameter named _;\n\tif set, the variable is declared and suppressed (_ = <name>) so preamble/postamble can reference it;\n\tif unset (default), blank variadic parameters are omitted from the generated wrapper")
 	testingTTypeFlag := flag.String("testing-t-type", "*testing.T", "type of the first parameter in every generated wrapper function (default: *testing.T);\n\tuse e.g. testing.TB to accept any testing interface")
-	testAllFlag := flag.Bool("test-all", false, "generate a TestAll function that calls every generated wrapper in declaration order")
+	testAllFlag := flag.Bool("test-all", false, "generate a TestAll function that calls every generated wrapper in alphabetical order")
 	var extraImports stringSliceFlag
 	flag.Var(&extraImports, "import", "extra import spec added to generated file; may be repeated.\n\tbare path: context  aliased: mypkg \"some/pkg\"  blank: _ \"some/pkg\"")
 	flag.Usage = func() {
@@ -518,10 +518,15 @@ func generateCode(outPkg, srcPkg, importPath, preamble, postamble, outFile, wrap
 						continue
 					}
 					nameList = variadic
+					varTyp = "[]" + strings.TrimPrefix(varTyp, "...")
+					fmt.Fprintf(&buf, "\tvar %s %s\n", nameList, varTyp)
+					fmt.Fprintf(&buf, "\t_ = %s\n", nameList)
+					continue
 				}
 				varTyp = "[]" + strings.TrimPrefix(varTyp, "...")
 				fmt.Fprintf(&buf, "\tvar %s %s\n", nameList, varTyp)
-				fmt.Fprintf(&buf, "\t_ = %s\n", nameList)
+				callArgs.WriteString(", ")
+				callArgs.WriteString(nameList + "...")
 				continue
 			}
 			fmt.Fprintf(&buf, "\tvar %s %s\n", nameList, varTyp)

@@ -45,13 +45,13 @@ func TestStripQuotes(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{`'hello'`, "hello"},
 		{`"hello"`, "hello"},
-		{"hello", "hello"},           // no quotes
-		{"'hello\"", "'hello\""},     // mismatched
-		{"'", "'"},                   // too short
-		{"''", ""},                   // empty single-quoted
-		{`""`, ""},                   // empty double-quoted
-		{`'it's'`, `it's`},           // inner quote preserved
-		{`"say "hi""`, `say "hi"`},   // inner quotes preserved
+		{"hello", "hello"},         // no quotes
+		{"'hello\"", "'hello\""},   // mismatched
+		{"'", "'"},                 // too short
+		{"''", ""},                 // empty single-quoted
+		{`""`, ""},                 // empty double-quoted
+		{`'it's'`, `it's`},         // inner quote preserved
+		{`"say "hi""`, `say "hi"`}, // inner quotes preserved
 	}
 	for _, tc := range cases {
 		if got := stripQuotes(tc.in); got != tc.want {
@@ -369,8 +369,8 @@ func TestGenerateCode(t *testing.T) {
 			wantOrdered: []string{"mypkg.TestPost(t)", `t.Log("done")`},
 		},
 		{
-			name:   "var decls before preamble",
-			outPkg: "mypkg_test",
+			name:     "var decls before preamble",
+			outPkg:   "mypkg_test",
 			preamble: "t.Parallel()",
 			funcs: []funcInfo{{
 				name: "TestOrdered",
@@ -402,7 +402,7 @@ func TestGenerateCode(t *testing.T) {
 			},
 		},
 		{
-			name:   "variadic param not passed to fixture",
+			name:   "named variadic param passed to fixture",
 			outPkg: "mypkg_test",
 			funcs: []funcInfo{{
 				name: "TestVariadic",
@@ -414,8 +414,7 @@ func TestGenerateCode(t *testing.T) {
 			wantAll: []string{
 				"var n int",
 				"var opts []mypkg.Option",
-				"_ = opts",
-				"mypkg.TestVariadic(t, n)",
+				"mypkg.TestVariadic(t, n, opts...)",
 			},
 		},
 		{
@@ -452,10 +451,10 @@ func TestGenerateCode(t *testing.T) {
 			},
 		},
 		{
-			name:  "custom testing-t-type",
+			name:   "custom testing-t-type",
 			outPkg: "mypkg_test",
-			tType: "testing.TB",
-			funcs: []funcInfo{{name: "TestTB"}},
+			tType:  "testing.TB",
+			funcs:  []funcInfo{{name: "TestTB"}},
 			wantAll: []string{
 				"func TestTB(t testing.TB) {",
 				"mypkg.TestTB(t)",
