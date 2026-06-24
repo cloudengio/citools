@@ -20,9 +20,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -30,9 +32,11 @@ import (
 	"runtime/debug"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"cloudeng.io/errors"
+	"cloudeng.io/sync/errgroup"
 	"golang.org/x/mod/modfile"
 	"gopkg.in/yaml.v3"
 )
@@ -62,12 +66,16 @@ usage: ["gousage", "--overwrite", "./..."]
 update: ["go", "get", "-u", "./...", ";",
          "go", "mod", "tidy"]
 build: ["go", "build", "./..."]
+tidy: ["go", "mod", "tidy"]
+fix: ["go", "fix", "./..."]
 `
 
 type config struct {
-	Env        []string            `yaml:"env"`
-	Commands   map[string][]string `yaml:",inline"`
-	Exclusions map[string][]string `yaml:"exclusions"`
+	Env           []string            `yaml:"env"`
+	Commands      map[string][]string `yaml:",inline"`
+	Exclusions    map[string][]string `yaml:"exclusions"`
+	Concurrent    []string            `yaml:"concurrent"`
+	NotConcurrent []string            `yaml:"not-concurrent"`
 }
 
 func (c config) commandForAction(action string) []string {
@@ -145,12 +153,14 @@ var (
 	verboseFlag           bool
 	goworkUpdateFlag      bool
 	localGoWorkUpdateFlag bool
+	concurrentFlag        bool
 )
 
 func init() {
 	flag.BoolVar(&modulesFlag, "modules", false, "print modules in this repo")
 	flag.StringVar(&configFileFlag, "config", "", "config file")
 	flag.BoolVar(&verboseFlag, "verbose", false, "verbose output")
+	flag.BoolVar(&concurrentFlag, "concurrent", false, "run commands concurrently in all modules")
 	flag.BoolVar(&goworkUpdateFlag, "gowork-update", false, "update all go.work references to latest git hash")
 	flag.BoolVar(&localGoWorkUpdateFlag, "gowork-update-local", false, "update go.work references for the specified local modules only")
 }
@@ -229,7 +239,11 @@ func main() {
 				fmt.Printf("Excluding module %q from action %q\n", mod, script.action)
 			}
 		}
-		if err := runInDirs(ctx, allowedMods, script.action, script.commands, cfg.Env); err != nil {
+		concurrent := concurrentFlag || slices.Contains(cfg.Concurrent, script.action)
+		if slices.Contains(cfg.NotConcurrent, script.action) {
+			concurrent = false
+		}
+		if err := runInDirs(ctx, concurrent, allowedMods, script.action, script.commands, cfg.Env); err != nil {
 			done(fmt.Sprintf("running %v", script.action), err)
 		}
 	}
@@ -285,7 +299,7 @@ func extraceEnv(cmdargs []string) ([]string, []string) {
 	return cmds, envs
 }
 
-func runInDirs(ctx context.Context, dirs []string, action string, cmdSpec []string, globalEnvs []string) error {
+func runInDirs(ctx context.Context, concurrent bool, dirs []string, action string, cmdSpec []string, globalEnvs []string) error {
 	if len(cmdSpec) == 0 {
 		return fmt.Errorf("missing command")
 	}
@@ -298,9 +312,27 @@ func runInDirs(ctx context.Context, dirs []string, action string, cmdSpec []stri
 		if len(cmds) > 1 {
 			args = cmds[1:]
 		}
+		dr := newDirRunner()
+		if concurrent {
+			var g errgroup.T
+			for _, dir := range dirs {
+				g.Go(func() error {
+					output := bytes.NewBuffer(make([]byte, 0, 1024*16))
+					err := dr.runInDir(ctx, output, dir, cmd, envs, args)
+					_, _ = io.Copy(os.Stdout, output)
+					if err != nil {
+						return fmt.Errorf("action in %v: %v %v %w", dir, action, strings.Join(cmds, " "), err)
+					}
+					return nil
+				})
+			}
+			if err := g.Wait(); err != nil {
+				return err
+			}
+		}
 		var errs errors.M
 		for _, dir := range dirs {
-			if err := runInDir(ctx, dir, cmd, envs, args); err != nil {
+			if err := dr.runInDir(ctx, os.Stdout, dir, cmd, envs, args); err != nil {
 				fmt.Fprintf(os.Stderr, "%v: failed: %v\n", dir, err)
 				errs.Append(fmt.Errorf("action in %v: %v %v %w", dir, action, strings.Join(cmds, " "), err))
 			}
@@ -312,24 +344,50 @@ func runInDirs(ctx context.Context, dirs []string, action string, cmdSpec []stri
 	return nil
 }
 
-func runInDir(ctx context.Context, dir string, binary string, envs []string, args []string) error {
-	if verboseFlag {
-		fmt.Printf("%v: %v %v [%v]\n", dir, binary, strings.Join(args, " "), strings.Join(args, " "))
+type dirRunner struct {
+	start time.Time
+	mu    sync.Mutex
+}
+
+func (dr *dirRunner) sinceStart() time.Duration {
+	dr.mu.Lock()
+	defer dr.mu.Unlock()
+	return time.Since(dr.start)
+}
+
+func newDirRunner() *dirRunner {
+	return &dirRunner{
+		start: time.Now(),
 	}
-	fmt.Printf("%v... starting\n", dir)
+}
+
+func (dr *dirRunner) runInDir(ctx context.Context, out io.Writer, dir string, binary string, envs []string, args []string) error {
+	if verboseFlag {
+		fmt.Fprintf(out, "%v: %v %v\n", dir, binary, strings.Join(args, " "))
+	}
+	fmt.Fprintf(out, "%v... starting\n", dir)
+	start := time.Now()
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = dir
 	if len(envs) > 0 {
 		cmd.Env = os.Environ()
 		cmd.Env = append(cmd.Env, envs...)
 	}
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = out
+	cmd.Stderr = out
 	err := cmd.Run()
-	if err == nil {
-		fmt.Printf("%v... ok\n", dir)
+	if verboseFlag {
+		if err == nil {
+			fmt.Fprintf(out, "%v... ok (%v) (%v)\n", dir, time.Since(start), dr.sinceStart())
+		} else {
+			fmt.Fprintf(out, "%v... failed (%v) (%v)\n", dir, time.Since(start), dr.sinceStart())
+		}
 	} else {
-		fmt.Printf("%v... failed\n", dir)
+		if err == nil {
+			fmt.Fprintf(out, "%v... ok\n", dir)
+		} else {
+			fmt.Fprintf(out, "%v... failed\n", dir)
+		}
 	}
 	return err
 }
@@ -387,15 +445,16 @@ func goworkUpdate(ctx context.Context, mods, internalModsToConsider []string) er
 
 	// for external modules apply all updates to every module
 	// in this repo.
+	dr := newDirRunner()
 	for _, modpath := range mods {
 		merged := []string{"get"}
 		for _, update := range externalUpdates {
 			merged = append(merged, update.update)
 		}
-		if err := runInDir(ctx, modpath, "go", nil, merged); err != nil {
+		if err := dr.runInDir(ctx, os.Stdout, modpath, "go", nil, merged); err != nil {
 			return fmt.Errorf("%v: go %v: failed %w", modpath, strings.Join(merged, " "), err)
 		}
-		if err := runInDir(ctx, modpath, "go", nil, []string{"mod", "tidy"}); err != nil {
+		if err := dr.runInDir(ctx, os.Stdout, modpath, "go", nil, []string{"mod", "tidy"}); err != nil {
 			return fmt.Errorf("%v: go mod tidy: failed %w", modpath, err)
 		}
 	}
@@ -425,10 +484,10 @@ func goworkUpdate(ctx context.Context, mods, internalModsToConsider []string) er
 		}
 		merged := []string{"get"}
 		merged = append(merged, otherUpdates...)
-		if err := runInDir(ctx, modpath, "go", nil, merged); err != nil {
+		if err := dr.runInDir(ctx, os.Stdout, modpath, "go", nil, merged); err != nil {
 			return fmt.Errorf("%v: go %v: failed %w", modpath, strings.Join(merged, " "), err)
 		}
-		if err := runInDir(ctx, modpath, "go", nil, []string{"mod", "tidy"}); err != nil {
+		if err := dr.runInDir(ctx, os.Stdout, modpath, "go", nil, []string{"mod", "tidy"}); err != nil {
 			return fmt.Errorf("%v: go mod tidy: failed %w", modpath, err)
 		}
 	}
