@@ -321,16 +321,16 @@ func TestGamma(t TestingT) {}
 
 func TestGenerateCode(t *testing.T) {
 	cases := []struct {
-		name        string
-		outPkg      string
-		preamble    string
-		postamble   string
-		variadic    string
-		tType       string
-		testAll     bool
-		funcs       []funcInfo
-		wantAll     []string
-		wantOrdered []string // each entry must appear after the previous one in the output
+		name              string
+		outPkg            string
+		preamble          string
+		postamble         string
+		variadic          string
+		tType             string
+		testFunctionsList string
+		funcs             []funcInfo
+		wantAll           []string
+		wantOrdered       []string // each entry must appear after the previous one in the output
 	}{
 		{
 			name:   "external test package",
@@ -461,18 +461,33 @@ func TestGenerateCode(t *testing.T) {
 			},
 		},
 		{
-			name:    "--test-all generates aggregator function",
-			outPkg:  "mypkg_test",
-			testAll: true,
-			funcs:   []funcInfo{{name: "TestFoo"}, {name: "TestBar"}},
+			name:              "--test-functions-list generates slice var",
+			outPkg:            "mypkg_test",
+			testFunctionsList: "Tests",
+			funcs:             []funcInfo{{name: "TestFoo"}, {name: "TestBar"}},
 			wantAll: []string{
 				"func TestFoo(t *testing.T) {",
 				"func TestBar(t *testing.T) {",
-				"func TestAll(t *testing.T) {",
-				"TestFoo(t)",
-				"TestBar(t)",
+				"var Tests = []func(*testing.T){",
+				"\tTestFoo,",
+				"\tTestBar,",
 			},
-			wantOrdered: []string{"func TestFoo", "func TestBar", "func TestAll"},
+			wantOrdered: []string{"func TestFoo", "func TestBar", "var Tests"},
+		},
+		{
+			name:              "--test-functions-list uses custom testing-t-type",
+			outPkg:            "mypkg_test",
+			tType:             "testing.TB",
+			testFunctionsList: "Tests",
+			funcs:             []funcInfo{{name: "TestFoo"}, {name: "TestBar"}},
+			wantAll: []string{
+				"func TestFoo(t testing.TB) {",
+				"func TestBar(t testing.TB) {",
+				"var Tests = []func(testing.TB){",
+				"\tTestFoo,",
+				"\tTestBar,",
+			},
+			wantOrdered: []string{"func TestFoo", "func TestBar", "var Tests"},
 		},
 		{
 			name:   "multiple params of different types",
@@ -506,7 +521,7 @@ func TestGenerateCode(t *testing.T) {
 			if tType == "" {
 				tType = "*testing.T"
 			}
-			code, err := generateCode(tc.outPkg, "mypkg", "example.com/mypkg", tc.preamble, tc.postamble, filepath.Join(t.TempDir(), "out_test.go"), "", tc.variadic, tType, nil, tc.testAll, tc.funcs)
+			code, err := generateCode(tc.outPkg, "mypkg", "example.com/mypkg", tc.preamble, tc.postamble, filepath.Join(t.TempDir(), "out_test.go"), "", tc.variadic, tType, tc.testFunctionsList, nil, tc.funcs)
 			if err != nil {
 				t.Fatalf("generateCode: %v", err)
 			}
