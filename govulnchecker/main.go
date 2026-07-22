@@ -46,21 +46,70 @@ type Item struct {
 	Why string `json:"why"`
 }
 
+// Position describes a source position within a file.
+type Position struct {
+	Filename string `json:"filename,omitempty"`
+	Offset   int    `json:"offset"`
+	Line     int    `json:"line"`
+	Column   int    `json:"column"`
+}
+
+// Frame represents a single entry in a finding's call trace.
+type Frame struct {
+	// Module is the module path; "stdlib" for standard library packages.
+	Module   string    `json:"module"`
+	Version  string    `json:"version,omitempty"`
+	Package  string    `json:"package,omitempty"`
+	Function string    `json:"function,omitempty"`
+	Receiver string    `json:"receiver,omitempty"`
+	Position *Position `json:"position,omitempty"`
+}
+
+// Finding represents a vulnerability finding emitted by govulncheck -json.
+type Finding struct {
+	OSV          string   `json:"osv,omitempty"`
+	FixedVersion string   `json:"fixed_version,omitempty"`
+	Trace        []*Frame `json:"trace,omitempty"`
+}
+
+// ScanConfig is emitted as the first message by govulncheck -json.
+type ScanConfig struct {
+	ProtocolVersion string `json:"protocol_version"`
+	ScannerName     string `json:"scanner_name"`
+	ScannerVersion  string `json:"scanner_version"`
+	DB              string `json:"db"`
+	DBLastModified  string `json:"db_last_modified"`
+	GoVersion       string `json:"go_version"`
+	ScanLevel       string `json:"scan_level"`
+	ScanMode        string `json:"scan_mode"`
+}
+
 // GovulncheckMessage represents a single JSON object emitted by govulncheck -json.
 type GovulncheckMessage struct {
+	Config *ScanConfig `json:"config,omitempty"`
 	// Older versions of govulncheck emit OSV
 	OSV *struct {
 		ID string `json:"id"`
 	} `json:"osv,omitempty"`
 	// Newer versions emit Finding which references the OSV ID
-	Finding *struct {
-		OSV string `json:"osv"`
-	} `json:"finding,omitempty"`
+	Finding *Finding `json:"finding,omitempty"`
+}
+
+// importedButNotCalled reports whether f was reached only through an import,
+// not through an actual call chain. At symbol scan level this is indicated by
+// a single-frame trace whose frame carries no Function name.
+func importedButNotCalled(f *Finding) bool {
+	if len(f.Trace) != 1 {
+		return false
+	}
+	return f.Trace[0].Function == ""
 }
 
 func main() {
 	var configFile string
+	var includeNotCalled bool
 	flag.StringVar(&configFile, "config", ".govulnchecker.yaml", "Path to the YAML configuration file containing ignored vulnerabilities")
+	flag.BoolVar(&includeNotCalled, "include-not-called", false, "Include vulnerabilities that are imported but never called (symbol scan level only)")
 	flag.Parse()
 
 	// 1. Read and parse the YAML configuration
@@ -106,11 +155,12 @@ func main() {
 	// 3. Process the JSON stream
 	decoder := json.NewDecoder(stdoutPipe)
 	unmatchedFound := false
+	scanLevel := "symbol" // default; overridden by the config message
 
 	for {
 		// We decode into both our target struct and a raw map just so we can
 		// print the complete raw text of the finding if it's unmatched.
-		var raw map[string]interface{}
+		var raw map[string]any
 		if err := decoder.Decode(&raw); err != nil {
 			if err == io.EOF {
 				break
@@ -124,24 +174,32 @@ func main() {
 		var msg GovulncheckMessage
 		json.Unmarshal(rawBytes, &msg)
 
-		var vulnID string
-		if msg.Finding != nil {
-			vulnID = msg.Finding.OSV
-		} //else if msg.OSV != nil {
-		//vulnID = msg.OSV.ID
-		//}
-
-		// If this is a vulnerability finding, check if we should filter it
-		if vulnID != "" {
-			if ignoredVars[vulnID] {
-				continue // Filtered out
-			}
-			unmatchedFound = true
-
-			// Print the unmatched vulnerability
-			indentedJSON, _ := json.MarshalIndent(raw, "", "  ")
-			fmt.Printf("Unmatched Vulnerability Found (%s):\n%s\n\n", vulnID, string(indentedJSON))
+		if msg.Config != nil {
+			scanLevel = msg.Config.ScanLevel
 		}
+
+		if msg.Finding == nil {
+			continue
+		}
+
+		vulnID := msg.Finding.OSV
+		if vulnID == "" {
+			continue
+		}
+
+		if ignoredVars[vulnID] {
+			continue
+		}
+
+		// At symbol scan level, skip findings where the vulnerable symbol is
+		// imported but never actually called.
+		if scanLevel == "symbol" && !includeNotCalled && importedButNotCalled(msg.Finding) {
+			continue
+		}
+
+		unmatchedFound = true
+		indentedJSON, _ := json.MarshalIndent(raw, "", "  ")
+		fmt.Printf("Unmatched Vulnerability Found (%s):\n%s\n\n", vulnID, string(indentedJSON))
 	}
 
 	cmdErr := cmd.Wait()
