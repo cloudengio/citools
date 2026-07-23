@@ -1,0 +1,55 @@
+# macOS Tart Orchestrator Configuration
+
+logging:
+  level: 2
+  format: text
+  output: "-"
+
+vm_pools:
+  - name: macos
+    type: tart
+    image: "xxx"
+    size: 2
+    runner_dir: "/Users/runner"
+
+icloud_keychain:
+  keychain_type: all
+  items:
+    - cloudengio-github-runner
+    - onyourbehalf-github-runner
+    - webhook-secrets
+
+runners: &runner_config
+  - name: "runner1"
+    labels: ["macos", "tart"]
+  - name: "runner2"
+    labels: ["macos", "tart"]
+
+cloudeng_token: &cloudeng_token
+  key_id: github-cloudengio-runner-token
+  user_id: cnicolaou
+
+onyourbehalf_token: &onyourbehalf_token
+  key_id: github-onyourbehalf-runner-token
+  user_id: cnicolaou
+
+repositories:
+  - owner: "cloudengio"
+    repo: "go.pkgs"
+    <<: *cloudeng_token
+    runners: *runner_config
+  - owner: "cloudengio"
+    repo: "go.webapps"
+    <<: *cloudeng_token
+    runners: *runner_config
+  - owner: "onyourbehalf"
+    repo: "core"
+    <<: *onyourbehalf_token
+    runners: *runner_config
+
+webhooks:
+  github_webhook:
+    delivery_url: "https://onyourbehalf.ai//webhooks/github_workflows/deliver:10443"
+    events: ["push", "pull_request"]
+    secret_id: "github_webhook"
+    secret_user: cnicolaou@onyourbehalf.ai

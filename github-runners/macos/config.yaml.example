@@ -1,0 +1,15 @@
+vm_pools:
+  - name: macos
+    type: tart
+    image_name: macos-ci
+    pool_size: 2
+    runner_dir: /Users/admin/actions-runner
+
+repositories:
+  - owner: cloudengio
+    repo: go.pkgs
+    runners:
+      - name: macos-runner
+        baseName: macos-base
+        labels: [self-hosted, macos, x64]
+
