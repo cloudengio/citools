@@ -15,6 +15,8 @@ import (
 	"cloudeng.io/cmdutil/keys"
 	"cloudeng.io/cmdutil/subcmd"
 	"cloudeng.io/logging/ctxlog"
+	"cloudeng.io/webapi/clients/github/githubcmd"
+	"github.com/cloudengio/citools/runners/macos/orchestrator/githubclient"
 )
 
 const CmdSpecYAML = `
@@ -22,7 +24,9 @@ name: github-runner-orchestrator
 summary: orchestrator for GitHub self-hosted runners
 commands:
   - name: run
-    summary: run the orchestrator with the specified configuration
+    summary: run the orchestrator
+  - name: run-job
+    summary: run a single job on a VM, useful for testing vms
   - name: github
     summary: GitHub API commands
     commands:
@@ -38,7 +42,7 @@ commands:
       - name: create-registration-token
         summary: create a runner registration token for a repository
       - name: create-webhook
-        summary: create a webhook for a repository  		
+        summary: create a webhook for a repository
       - name: runner-job-conclusion
         summary: print the conclusion of the job assigned to a named runner
         args:
@@ -64,6 +68,7 @@ func createCLI() *subcmd.CommandSetYAML {
 
 	runCmd := RunCommand{}
 	cmdSet.Set("run").MustRunner(runCmd.Run, &struct{}{})
+	cmdSet.Set("run-job").MustRunner(runCmd.RunJob, &RunJobFlags{})
 
 	cfgCmd := ConfigCommand{}
 	cmdSet.Set("config", "show").MustRunner(cfgCmd.Show, &struct{}{})
@@ -82,6 +87,7 @@ func createCLI() *subcmd.CommandSetYAML {
 }
 
 var globalFlags GlobalFlags
+var repoClients *githubclient.RepoClients
 
 func verbose() bool {
 	return globalFlags.Verbose
@@ -105,7 +111,7 @@ func main() {
 	ctx = keys.ContextWithKeyStore(ctx, ks)
 	cli.WithMain(func(ctx context.Context, cmdRunner func(ctx context.Context) error) error {
 		var cfg Config
-		if err := cmdyaml.ParseConfigFiles(ctx, &cfg, globalFlags.ConfigFile); err != nil {
+		if err := cmdyaml.ParseConfigFilesStrict(ctx, &cfg, globalFlags.ConfigFile); err != nil {
 			return fmt.Errorf("Error reading config file: %v", err)
 		}
 		if cfg.Validate() != nil {
@@ -127,6 +133,11 @@ func main() {
 				return fmt.Errorf("Error loading keychain: %v", err)
 			}
 		}
+		rc, err := createRepoClients(ctx, cfg)
+		if err != nil {
+			return fmt.Errorf("Error creating GitHub clients: %v", err)
+		}
+		repoClients = rc
 		return cmdRunner(ctx)
 	})
 	cmdutil.HandleSignals(func() { cancel(cmdutil.ErrInterrupt) }, os.Interrupt)
@@ -158,6 +169,26 @@ func loadKeychain(ctx context.Context, cfg ICloudKeychainConfig) (context.Contex
 		}
 	}
 	return ctx, nil
+}
+
+func createRepoClients(ctx context.Context, cfg Config) (*githubclient.RepoClients, error) {
+	for _, repo := range cfg.Repositories {
+		if repo.Service.Repo == "" {
+			return nil, fmt.Errorf("repository name is required for each repository in config")
+		}
+		if repo.Service.Owner == "" {
+			return nil, fmt.Errorf("repository owner is required for each repository in config")
+		}
+	}
+	clients := githubclient.NewRepoClients()
+	for _, repo := range cfg.Repositories {
+		opts, err := githubcmd.OptionsForEndpoint(repo.Crawl)
+		if err != nil {
+			return nil, fmt.Errorf("error creating GitHub client for %s/%s: %v", repo.Service.Owner, repo.Service.Repo, err)
+		}
+		clients.AddClient(repo.Service.Owner, repo.Service.Repo, opts...)
+	}
+	return clients, nil
 }
 
 /*

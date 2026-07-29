@@ -1,7 +1,7 @@
 packer {
   required_plugins {
     tart = {
-      version = ">= 1.14.0"
+      version = ">= 1.21.0"
       source  = "github.com/cirruslabs/tart"
     }
   }
@@ -85,6 +85,14 @@ build {
   }
 
   provisioner "shell" {
-    script = "scripts/07-tart.sh"
+    script = "scripts/07-mkcert.sh"
+  }
+
+  provisioner "shell" {
+    script = "scripts/08-hosts.sh"
+  }
+
+  provisioner "shell" {
+    script = "scripts/09-chrome-for-testing.sh"
   }
 }

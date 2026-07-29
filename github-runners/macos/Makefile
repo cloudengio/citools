@@ -1,10 +1,10 @@
-ifneq (,$(wildcard ./.env))
+ifneq (,$(wildcard ./runner-env))
     include runner-env
 endif
 
 VM_NAME       ?= macos-ci
-MACOS_VERSION ?= sequoia
-VM_SSH_PUB_KEY ?= ""
+MACOS_VERSION ?= tahoe
+VM_SSH_PUB_KEY ?=
 
 .PHONY: init validate build clean
 
@@ -21,6 +21,7 @@ build: init
 	packer build \
 	  -var "vm_name=$(VM_NAME)" \
 	  -var "macos_version=$(MACOS_VERSION)" \
+	  -var "ssh_public_key=$(VM_SSH_PUB_KEY)" \
 	  build.pkr.hcl
 
 clean:

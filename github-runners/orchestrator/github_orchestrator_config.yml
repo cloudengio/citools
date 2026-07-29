@@ -3,14 +3,24 @@
 logging:
   level: 2
   format: text
-  output: "-"
+  file: "-"
+
+tmp_dir: "github-orchestrator-*"
 
 vm_pools:
-  - name: macos
-    type: tart
-    image: "xxx"
+  macos:
     size: 2
-    runner_dir: "/Users/runner"
+    tart_config:
+      os: macos
+      runner_dir: /Users/admin/actions-runner
+      image: macos-ci
+
+  linux:
+    size: 2
+    tart_config:
+      os: linux
+      runner_dir: "/Users/runner"
+      image: macos-ci
 
 icloud_keychain:
   keychain_type: all
@@ -20,36 +30,50 @@ icloud_keychain:
     - webhook-secrets
 
 runners: &runner_config
-  - name: "runner1"
-    labels: ["macos", "tart"]
-  - name: "runner2"
-    labels: ["macos", "tart"]
+  - name: "macos-runner"
+    vm_pool: "macos"
+    labels: ["self-hosted", "macos", "arm64"]
+    replace: true
+    ephemeral: true
+    timeout: 30m
 
-cloudeng_token: &cloudeng_token
+  - name: "linux-runner"
+    vm_pool: "linux"
+    labels: ["self-hosted", "linux", "arm64"]
+    replace: true
+    ephemeral: true
+    timeout: 30m
+
+cloudeng_repos: &cloudeng_repos
+  owner: "cloudengio"
   key_id: github-cloudengio-runner-token
   user_id: cnicolaou
+  runners: *runner_config
 
 onyourbehalf_token: &onyourbehalf_token
   key_id: github-onyourbehalf-runner-token
   user_id: cnicolaou
 
 repositories:
-  - owner: "cloudengio"
-    repo: "go.pkgs"
-    <<: *cloudeng_token
-    runners: *runner_config
-  - owner: "cloudengio"
-    repo: "go.webapps"
-    <<: *cloudeng_token
-    runners: *runner_config
+  - repo: "go.pkgs"
+    <<: *cloudeng_repos
+  - repo: "go.webapp"
+    <<: *cloudeng_repos
+  - repo: "go.webapi"
+    <<: *cloudeng_repos
+  - repo: "go.macos"
+    <<: *cloudeng_repos
   - owner: "onyourbehalf"
     repo: "core"
     <<: *onyourbehalf_token
     runners: *runner_config
 
-webhooks:
-  github_webhook:
-    delivery_url: "https://onyourbehalf.ai//webhooks/github_workflows/deliver:10443"
-    events: ["push", "pull_request"]
-    secret_id: "github_webhook"
-    secret_user: cnicolaou@onyourbehalf.ai
+webhook:
+  relay_url: "https://onyourbehalf.ai:10444/webhooks/github_workflows/relay"
+  rate_control:
+    exponential_backoff:
+      initial_delay: 1s
+      steps: 10
+    #events: ["push", "pull_request"]
+    #secret_id: "github_webhook"
+    #scret_user: cnicolaou@onyourbehalf.ai
