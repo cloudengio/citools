@@ -21,6 +21,8 @@ commands:
     summary: retrieve Chrome for Testing version and download info
   - name: install
     summary: install a version of Chrome for Testing
+  - name: paths
+    summary: emit install paths (chrome-path, chrome-user-data-dir) for an already-installed Chrome for Testing without downloading
   - name: user-data-dir
     summary: determine the user data dir for Chrome for Testing based on OS
 `
@@ -30,6 +32,7 @@ func cli() *subcmd.CommandSetYAML {
 	downloadInstallCmd := &downloadInstallCmd{}
 	cmd.Set("get-manifest").MustRunner((&endpointsCmd{}).Get, &endpointsFlags{})
 	cmd.Set("install").MustRunner(downloadInstallCmd.installCmd, &installFlags{})
+	cmd.Set("paths").MustRunner(downloadInstallCmd.pathsCmd, &pathsFlags{})
 	cmd.Set("user-data-dir").MustRunner(downloadInstallCmd.userDataDirCmd, &userDataDirFlags{})
 	return cmd
 }
@@ -60,18 +63,22 @@ func main() {
 	subcmd.Dispatch(context.Background(), cli())
 }
 
-func currentPlatform() string {
+func currentPlatform() (string, error) {
 	switch runtime.GOOS {
 	case "darwin":
 		if runtime.GOARCH == "arm64" {
-			return "mac-arm64"
+			return "mac-arm64", nil
 		}
-		return "mac-x64"
+		return "mac-x64", nil
 	case "linux":
-		return "linux64"
+		// Chrome for Testing only publishes an x64 (amd64) Linux build.
+		if runtime.GOARCH != "amd64" {
+			return "", fmt.Errorf("Chrome for Testing has no linux/%s build; use an x64 (amd64) runner", runtime.GOARCH)
+		}
+		return "linux64", nil
 	case "windows":
-		return "win64"
+		return "win64", nil
 	default:
-		return ""
+		return "", fmt.Errorf("unsupported operating system %q", runtime.GOOS)
 	}
 }
