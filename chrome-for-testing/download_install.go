@@ -26,7 +26,11 @@ type VersionFlags struct {
 func (vf *VersionFlags) ParseRequestedDownload() (RequestedDownload, error) {
 	var rd RequestedDownload
 	if vf.Platform == "" {
-		vf.Platform = currentPlatform()
+		p, err := currentPlatform()
+		if err != nil {
+			return rd, err
+		}
+		vf.Platform = p
 	}
 	platform, err := ParsePlatform(vf.Platform)
 
@@ -136,6 +140,54 @@ func (ic *downloadInstallCmd) installCmd(ctx context.Context, f any, args []stri
 	if err := browser.init(ictx); err != nil {
 		return fmt.Errorf("initializing browser profile: %w", err)
 	}
+	return nil
+}
+
+type pathsFlags struct {
+	VersionFlags
+	CacheFlags
+}
+
+// pathsCmd resolves and emits the install paths for an already-installed
+// Chrome for Testing without contacting the network or downloading anything.
+// It is used by self-hosted runners where the image is prebuilt with the
+// browser: the paths are derived from the same cache layout the install command
+// uses, so they stay correct across platforms and architectures. Both the
+// chrome-path and chrome-user-data-dir GitHub Action outputs are written.
+func (ic *downloadInstallCmd) pathsCmd(_ context.Context, f any, _ []string) error {
+	fv := f.(*pathsFlags)
+	rd, err := fv.VersionFlags.ParseRequestedDownload()
+	if err != nil {
+		return fmt.Errorf("invalid requested download: %w", err)
+	}
+	cache, err := newToolCache(&fv.CacheFlags)
+	if err != nil {
+		return fmt.Errorf("creating tool cache: %w", err)
+	}
+	sd := SelectedDownload{
+		Platform:    rd.Platform,
+		Channel:     rd.Channel,
+		Application: rd.Application,
+	}
+	_, binaryPath, _, err := cache.applicationPaths(sd)
+	if err != nil {
+		return fmt.Errorf("getting application paths: %w", err)
+	}
+	if fi, err := os.Stat(binaryPath); err != nil || fi.IsDir() {
+		return fmt.Errorf("no installed binary found at %q (is the image prebuilt for %s?)", binaryPath, rd.Platform)
+	}
+	userDataDir, err := getUserDataDir(runtime.GOOS)
+	if err != nil {
+		return fmt.Errorf("determining user data dir: %w", err)
+	}
+	if err := updateGithubActionOutput("chrome-path", binaryPath); err != nil {
+		return fmt.Errorf("updating github action output: %w", err)
+	}
+	if err := updateGithubActionOutput("chrome-user-data-dir", userDataDir); err != nil {
+		return fmt.Errorf("updating github action output: %w", err)
+	}
+	fmt.Printf("chrome-path=%s\n", binaryPath)
+	fmt.Printf("chrome-user-data-dir=%s\n", userDataDir)
 	return nil
 }
 

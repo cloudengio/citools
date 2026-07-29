@@ -101,12 +101,14 @@ func (tc toolCache) applicationPaths(sd SelectedDownload) (prefix, binary, insta
 		return "", "", "", fmt.Errorf("no install spec for platform %q", sd.Platform)
 	}
 
+	// The platform string (e.g. mac-arm64, mac-x64, linux64) is used as the
+	// cache segment so that different architectures do not collide on disk.
 	binary = filepath.Join(
 		tc.cacheDir,
 		"setup-chrome",
 		sd.Application.String(),
 		sd.Channel.String(),
-		spec.to,
+		sd.Platform.String(),
 		spec.binary,
 	)
 
@@ -115,7 +117,7 @@ func (tc toolCache) applicationPaths(sd SelectedDownload) (prefix, binary, insta
 		"setup-chrome",
 		sd.Application.String(),
 		sd.Channel.String(),
-		spec.to,
+		sd.Platform.String(),
 	)
 
 	prefix = spec.from
@@ -124,23 +126,23 @@ func (tc toolCache) applicationPaths(sd SelectedDownload) (prefix, binary, insta
 }
 
 type installSpec struct {
-	from, to, binary string
+	from, binary string
 }
 
+var macChromeBinary = filepath.Join("Google Chrome for Testing.app", "Contents", "MacOS", "Google Chrome for Testing")
+
 var chromeInstallSpecs = map[Platform]installSpec{
-	PlatformLinux64: {"chrome-linux64", "x64", "chrome"},
-	PlatformWin64:   {"chrome-win64", "x64", "chrome.exe"},
-	PlatformMacArm64: {
-		"chrome-mac-arm64",
-		filepath.Join("x64"),
-		filepath.Join("Google Chrome for Testing.app", "Contents", "MacOS", "Google Chrome for Testing"),
-	},
+	PlatformLinux64:  {"chrome-linux64", "chrome"},
+	PlatformWin64:    {"chrome-win64", "chrome.exe"},
+	PlatformMacArm64: {"chrome-mac-arm64", macChromeBinary},
+	PlatformMacX64:   {"chrome-mac-x64", macChromeBinary},
 }
 
 var chromeDriverInstallSpecs = map[Platform]installSpec{
-	PlatformLinux64:  {"chromedriver-linux64", "x64", "chromedriver"},
-	PlatformWin64:    {"chromedriver-win64", "x64", "chromedriver.exe"},
-	PlatformMacArm64: {"chromedriver-mac-arm64", "x64", "chromedriver"},
+	PlatformLinux64:  {"chromedriver-linux64", "chromedriver"},
+	PlatformWin64:    {"chromedriver-win64", "chromedriver.exe"},
+	PlatformMacArm64: {"chromedriver-mac-arm64", "chromedriver"},
+	PlatformMacX64:   {"chromedriver-mac-x64", "chromedriver"},
 }
 
 func (t toolCache) binaryExists(path string) bool {
