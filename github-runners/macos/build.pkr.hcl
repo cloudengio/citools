@@ -48,6 +48,9 @@ source "tart-cli" "macos" {
   ssh_username = "admin"
   ssh_password = "admin"
   ssh_timeout  = "120s"
+
+  # Run the build VM without a graphical console (tart run --no-graphics).
+  headless = true
 }
 
 build {
@@ -94,5 +97,9 @@ build {
 
   provisioner "shell" {
     script = "scripts/09-chrome-for-testing.sh"
+  }
+
+  provisioner "shell" {
+    script = "scripts/10-pebble-minica.sh"
   }
 }
