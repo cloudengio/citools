@@ -19,8 +19,8 @@ vm_pools:
     size: 2
     tart_config:
       os: linux
-      runner_dir: "/Users/runner"
-      image: macos-ci
+      runner_dir: "/home/admin/actions-runner"
+      image: linux-ci
 
 icloud_keychain:
   keychain_type: all
@@ -30,14 +30,14 @@ icloud_keychain:
     - webhook-secrets
 
 runners: &runner_config
-  - name: "macos-runner"
+  - name: "go-macos"
     vm_pool: "macos"
     labels: ["self-hosted", "macos", "arm64"]
     replace: true
     ephemeral: true
     timeout: 30m
 
-  - name: "linux-runner"
+  - name: "go-linux"
     vm_pool: "linux"
     labels: ["self-hosted", "linux", "arm64"]
     replace: true

@@ -29,9 +29,8 @@ type TartConstructor struct {
 
 func (c *TartConstructor) New() vms.Instance {
 	name := fmt.Sprintf("%s-%s-%s", c.name, c.image, time.Now().Format("20060102-150405"))
-	logger := c.logger.With("vm_name", name, "source_image", c.image)
 	opts := slices.Clone(c.opts)
-	opts = append(opts, tartvm.WithLogger(logger), tartvm.WithObtainIPAtStart(false))
+	opts = append(opts, tartvm.WithLogger(c.logger), tartvm.WithObtainIPAtStart(false))
 	vm := tartvm.New(context.Background(), c.image, name, opts...)
 	return vm
 }
