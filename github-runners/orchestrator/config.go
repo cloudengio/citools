@@ -20,13 +20,20 @@ import (
 
 type Config struct {
 	Logging        cmdutil.LoggingConfig           `yaml:"logging" doc:"logging configuration options"`
-	TmpDir         string                          `yaml:"tmp_dir" doc:"directory in which to create temporary files and directories"`
+	Global         GlobalConfig                    `yaml:"global" doc:"global configuration options"`
 	Repositories   []RepositoryConfig              `yaml:"repositories" doc:"list of GitHub repositories to manage runners for"`
 	ICloudKeychain ICloudKeychainConfig            `yaml:"icloud_keychain" doc:"icloud keychain configuration for loading API keys"`
 	VMPools        map[string]vmsclient.PoolConfig `yaml:"vm_pools" doc:"configuration for VM pools to use for runner provisioning"`
 	Webhook        WebhookConfig                   `yaml:"webhook" doc:"configuration for the GitHub webhook relay service"`
 
 	// KeepFailedDuration time.Duration `yaml:"keep_failed_duration"`
+}
+
+type GlobalConfig struct {
+	TmpDir                      string        `yaml:"tmp_dir" doc:"directory in which to create temporary files and directories"`
+	CompletionQueueSize         int           `yaml:"completion_queue_size" doc:"maximum number of completion events to retain in memory"`
+	FailedVMRetentionPeriod     time.Duration `yaml:"failed_vm_retention_period" doc:"duration for which failed VMs should be retained before being deleted"`
+	SuccessfulVMRetentionPeriod time.Duration `yaml:"successful_vm_retention_period" doc:"duration for which successful VMs should be retained before being deleted"`
 }
 
 func (cfg Config) Validate() error {
@@ -198,27 +205,6 @@ func (rc GitHubRunnerConfig) Validate() error {
 	}
 	return nil
 }
-
-/*
-func (rc GitHubRunnerConfig) ConfigCommandLine(fullRepoName string, token string) string {
-	var out strings.Builder
-	fmt.Fprintf(&out, `cd %s && ./config.sh `, rc.RunnderDir)
-	out.WriteString("--unattended ")
-	if rc.Ephemeral {
-		out.WriteString("--ephemeral ")
-	}
-	if rc.Replace {
-		out.WriteString("--replace ")
-	}
-	if len(rc.RunnerWorkDir) > 0 {
-		fmt.Fprintf(&out, `--work %s `, rc.RunnerWorkDir)
-	}
-	url := fmt.Sprintf("https://github.com/%s", fullRepoName)
-	fmt.Fprintf(&out, `--url %s --name %s --labels %s --token %s`,
-		url, rc.RunnerName, strings.Join(rc.Labels, ","), token)
-	return out.String()
-}
-*/
 
 type contextConfigKey struct{}
 

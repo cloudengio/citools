@@ -6,6 +6,7 @@ package githubclient
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -69,29 +70,45 @@ func NewRepoClients() *RepoClients {
 	}
 }
 
-func (r *RepoClients) AddClient(owner, repo string, opts ...operations.Option) *Repo {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+func (rc *RepoClients) AddClient(owner, repo string, opts ...operations.Option) *Repo {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
 	key := owner + "/" + repo
-	if existing, ok := r.repos[key]; ok {
+	if existing, ok := rc.repos[key]; ok {
 		return existing
 	}
 	newRepo := New(owner, repo, opts...)
-	r.repos[key] = newRepo
+	rc.repos[key] = newRepo
 	return newRepo
 }
 
-func (r *RepoClients) GetClient(owner, repo string) (*Repo, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+func (rc *RepoClients) GetClient(owner, repo string) (*Repo, bool) {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
 	key := owner + "/" + repo
-	existing, ok := r.repos[key]
+	existing, ok := rc.repos[key]
 	return existing, ok
 }
 
-func (r *RepoClients) GetClientFullName(fullName string) (*Repo, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	existing, ok := r.repos[fullName]
+func (rc *RepoClients) GetClientFullName(fullName string) (*Repo, bool) {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	existing, ok := rc.repos[fullName]
 	return existing, ok
+}
+
+func (rc *RepoClients) GetToken(ctx context.Context, owner, repo string) (*gogithub.RegistrationToken, error) {
+	r, ok := rc.GetClient(owner, repo)
+	if !ok {
+		return nil, fmt.Errorf("no client for repository %s/%s", owner, repo)
+	}
+	return r.GetRegistrationToken(ctx)
+}
+
+func (rc *RepoClients) GetTokenFullName(ctx context.Context, fullName string) (*gogithub.RegistrationToken, error) {
+	r, ok := rc.GetClientFullName(fullName)
+	if !ok {
+		return nil, fmt.Errorf("no client for repository %s", fullName)
+	}
+	return r.GetRegistrationToken(ctx)
 }

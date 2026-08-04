@@ -5,7 +5,11 @@ logging:
   format: text
   file: "-"
 
-tmp_dir: "github-orchestrator-*"
+global:
+  tmp_dir: "github-orchestrator-*"
+  completion_queue_size: 1000
+  failed_vm_retention_period: 1h
+  successful_vm_retention_period: 5m
 
 vm_pools:
   macos:
