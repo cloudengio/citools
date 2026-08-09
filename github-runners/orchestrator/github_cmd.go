@@ -9,12 +9,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"cloudeng.io/cmdutil/keys"
+	"cloudeng.io/errors"
 	"cloudeng.io/text/textutil"
 	"cloudeng.io/webapi/clients/github/githubcmd"
+	"github.com/cloudengio/citools/runners/macos/orchestrator/githubclient"
 )
 
 // maxBodyLines bounds how much of an error response body is included in the
@@ -50,10 +53,10 @@ type GitHubFlags struct {
 
 type GitHubCommand struct{}
 
-func LookupRepositoryConfig(cfg Config, flags GitHubFlags) (RepositoryConfig, error) {
+func LookupRepositoryConfig(cfg Config, flags GitHubFlags) (githubclient.RepositoryConfig, error) {
 	repo := flags.Repo
 	if repo == "" {
-		return RepositoryConfig{}, fmt.Errorf("--repo is required")
+		return githubclient.RepositoryConfig{}, fmt.Errorf("--repo is required")
 	}
 	owner := flags.Owner
 	for _, repoCfg := range cfg.Repositories {
@@ -63,7 +66,7 @@ func LookupRepositoryConfig(cfg Config, flags GitHubFlags) (RepositoryConfig, er
 			}
 		}
 	}
-	return RepositoryConfig{}, fmt.Errorf("no matching repository configuration found")
+	return githubclient.RepositoryConfig{}, fmt.Errorf("no matching repository configuration found")
 }
 
 type ListRunnersFlags struct {
@@ -213,6 +216,65 @@ func (g GitHubCommand) GetJobConclusion(ctx context.Context, flags any, runIDArg
 		}
 	}
 	return nil
+}
+
+// requestForEachID resolves the repository named by flags and applies request to
+// each of the supplied IDs, reporting each one on stdout. noun names what the
+// IDs identify ("job", "run") and action what is being asked of GitHub, both for
+// use in messages. Every ID is attempted even if an earlier one fails, so that a
+// single rejected request does not strand the rest; a malformed ID is a usage
+// error and stops the command immediately.
+func requestForEachID(ctx context.Context, flags GitHubFlags, noun, action string, idArgs []string, request func(context.Context, string, int64) error) error {
+	cfg, ok := ConfigFromContext(ctx)
+	if !ok {
+		return fmt.Errorf("no config in context")
+	}
+	repoCfg, err := LookupRepositoryConfig(cfg, flags)
+	if err != nil {
+		return err
+	}
+	fullName := repoCfg.Service.Owner + "/" + repoCfg.Service.Repo
+
+	var errs errors.M
+	for _, idStr := range idArgs {
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid %s ID %q: %v", noun, idStr, err)
+		}
+		if err := request(ctx, fullName, id); err != nil {
+			errs.Append(fmt.Errorf("%s %s %d in %s: %w", action, noun, id, fullName, err))
+			continue
+		}
+		fmt.Printf("%d\t%s\t%s requested\n", id, fullName, action)
+	}
+	return errs.Err()
+}
+
+type RerunJobFlags struct {
+	GitHubFlags
+}
+
+// RerunJob requests that each of the supplied jobs, and the jobs depending on
+// them, be rerun. GitHub queues the rerun asynchronously, so a job is reported
+// here as requested rather than as started.
+func (g GitHubCommand) RerunJob(ctx context.Context, flags any, jobIDArgs []string) error {
+	fv := flags.(*RerunJobFlags)
+	return requestForEachID(ctx, fv.GitHubFlags, "job", "rerun", jobIDArgs,
+		repoClients.RerunWorkflowJobFullName)
+}
+
+type CancelRunFlags struct {
+	GitHubFlags
+}
+
+// CancelRun requests that each of the supplied workflow runs be cancelled,
+// which cancels every job in the run. GitHub cancels asynchronously, so a run is
+// reported here as requested rather than as stopped, and rejects the request
+// with 409 Conflict if the run has already completed.
+func (g GitHubCommand) CancelRun(ctx context.Context, flags any, runIDArgs []string) error {
+	fv := flags.(*CancelRunFlags)
+	return requestForEachID(ctx, fv.GitHubFlags, "run", "cancel", runIDArgs,
+		repoClients.CancelWorkflowRunFullName)
 }
 
 type CreateRegistrationTokenFlags struct {

@@ -9,11 +9,12 @@ global:
   tmp_dir: "github-orchestrator-*"
   completion_queue_size: 1000
   failed_vm_retention_period: 1h
-  successful_vm_retention_period: 5m
+  successful_vm_retention_period: 15m
 
 vm_pools:
   macos:
     size: 2
+    delete_acquired_on_close: true
     tart_config:
       os: macos
       runner_dir: /Users/admin/actions-runner
@@ -21,10 +22,12 @@ vm_pools:
 
   linux:
     size: 2
+    delete_acquired_on_close: true
     tart_config:
       os: linux
       runner_dir: "/home/admin/actions-runner"
       image: linux-ci
+      run_options: ["--no-graphics", "--no-audio", "--nested"] # for docker.
 
 icloud_keychain:
   keychain_type: all
@@ -34,14 +37,14 @@ icloud_keychain:
     - webhook-secrets
 
 runners: &runner_config
-  - name: "go-macos"
+  - name_prefix: "go-macos"
     vm_pool: "macos"
     labels: ["self-hosted", "macos", "arm64"]
     replace: true
     ephemeral: true
     timeout: 30m
 
-  - name: "go-linux"
+  - name_prefix: "go-linux"
     vm_pool: "linux"
     labels: ["self-hosted", "linux", "arm64"]
     replace: true

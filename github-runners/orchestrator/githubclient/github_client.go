@@ -38,7 +38,8 @@ func (c *Repo) existingToken() *gogithub.RegistrationToken {
 	if c.token == nil || c.token.GetToken() == "" {
 		return nil
 	}
-	if c.token.GetExpiresAt().Before(time.Now()) {
+	// request a new token if the existing one is about to expire in 5 minutes or less.
+	if c.token.GetExpiresAt().Before(time.Now().Add(time.Minute * 5)) {
 		c.token = nil
 		return nil
 	}
@@ -57,6 +58,14 @@ func (c *Repo) GetRegistrationToken(ctx context.Context) (*gogithub.Registration
 	defer c.mu.Unlock()
 	c.token = &token
 	return c.token, nil
+}
+
+func (c *Repo) GetWorflowJob(ctx context.Context, jobID int64) (*gogithub.WorkflowJob, error) {
+	job, err := github.GetWorkflowJob(ctx, c.owner, c.repo, jobID, c.opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get workflow job %d for repository %s/%s: %w", jobID, c.owner, c.repo, err)
+	}
+	return &job, nil
 }
 
 type RepoClients struct {
@@ -100,7 +109,7 @@ func (rc *RepoClients) GetClientFullName(fullName string) (*Repo, bool) {
 func (rc *RepoClients) GetToken(ctx context.Context, owner, repo string) (*gogithub.RegistrationToken, error) {
 	r, ok := rc.GetClient(owner, repo)
 	if !ok {
-		return nil, fmt.Errorf("no client for repository %s/%s", owner, repo)
+		return nil, fmt.Errorf("no client for repository: '%s/%s'", owner, repo)
 	}
 	return r.GetRegistrationToken(ctx)
 }
@@ -108,7 +117,31 @@ func (rc *RepoClients) GetToken(ctx context.Context, owner, repo string) (*gogit
 func (rc *RepoClients) GetTokenFullName(ctx context.Context, fullName string) (*gogithub.RegistrationToken, error) {
 	r, ok := rc.GetClientFullName(fullName)
 	if !ok {
-		return nil, fmt.Errorf("no client for repository %s", fullName)
+		return nil, fmt.Errorf("no client for repository: '%s'", fullName)
 	}
 	return r.GetRegistrationToken(ctx)
+}
+
+func (rc *RepoClients) GetWorkflowJobFullName(ctx context.Context, fullName string, jobID int64) (*gogithub.WorkflowJob, error) {
+	r, ok := rc.GetClientFullName(fullName)
+	if !ok {
+		return nil, fmt.Errorf("no client for repository: '%s'", fullName)
+	}
+	return r.GetWorflowJob(ctx, jobID)
+}
+
+func (rc *RepoClients) RerunWorkflowJobFullName(ctx context.Context, fullName string, jobID int64) error {
+	r, ok := rc.GetClientFullName(fullName)
+	if !ok {
+		return fmt.Errorf("no client for repository: '%s'", fullName)
+	}
+	return github.RerunWorkflowJob(ctx, r.owner, r.repo, jobID, r.opts...)
+}
+
+func (rc *RepoClients) CancelWorkflowRunFullName(ctx context.Context, fullName string, runID int64) error {
+	r, ok := rc.GetClientFullName(fullName)
+	if !ok {
+		return fmt.Errorf("no client for repository: '%s'", fullName)
+	}
+	return github.CancelWorkflowRun(ctx, r.owner, r.repo, runID, r.opts...)
 }

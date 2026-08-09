@@ -5,6 +5,7 @@ go 1.26.4
 require (
 	cloudeng.io/algo v0.0.0-20260721222700-155e56185eeb
 	cloudeng.io/cmdutil v0.0.0-20260721222700-155e56185eeb
+	cloudeng.io/errors v0.0.14-0.20260312171538-61fcde6ce278
 	cloudeng.io/file v0.0.0-20260721222700-155e56185eeb
 	cloudeng.io/logging v0.0.0-20260721222700-155e56185eeb
 	cloudeng.io/macos v0.0.0-20260623000025-efba237a440e
@@ -18,7 +19,6 @@ require (
 )
 
 require (
-	cloudeng.io/errors v0.0.14-0.20260312171538-61fcde6ce278 // indirect
 	cloudeng.io/os v0.0.0-20260721222700-155e56185eeb // indirect
 	cloudeng.io/path v0.0.10-0.20260312171538-61fcde6ce278 // indirect
 	cloudeng.io/security v0.0.0-20260721222700-155e56185eeb // indirect

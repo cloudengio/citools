@@ -102,4 +102,12 @@ build {
   provisioner "shell" {
     script = "scripts/10-pebble-minica.sh"
   }
+
+  provisioner "shell" {
+    script = "scripts/11-tart.sh"
+  }
+
+  #provisioner "shell" {
+  #  script = "scripts/12-docker.sh"
+  #}
 }
