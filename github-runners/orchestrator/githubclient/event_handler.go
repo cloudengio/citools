@@ -1,0 +1,311 @@
+// Copyright 2026 cloudeng llc. All rights reserved.
+// Use of this source code is governed by the Apache-2.0
+// license that can be found in the LICENSE file.
+
+package githubclient
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"slices"
+	"time"
+
+	"cloudeng.io/errors"
+	"cloudeng.io/logging/ctxlog"
+	"github.com/cloudengio/citools/runners/macos/orchestrator/internal"
+	"github.com/cloudengio/citools/runners/macos/orchestrator/vmsclient"
+	gogithub "github.com/google/go-github/v89/github"
+)
+
+type WorkflowEventHandler struct {
+	runnerConfig    map[string]RunnerConfig
+	vmPools         *vmsclient.Pools
+	poolConfigs     map[string]vmsclient.PoolConfig
+	lm              *internal.LogFileManager
+	completeQueue   *CompletionQueue
+	workflowManager *workflowInstanceManager
+	clients         *RepoClients
+}
+
+type CompletionQueue = vmsclient.CompletionQueue[WorkflowInstance]
+
+func NewCompletionQueue(ctx context.Context, size int, successfulRetention, failedRetention time.Duration) *CompletionQueue {
+	return vmsclient.NewCompletionQueue[WorkflowInstance](ctx, size, successfulRetention, failedRetention)
+}
+
+func NewWorkflowEventHandler(ctx context.Context, tmpDir string, cq *CompletionQueue, poolConfigs map[string]vmsclient.PoolConfig, repoConfigs []RepositoryConfig, clients *RepoClients) (*WorkflowEventHandler, error) {
+	lm, err := internal.NewLogFileManager(tmpDir)
+	if err != nil {
+		return nil, err
+	}
+	defer lm.CloseGlobalLogFile()
+	vmPools, err := vmsclient.NewPools(ctx, poolConfigs, func(string) io.Writer {
+		return lm.GlobalLogFile()
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	runnerMap := make(map[string]RunnerConfig, len(repoConfigs)*2)
+	for _, rc := range repoConfigs {
+		fullname := rc.Service.Owner + "/" + rc.Service.Repo
+		for _, runner := range rc.Runners {
+			labelKey := fullname + ":" + canonicalLabelSet(runner.Labels)
+			runnerMap[labelKey] = runner
+			ctxlog.Info(ctx, "handling workflow events", "repo", fullname, "runner_name_prefix", runner.NamePrefix, "label_key", labelKey)
+		}
+	}
+	return &WorkflowEventHandler{
+		runnerConfig:    runnerMap,
+		workflowManager: newWorkflowInstanceManager(lm),
+		vmPools:         vmPools,
+		poolConfigs:     poolConfigs,
+		completeQueue:   cq,
+		lm:              lm,
+		clients:         clients,
+	}, nil
+}
+
+func (r *WorkflowEventHandler) Close(ctx context.Context) error {
+	r.lm.CloseGlobalLogFile() //nolint:errcheck // best effort cleanup of global log file.
+	var errs errors.M
+	err := r.vmPools.Close(ctx)
+	if err != nil {
+		ctxlog.Error(ctx, "failed to close VM pools", "error", err)
+	} else {
+		ctxlog.Info(ctx, "closed VM pools")
+	}
+	errs.Append(err)
+	err = r.completeQueue.Close(ctx)
+	if err != nil {
+		ctxlog.Error(ctx, "failed to close completion queue", "error", err)
+	} else {
+		ctxlog.Info(ctx, "closed completion queue")
+	}
+	errs.Append(err)
+	return errs.Err()
+}
+
+var (
+	errUnsupportedAction = errors.New("unsupported action")
+	errNoJob             = errors.New("workflow_job event has no workflow_job")
+	errNoLabels          = errors.New("workflow_job event has no labels")
+	errNoRepo            = errors.New("workflow_job event has no repository property")
+	errNoRunnerConfig    = errors.New("workflow_job event has no corresponding local runner configuration")
+	errNoVMPoolConfig    = errors.New("workflow_job event has no corresponding local VM pool configuration")
+)
+
+// matchOnLabelsAndAction checks if the event matches a runner configuration based on
+// labels and action. Currently only queued actions are supported, if an
+// action is not supported, the event is ignored and nil is returned along with a nil error.
+func (r *WorkflowEventHandler) matchOnLabelsAndAction(ctx context.Context, event *gogithub.WorkflowJobEvent, actions []string) (*slog.Logger, *RunnerConfig, *vmsclient.PoolConfig, error) {
+	logger := LoggerWithEvent(ctxlog.Logger(ctx), event)
+	action := event.GetAction()
+	if !slices.Contains(actions, action) {
+		return logger, nil, nil, errUnsupportedAction
+	}
+
+	job := event.GetWorkflowJob()
+	if job == nil {
+		return logger, nil, nil, errNoJob
+	}
+
+	labels := job.GetLabels()
+	if len(labels) == 0 {
+		return logger, nil, nil, errNoLabels
+	}
+
+	wkflowRepo := event.GetRepo()
+	if wkflowRepo == nil {
+		return logger, nil, nil, errNoRepo
+	}
+
+	wkflowRepoName := wkflowRepo.GetFullName()
+	labelKey := wkflowRepoName + ":" + canonicalLabelSet(labels)
+	logger = logger.With("label_key", labelKey)
+	runner, ok := r.runnerConfig[labelKey]
+	if !ok {
+		return logger, nil, nil, errNoRunnerConfig
+	}
+	pool, ok := r.poolConfigs[runner.VMPoolName]
+	if !ok {
+		return logger, nil, nil, errNoVMPoolConfig
+	}
+	logger = logger.With(LogRunnerConfigGroup(&runner))
+	return logger, &runner, &pool, nil
+}
+
+func (r *WorkflowEventHandler) HandleWebhooks(ctx context.Context, event *gogithub.WorkflowJobEvent) error {
+	supportedActions := []string{"queued", "in_progress", "completed"}
+	logger, runner, pool, err := r.matchOnLabelsAndAction(ctx, event, supportedActions)
+	if err != nil {
+		if errors.Is(err, errUnsupportedAction) {
+			logger.Info("workflow_job event ignored: action is not supported", "action", event.GetAction(), "supported_actions", supportedActions)
+			return nil
+		}
+		logger.Error("workflow_job event ignored due to error", "err", err)
+		return nil
+	}
+	ctx = ctxlog.WithLogger(ctx, logger)
+	logger.Info("handling workflow_job event")
+	switch event.GetAction() {
+	case "queued":
+		go r.handleQueuedEvent(ctx, event, pool, runner)
+		return nil
+	case "in_progress":
+		r.handleInProgressEvent(ctx, event)
+		return nil
+	case "completed":
+		r.handleCompleted(ctx, event)
+		return nil
+	default:
+		logger.Info("workflow_job event ignored: unsupported action", "action", event.GetAction())
+		return nil
+	}
+}
+
+func (r *WorkflowEventHandler) getInstanceForEvent(ctx context.Context, event *gogithub.WorkflowJobEvent) (*WorkflowInstance, bool) {
+	job := event.GetWorkflowJob()
+	if job == nil {
+		ctxlog.Error(ctx, "workflow_job event has no workflow_job property")
+		return nil, false
+	}
+	jobId := event.GetWorkflowJob().GetID()
+	if jobId == 0 {
+		ctxlog.Error(ctx, "workflow_job event has no workflow_job.id property")
+		return nil, false
+	}
+	fullName := event.GetRepo().GetFullName()
+	if len(fullName) == 0 {
+		ctxlog.Error(ctx, "workflow_job event has no repository.full_name property")
+		return nil, false
+	}
+	njob, err := r.clients.GetWorkflowJobFullName(ctx, fullName, jobId)
+	if err != nil {
+		ctxlog.Error(ctx, "failed to get workflow job from GitHub", "job_id", jobId, "repo_full_name", fullName, "error", err)
+		return nil, false
+	}
+	runnerName := njob.GetRunnerName()
+	return r.workflowManager.getInstance(runnerName)
+}
+
+func (r *WorkflowEventHandler) handleInProgressEvent(ctx context.Context, event *gogithub.WorkflowJobEvent) {
+	inst, ok := r.getInstanceForEvent(ctx, event)
+	if !ok {
+		ctxlog.Error(ctx, "workflow_job event has no corresponding workflow instance")
+		err := r.clients.RerunWorkflowJobFullName(ctx, event.GetRepo().GetFullName(), event.GetWorkflowJob().GetID())
+		if err != nil {
+			ctxlog.Error(ctx, "failed to rerun workflow job", "error", err)
+		}
+		return
+	}
+	logger := LoggerWithWorkflowInstance(ctxlog.Logger(ctx), inst)
+	logger.Info("workflow_job in_progress event")
+}
+
+func (r *WorkflowEventHandler) handleCompleted(ctx context.Context, event *gogithub.WorkflowJobEvent) {
+	inst, ok := r.getInstanceForEvent(ctx, event)
+	if !ok {
+		ctxlog.Info(ctx, "workflow_job event has completed locally")
+		return
+	}
+	logger := LoggerWithWorkflowInstance(ctxlog.Logger(ctx), inst)
+	logger.Info("workflow_job completed event, but workflow instance still exists, cleaning up since likely canceled on github")
+	vm := inst.GetVM()
+	_, _ = vm.StopAndRelease(ctx, 30*time.Second)
+	ce := vmsclient.CompletionEvent[WorkflowInstance]{Payload: *inst}
+	err := fmt.Errorf("job canceled")
+	r.completeQueue.PushFailure(ce, err)
+}
+
+func (r *WorkflowEventHandler) handleQueuedEvent(ctx context.Context, event *gogithub.WorkflowJobEvent, pool *vmsclient.PoolConfig, runner *RunnerConfig) error {
+
+	ctx, cancel := context.WithTimeout(ctx, runner.Timeout)
+	defer cancel()
+
+	inst := r.workflowManager.newInstance(ctx, runner, pool, event)
+	logger := LoggerWithWorkflowInstance(ctxlog.Logger(ctx), inst)
+	ctx = ctxlog.WithLogger(ctx, logger)
+
+	if err := inst.AcquireVMAndToken(ctx, r.vmPools, r.clients); err != nil {
+		ctxlog.Error(ctx, "failed to acquire VM and token", "error", err)
+		return err
+	}
+
+	defer r.workflowManager.deleteInstance(ctx, inst.Name)
+
+	inst.RunJob(ctx, r.completeQueue)
+	//	shr := newSelfHostedRunner(r.lm, pool, inst, r.completeQueue, event.GetRepo().GetHTMLURL(), token.GetToken())
+	//	shr.runQueuedJob(ctx, inst)
+	return nil
+}
+
+func (r *WorkflowEventHandler) RunJob(ctx context.Context, owner, repo string, labels []string, waitForUserInput bool) error {
+	wkflowRepoName := owner + "/" + repo
+	labelKey := wkflowRepoName + ":" + canonicalLabelSet(labels)
+	runner, ok := r.runnerConfig[labelKey]
+	if !ok {
+		return fmt.Errorf("no runner configuration found for labels %v, key %v", labels, labelKey)
+	}
+
+	event := &gogithub.WorkflowJobEvent{
+		Action: gogithub.Ptr("queued"),
+		WorkflowJob: gogithub.Ptr(gogithub.WorkflowJob{
+			Name:         gogithub.Ptr(runner.NamePrefix + "-manual-run"),
+			Labels:       labels,
+			WorkflowName: gogithub.Ptr("manual-run"),
+		}),
+		Repo: gogithub.Ptr(gogithub.Repository{
+			Name:     gogithub.Ptr(repo),
+			Owner:    &gogithub.User{Login: gogithub.Ptr(owner)},
+			FullName: gogithub.Ptr(wkflowRepoName),
+			HTMLURL:  gogithub.Ptr(fmt.Sprintf("https://github.com/%s", wkflowRepoName)),
+		}),
+	}
+
+	pool, ok := r.poolConfigs[runner.VMPoolName]
+	if !ok {
+		return fmt.Errorf("no pool configuration found for VM pool %s", runner.VMPoolName)
+	}
+
+	if err := r.handleQueuedEvent(ctx, event, &pool, &runner); err != nil {
+		return fmt.Errorf("failed to handle queued event: %w", err)
+	}
+	r.DrainCompletionQueue(ctx, waitForUserInput)
+	return nil
+}
+
+func (r *WorkflowEventHandler) DrainCompletionQueue(ctx context.Context, waitForInput bool) {
+	for {
+		select {
+		case success := <-r.completeQueue.Success():
+			inst := success.Payload
+			logger := inst.GetLogger(ctxlog.Logger(ctx))
+			logger.Info("job completed successfully")
+			waitForUserInput(waitForInput, fmt.Sprintf("VM %s kept for debugging; press Enter to release it and continue...", inst.GetVM().ID()))
+			inst.GetVM().Delete(ctx) //nolint:errcheck
+		case failure := <-r.completeQueue.Failure():
+			inst := failure.Payload
+			logger := inst.GetLogger(ctxlog.Logger(ctx))
+			logger.Error("job failed", "error", failure.Err)
+			waitForUserInput(waitForInput, fmt.Sprintf("VM %s kept for debugging; press Enter to release it and continue...", inst.GetVM().ID()))
+			inst.GetVM().Delete(ctx) //nolint:errcheck
+		case <-ctx.Done():
+			return
+		default:
+			return
+		}
+	}
+}
+
+func waitForUserInput(keepVM bool, prompt string) {
+	if !keepVM {
+		return
+	}
+	fmt.Fprint(os.Stderr, prompt)
+	_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
+}
