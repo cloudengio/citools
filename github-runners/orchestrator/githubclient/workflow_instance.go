@@ -25,16 +25,16 @@ import (
 
 // WorkflowInstance represents a single instance of a workflow executed on a VM.
 type WorkflowInstance struct {
-	Name                              string
-	RunStdoutStderr, DiagStdoutStderr io.Writer
-	LogName, DiagName                 string
-	RunnerConfig                      *RunnerConfig
-	PoolConfig                        *vmsclient.PoolConfig
-	Event                             *gogithub.WorkflowJobEvent
-	RepoURL                           string
-	vm                                *vmspool.VM
-	token                             *gogithub.RegistrationToken
-	logFile, diagLogs                 *os.File
+	Name                        string
+	RunStdoutStderr, DiagStdout io.Writer
+	LogName, DiagName           string
+	RunnerConfig                *RunnerConfig
+	PoolConfig                  *vmsclient.PoolConfig
+	Event                       *gogithub.WorkflowJobEvent
+	RepoURL                     string
+	vm                          *vmspool.VM
+	token                       *gogithub.RegistrationToken
+	logFile, diagLogs           *os.File
 }
 
 var runnerNameId atomic.Int64
@@ -52,13 +52,14 @@ func newWorkflowInstance(ctx context.Context, lm *internal.LogFileManager, runne
 	if err != nil {
 		ctxlog.Error(ctx, "failed to create temp log files", "err", err)
 		wfi.RunStdoutStderr = os.Stdout
-		wfi.DiagStdoutStderr = io.Discard // don't write tar output to stderr, as it will be captured in the job log file
+		wfi.DiagStdout = io.Discard // don't write tar output to stderr, as it will be captured in the job log file
 		wfi.LogName = "stdout/stderr"
 		wfi.DiagName = "stdout/stderr"
+		wfi.RepoURL = event.GetRepo().GetHTMLURL()
 		return wfi
 	}
 	wfi.RunStdoutStderr = io.MultiWriter(logFile, os.Stdout)
-	wfi.DiagStdoutStderr = diagLogs
+	wfi.DiagStdout = diagLogs
 	wfi.logFile = logFile
 	wfi.diagLogs = diagLogs
 	wfi.LogName = logFile.Name()

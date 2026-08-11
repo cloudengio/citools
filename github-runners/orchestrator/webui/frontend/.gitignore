@@ -1,4 +1,4 @@
 node_modules
 *.tsbuildinfo
 dist/*
-!dist/.gitkeep
+!dist/index.html

@@ -11,11 +11,11 @@ import (
 	"cloudeng.io/webapp/webassets"
 )
 
-// frontendFS holds the compiled single-page app. Build it with
-// `npm --prefix frontend run build`, which regenerates frontend/dist, before
-// `go build`. Only frontend/dist/.gitkeep is checked in (the build artifacts are
-// git-ignored), so this package always compiles; when no real build is present
-// the server falls back to a placeholder page (see hasIndex and mount.go).
+// frontendFS holds the compiled single-page app. A placeholder
+// frontend/dist/index.html is checked in (the build artifacts are git-ignored)
+// so this package always compiles; `npm --prefix frontend run build` (or
+// `go run . webapp-build`) overwrites it, plus an assets/ directory, with the
+// real SPA. Until then the placeholder index is served instead.
 //
 //go:embed all:frontend/dist
 var frontendFS embed.FS
@@ -27,12 +27,4 @@ var frontendFS embed.FS
 // `npm run build` and picked up without recompiling the binary.
 func FrontendAssets(opts ...webassets.AssetsOption) fs.FS {
 	return webassets.NewAssets("frontend/dist", frontendFS, opts...)
-}
-
-// hasIndex reports whether the asset filesystem currently resolves a built SPA
-// entry point (index.html). With reloading enabled this consults the local
-// filesystem, so a build produced after startup is detected.
-func hasIndex(assets fs.FS) bool {
-	_, err := fs.Stat(assets, "index.html")
-	return err == nil
 }

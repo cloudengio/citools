@@ -155,6 +155,7 @@ func (g GitHubCommand) GetRuns(ctx context.Context, flags any, args []string) er
 type GetJobConclusionFlags struct {
 	GitHubFlags
 	githubcmd.ListRunsFlags
+	Runner string `subcmd:"runner,,'report only the jobs whose runner name starts with this value; runner names are a configured prefix followed by a generated suffix, so the prefix alone matches. Reports every job in the run if unset'"`
 }
 
 func (g GitHubCommand) GetJobConclusion(ctx context.Context, flags any, runIDArgs []string) error {
@@ -165,14 +166,16 @@ func (g GitHubCommand) GetJobConclusion(ctx context.Context, flags any, runIDArg
 		return err
 	}
 
-	runIDs := make([]int64, len(runIDArgs))
-	for i, idStr := range runIDArgs {
+	// pending holds the runs still to be reported. Completion is tracked per
+	// requested run, not per job, because a run contains any number of jobs.
+	pending := make(map[int64]bool, len(runIDArgs))
+	for _, idStr := range runIDArgs {
 		var id int64
 		_, err := fmt.Sscanf(idStr, "%d", &id)
 		if err != nil {
 			return fmt.Errorf("invalid run ID %q: %v", idStr, err)
 		}
-		runIDs[i] = id
+		pending[id] = true
 	}
 
 	statusVals := []string{"in_progress", "completed"}
@@ -180,35 +183,40 @@ func (g GitHubCommand) GetJobConclusion(ctx context.Context, flags any, runIDArg
 		statusVals = []string{fv.Status}
 	}
 
-	jobDone := make(map[int64]bool)
-
 	for _, status := range statusVals {
 		rfv := fv.ListRunsFlags
 		rfv.Status = status
 		runs, runsErr := gc.ListRuns(ctx, rfv)
 		for run := range runs {
+			runID := run.GetID()
+			// Only the requested runs are worth a jobs request; a run already
+			// reported under an earlier status is no longer pending.
+			if !pending[runID] {
+				continue
+			}
 			lfv := githubcmd.ListJobsFlags{
 				Filter:   "latest",
 				PageSize: fv.PageSize,
 			}
-			jobs, jobsErr := gc.ListJobs(ctx, lfv, run.GetID())
+			jobs, jobsErr := gc.ListJobs(ctx, lfv, runID)
 			for job := range jobs {
-				for _, id := range runIDs {
-					if job.GetRunID() == id && !jobDone[job.GetID()] {
-						out, err := json.MarshalIndent(job, "", "  ")
-						if err != nil {
-							return err
-						}
-						fmt.Println(string(out))
-						jobDone[job.GetID()] = true
-						if len(jobDone) >= len(runIDs) {
-							return nil
-						}
-					}
+				// An unset --runner is an empty prefix, matching every job.
+				if !strings.HasPrefix(job.GetRunnerName(), fv.Runner) {
+					continue
 				}
+				out, err := json.MarshalIndent(job, "", "  ")
+				if err != nil {
+					return err
+				}
+				fmt.Println(string(out))
 			}
 			if err := detailErr(jobsErr()); err != nil {
 				return err
+			}
+			// The run's jobs have all been walked, so the run is done.
+			delete(pending, runID)
+			if len(pending) == 0 {
+				return nil
 			}
 		}
 		if err := detailErr(runsErr()); err != nil {

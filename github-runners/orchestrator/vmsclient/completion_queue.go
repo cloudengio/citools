@@ -98,12 +98,10 @@ func (q *CompletionQueue[T]) Close(ctx context.Context) error {
 func (q *CompletionQueue[T]) closeCQ(ctx context.Context, msg string, cq *patterns.FIFO[CompletionEvent[T]]) error {
 	var errs errors.M
 	close(cq.In())
-	if len(cq.Out()) != 0 {
-		for e := range cq.Out() {
-			if vm := e.Payload.GetVM(); vm != nil {
-				ctxlog.Info(ctx, msg, "vm", vm.ID())
-				errs.Append(vm.Delete(ctx))
-			}
+	for e := range cq.Out() {
+		if vm := e.Payload.GetVM(); vm != nil {
+			ctxlog.Info(ctx, msg, "vm", vm.ID())
+			errs.Append(vm.Delete(ctx))
 		}
 	}
 	cq.Stop(ctx)

@@ -37,6 +37,12 @@ func (cfg PoolConfig) Validate() error {
 	if cfg.Tart == nil {
 		return ErrNoBackend
 	}
+	if cfg.Tart.Image == "" {
+		return fmt.Errorf("tart_config.image is required")
+	}
+	if cfg.Tart.RunnerDir == "" {
+		return fmt.Errorf("tart_config.runner_dir is required")
+	}
 	return nil
 }
 

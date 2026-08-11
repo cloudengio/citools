@@ -10,17 +10,13 @@ import (
 )
 
 // Handler returns the top-level HTTP handler for the web UI: the JSON API under
-// BasePath plus the embedded single-page app at the root. When no compiled
-// frontend is embedded, the root serves a small placeholder that links to the
-// API instead.
+// BasePath plus the single-page app at the root. The root always resolves an
+// index.html — the built SPA when present, otherwise the checked-in placeholder
+// that links to the API (see embed.go).
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle(BasePath+"/", s.APIHandler())
-	if hasIndex(s.assets) {
-		mux.Handle("/", spaHandler(s.assets))
-	} else {
-		mux.HandleFunc("/", placeholderHandler)
-	}
+	mux.Handle("/", spaHandler(s.assets))
 	return mux
 }
 
@@ -42,27 +38,3 @@ func spaHandler(assets fs.FS) http.Handler {
 		fileServer.ServeHTTP(w, r)
 	})
 }
-
-func placeholderHandler(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(placeholderIndex))
-}
-
-const placeholderIndex = `<!doctype html>
-<html><head><meta charset="utf-8"><title>Runner Orchestrator</title></head>
-<body>
-<h1>GitHub Runner Orchestrator</h1>
-<p>The compiled web UI is not embedded in this build. Build it with
-<code>npm --prefix webui/frontend run build</code> and rebuild the binary.</p>
-<p>The management API is served under <code>` + BasePath + `</code>:</p>
-<ul>
-<li><a href="` + BasePath + `/config">config</a></li>
-<li><a href="` + BasePath + `/pools">pools</a></li>
-<li><a href="` + BasePath + `/workflows">workflows</a></li>
-<li><a href="` + BasePath + `/events">events (SSE)</a></li>
-</ul>
-</body></html>`

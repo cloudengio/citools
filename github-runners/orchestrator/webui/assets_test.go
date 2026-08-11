@@ -16,17 +16,18 @@ import (
 	"cloudeng.io/webapp/webassets"
 )
 
-// TestEmbeddedSPAServed verifies the default (embedded) asset filesystem serves
-// the built SPA entry point at the root.
-func TestEmbeddedSPAServed(t *testing.T) {
-	if !hasIndex(FrontendAssets()) {
-		t.Skip("no embedded SPA build present (run `npm run build`)")
-	}
+// TestRootServesIndex verifies the root serves the embedded index.html — the
+// built SPA when present, otherwise the checked-in placeholder. Both identify
+// the orchestrator, so this holds whether or not the frontend has been built.
+func TestRootServesIndex(t *testing.T) {
 	ts := httptest.NewServer(NewServer(newFakeBackend()).Handler())
 	defer ts.Close()
-	_, body := get(t, ts.URL+"/")
-	if !strings.Contains(body, `<div id="root">`) {
-		t.Errorf("root did not serve the SPA index: %.120s", body)
+	code, body := get(t, ts.URL+"/")
+	if code != 200 {
+		t.Fatalf("root status = %d, want 200", code)
+	}
+	if !strings.Contains(body, "Runner Orchestrator") {
+		t.Errorf("root did not serve an index page: %.120s", body)
 	}
 }
 

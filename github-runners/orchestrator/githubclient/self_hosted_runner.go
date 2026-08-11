@@ -111,7 +111,7 @@ func (shr *selfHostedRunner) runQueuedJob(ctx context.Context, inst *WorkflowIns
 		shr.createRunCommand())
 	errs.Append(err)
 	stderr := bytes.NewBuffer(make([]byte, 0, 1024))
-	err = shr.extractLogs(ctx, vm, inst.DiagStdoutStderr, stderr)
+	err = shr.extractLogs(ctx, vm, inst.DiagStdout, stderr)
 	if err != nil {
 		ctxlog.Error(ctx, "failed to extract _diag directory", "vm", vm.ID(), "error", err, "stderr", stderr.String())
 		errs.Append(err)

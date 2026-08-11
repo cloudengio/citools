@@ -678,9 +678,9 @@ func (s *Server) GetWorkflow(ctx context.Context, request GetWorkflowRequestObje
 func (s *Server) Handler() http.Handler
 ```
 Handler returns the top-level HTTP handler for the web UI: the JSON API
-under BasePath plus the embedded single-page app at the root. When no
-compiled frontend is embedded, the root serves a small placeholder that
-links to the API instead.
+under BasePath plus the single-page app at the root. The root always
+resolves an index.html — the built SPA when present, otherwise the
+checked-in placeholder that links to the API (see embed.go).
 
 
 ```go
@@ -1154,8 +1154,12 @@ npm --prefix webui/frontend run build     # regenerate frontend/dist (embedded b
 go build ./...
 ```
 
-Only `frontend/dist/.gitkeep` is tracked; the build artifacts are git-ignored, so
-`go build` always compiles and falls back to a placeholder page until the SPA is built.
+A placeholder `frontend/dist/index.html` is checked in; the build artifacts
+(`dist/assets/` and the built `index.html`) are git-ignored, so `go build` always
+compiles and serves the placeholder page until the SPA is built. `npm run build`
+overwrites the placeholder locally — don't commit the built `index.html` over it,
+since it references the git-ignored `assets/` and would render blank on a fresh
+checkout.
 
 #### Asset serving and live reload
 

@@ -28,8 +28,12 @@ npm --prefix webui/frontend run build     # regenerate frontend/dist (embedded b
 go build ./...
 ```
 
-Only `frontend/dist/.gitkeep` is tracked; the build artifacts are git-ignored, so
-`go build` always compiles and falls back to a placeholder page until the SPA is built.
+A placeholder `frontend/dist/index.html` is checked in; the build artifacts
+(`dist/assets/` and the built `index.html`) are git-ignored, so `go build` always
+compiles and serves the placeholder page until the SPA is built. `npm run build`
+overwrites the placeholder locally — don't commit the built `index.html` over it,
+since it references the git-ignored `assets/` and would render blank on a fresh
+checkout.
 
 ## Asset serving and live reload
 
