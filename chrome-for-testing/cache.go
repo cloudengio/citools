@@ -166,7 +166,7 @@ func unzip(ctx context.Context, prefix, src, dst string) error {
 		return err
 	}
 	logger.Info("unzipping file", "source", src, "destination", dst, "prefix", prefix)
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	for _, f := range r.File {
 		rc, err := f.Open()
 		if err != nil {
@@ -220,7 +220,7 @@ func updateGithubActionOutput(name, value string) error {
 	if err != nil {
 		return fmt.Errorf("opening GITHUB_OUTPUT file %q: %w", githubOutput, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	_, err = fmt.Fprintf(f, "%s=%s\n", name, value)
 	if err != nil {
 		return fmt.Errorf("writing to GITHUB_OUTPUT file %q: %w", githubOutput, err)

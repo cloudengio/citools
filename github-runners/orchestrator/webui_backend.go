@@ -151,7 +151,7 @@ func (b *webuiBackend) ConfigSummary(_ context.Context) (webui.ConfigSummary, er
 		summary.Pools = append(summary.Pools, webui.PoolConfigSummary{
 			Name:      strPtr(name),
 			Image:     strPtr(image),
-			Size:      ptr(pool.Config.Size),
+			Size:      ptr(pool.Size),
 			RunnerDir: strPtr(pool.RunnerDir()),
 		})
 	}

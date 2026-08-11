@@ -139,7 +139,9 @@ func (r RunCommand) Run(ctx context.Context, fl any, _ []string) error {
 
 	defer func() {
 		wh.DrainCompletionQueue(context.Background(), fv.WaitForUserInput)
-		wh.Close(context.Background())
+		if err := wh.Close(context.Background()); err != nil {
+			ctxlog.Error(ctx, "failed to close workflow event handler", "error", err)
+		}
 	}()
 
 	// Wire the handler into the already-running web UI; pool and workflow data
@@ -182,7 +184,11 @@ func (r RunCommand) RunJob(ctx context.Context, flags any, _ []string) error {
 	if err != nil {
 		return err
 	}
-	defer wh.Close(context.Background())
+	defer func() {
+		if err := wh.Close(context.Background()); err != nil {
+			ctxlog.Error(ctx, "failed to close workflow event handler", "error", err)
+		}
+	}()
 
 	return wh.RunJob(ctx, rc.Service.Owner, rc.Service.Repo, fv.Labels.Values, fv.WaitForUserInput)
 }

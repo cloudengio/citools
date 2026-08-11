@@ -146,7 +146,7 @@ func main() {
 		}
 		var cfg Config
 		if err := cmdyaml.ParseConfigFilesStrict(ctx, &cfg, globalFlags.ConfigFile); err != nil {
-			return fmt.Errorf("Error reading config file: %v", err)
+			return fmt.Errorf("error reading config file: %v", err)
 		}
 		if cfg.Validate() != nil {
 			return fmt.Errorf("invalid config: %v", cfg.Validate())
@@ -156,7 +156,7 @@ func main() {
 		opts := loggerConfig.Options()
 		logger, err := loggerConfig.NewLoggerOpts(opts)
 		if err != nil {
-			return fmt.Errorf("Error setting up logger: %v", err)
+			return fmt.Errorf("error setting up logger: %v", err)
 		}
 		ctx = ctxlog.WithLogger(ctx, logger.Logger)
 		ctx = ContextWithConfig(ctx, cfg)
@@ -164,12 +164,12 @@ func main() {
 		if len(cfg.ICloudKeychain.Items) > 0 {
 			ctx, err = loadKeychain(ctx, cfg.ICloudKeychain)
 			if err != nil {
-				return fmt.Errorf("Error loading keychain: %v", err)
+				return fmt.Errorf("error loading keychain: %v", err)
 			}
 		}
 		rc, err := createRepoClients(cfg)
 		if err != nil {
-			return fmt.Errorf("Error creating GitHub clients: %v", err)
+			return fmt.Errorf("error creating GitHub clients: %v", err)
 		}
 		repoClients = rc
 		return cmdRunner(ctx)

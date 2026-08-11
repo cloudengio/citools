@@ -363,9 +363,9 @@ func newDirRunner() *dirRunner {
 
 func (dr *dirRunner) runInDir(ctx context.Context, out io.Writer, dir string, binary string, envs []string, args []string) error {
 	if verboseFlag {
-		fmt.Fprintf(out, "%v: %v %v\n", dir, binary, strings.Join(args, " "))
+		_, _ = fmt.Fprintf(out, "%v: %v %v\n", dir, binary, strings.Join(args, " "))
 	}
-	fmt.Fprintf(out, "%v... starting\n", dir)
+	_, _ = fmt.Fprintf(out, "%v... starting\n", dir)
 	start := time.Now()
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = dir
@@ -378,15 +378,15 @@ func (dr *dirRunner) runInDir(ctx context.Context, out io.Writer, dir string, bi
 	err := cmd.Run()
 	if verboseFlag {
 		if err == nil {
-			fmt.Fprintf(out, "%v... ok (%v) (%v)\n", dir, time.Since(start), dr.sinceStart())
+			_, _ = fmt.Fprintf(out, "%v... ok (%v) (%v)\n", dir, time.Since(start), dr.sinceStart())
 		} else {
-			fmt.Fprintf(out, "%v... failed (%v) (%v)\n", dir, time.Since(start), dr.sinceStart())
+			_, _ = fmt.Fprintf(out, "%v... failed (%v) (%v)\n", dir, time.Since(start), dr.sinceStart())
 		}
 	} else {
 		if err == nil {
-			fmt.Fprintf(out, "%v... ok\n", dir)
+			_, _ = fmt.Fprintf(out, "%v... ok\n", dir)
 		} else {
-			fmt.Fprintf(out, "%v... failed\n", dir)
+			_, _ = fmt.Fprintf(out, "%v... failed\n", dir)
 		}
 	}
 	return err
@@ -416,7 +416,7 @@ func goworkUpdate(ctx context.Context, mods, internalModsToConsider []string) er
 	internalUpdates := []perModUpdate{}
 	externalUpdates := []perModUpdate{}
 	modFiles := map[string]*modfile.File{}
-	var internalMods, externalMods []string
+	var internalMods []string
 	for _, r := range wk.Use {
 		if r.Path == "." || strings.Contains(r.Path, "multimod") {
 			continue
@@ -438,7 +438,6 @@ func goworkUpdate(ctx context.Context, mods, internalModsToConsider []string) er
 			internalMods = append(internalMods, r.Path)
 			internalUpdates = append(internalUpdates, update)
 		} else {
-			externalMods = append(externalMods, r.Path)
 			externalUpdates = append(externalUpdates, update)
 		}
 	}

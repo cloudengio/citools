@@ -156,7 +156,7 @@ type pathsFlags struct {
 // chrome-path and chrome-user-data-dir GitHub Action outputs are written.
 func (ic *downloadInstallCmd) pathsCmd(_ context.Context, f any, _ []string) error {
 	fv := f.(*pathsFlags)
-	rd, err := fv.VersionFlags.ParseRequestedDownload()
+	rd, err := fv.ParseRequestedDownload()
 	if err != nil {
 		return fmt.Errorf("invalid requested download: %w", err)
 	}
