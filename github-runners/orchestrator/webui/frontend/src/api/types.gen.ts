@@ -196,6 +196,8 @@ export interface components {
         };
         PoolStatus: {
             name: string;
+            /** @description The VM backend kind for this pool, e.g. "tart". */
+            kind?: string;
             image?: string;
             /** @description Configured pool size (target number of warm VMs). */
             size: number;

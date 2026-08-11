@@ -16,8 +16,8 @@ import (
 	"time"
 
 	"cloudeng.io/sync/patterns"
+	"cloudeng.io/vms/vmspool"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/githubclient"
-	"github.com/cloudengio/citools/runners/macos/orchestrator/vmsclient"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/webui"
 )
 
@@ -144,9 +144,13 @@ func (b *webuiBackend) ConfigSummary(_ context.Context) (webui.ConfigSummary, er
 		summary.Repositories = append(summary.Repositories, rs)
 	}
 	for name, pool := range b.cfg.VMPools {
+		image := ""
+		if pool.Tart != nil {
+			image = pool.Tart.Image
+		}
 		summary.Pools = append(summary.Pools, webui.PoolConfigSummary{
 			Name:      strPtr(name),
-			Image:     strPtr(pool.TartConfig.Image),
+			Image:     strPtr(image),
 			Size:      ptr(pool.Config.Size),
 			RunnerDir: strPtr(pool.RunnerDir()),
 		})
@@ -168,6 +172,7 @@ func (b *webuiBackend) Pools(ctx context.Context) ([]webui.PoolStatus, error) {
 	for _, p := range snaps {
 		ps := webui.PoolStatus{
 			Name:  p.Name,
+			Kind:  strPtr(p.Kind),
 			Image: strPtr(p.Image),
 			Size:  p.Size,
 			Vms:   make([]webui.VMStatus, 0, len(p.VMs)),
@@ -211,7 +216,7 @@ func (b *webuiBackend) acquiredVMIDs() map[string]bool {
 // mapVMState maps the coarse "tart list" state onto the API's VMState enum,
 // using the acquired flag (derived from live workflows) to distinguish an
 // in-use VM from an idle warm one.
-func mapVMState(vm vmsclient.VMSnapshot, acquired bool) webui.VMState {
+func mapVMState(vm vmspool.VMInfo, acquired bool) webui.VMState {
 	switch {
 	case vm.Running && acquired:
 		return webui.VMStateAcquired

@@ -5,6 +5,7 @@
 package githubclient
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -88,11 +89,11 @@ func (shr *selfHostedRunner) createExtractLogsCommand() execCommand {
 	}
 }
 
-func (shr *selfHostedRunner) extractLogs(ctx context.Context, vm *vmspool.VM, stdoutStderr io.Writer) error {
+func (shr *selfHostedRunner) extractLogs(ctx context.Context, vm *vmspool.VM, stdout, stderr io.Writer) error {
 	cmd := shr.createExtractLogsCommand()
 	runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if err := vm.Exec(runCtx, stdoutStderr, stdoutStderr, cmd.cmd, cmd.args...); err != nil {
+	if err := vm.Exec(runCtx, stdout, stderr, cmd.cmd, cmd.args...); err != nil {
 		return fmt.Errorf("failed to extract _diag directory: %s: %w", cmd.cmd, err)
 	}
 	return nil
@@ -109,8 +110,12 @@ func (shr *selfHostedRunner) runQueuedJob(ctx context.Context, inst *WorkflowIns
 		shr.createConfigCommand(),
 		shr.createRunCommand())
 	errs.Append(err)
-	err = shr.extractLogs(ctx, vm, inst.DiagStdoutStderr)
-	errs.Append(err)
+	stderr := bytes.NewBuffer(make([]byte, 0, 1024))
+	err = shr.extractLogs(ctx, vm, inst.DiagStdoutStderr, stderr)
+	if err != nil {
+		ctxlog.Error(ctx, "failed to extract _diag directory", "vm", vm.ID(), "error", err, "stderr", stderr.String())
+		errs.Append(err)
+	}
 
 	// Stop the VM
 	ctxlog.Info(ctx, "stopping vm", "vm", vm.ID())

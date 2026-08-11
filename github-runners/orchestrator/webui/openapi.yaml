@@ -282,6 +282,9 @@ components:
       properties:
         name:
           type: string
+        kind:
+          type: string
+          description: The VM backend kind for this pool, e.g. "tart".
         image:
           type: string
         size:

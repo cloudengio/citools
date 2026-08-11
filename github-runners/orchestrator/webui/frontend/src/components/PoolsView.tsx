@@ -21,6 +21,7 @@ function Pool({ pool }: { pool: PoolStatus }) {
     <div className="card">
       <div className="card-head">
         <h3>{pool.name}</h3>
+        {pool.kind && <span className="chip">{pool.kind}</span>}
         <span className="muted mono">{pool.image ?? ''}</span>
         <span className="spacer" />
         <span className="chip">size {pool.size}</span>

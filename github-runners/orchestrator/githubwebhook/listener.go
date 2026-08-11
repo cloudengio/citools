@@ -6,12 +6,14 @@ package githubwebhook
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"time"
 
+	"cloudeng.io/errors"
+
 	"cloudeng.io/algo/ratecontrol"
 	"cloudeng.io/logging/ctxlog"
+	"cloudeng.io/sync/errgroup"
 	"cloudeng.io/webapi/clients/github"
 	"cloudeng.io/webapi/operations"
 	gogithub "github.com/google/go-github/v89/github"
@@ -51,6 +53,7 @@ func (l *Listener) DoneCh() <-chan struct{} {
 // workflow_job event received, the handler function is called in a separate
 // goroutine.
 func (l *Listener) Listen(ctx context.Context, opts []operations.Option) error {
+	var g errgroup.T
 	for {
 		wctx, cancel := context.WithCancel(ctx)
 		eventCh := make(chan *gogithub.WorkflowJobEvent, 1)
@@ -59,23 +62,31 @@ func (l *Listener) Listen(ctx context.Context, opts []operations.Option) error {
 		case event, ok := <-eventCh:
 			cancel()
 			if !ok {
-				// channel closed, return any error
-				return ctx.Err()
+				// channel closed, return any errors
+				var errs errors.M
+				errs.Append(g.Wait())
+				errs.Append(ctx.Err())
+				return errs.Err()
 			}
 			if event == nil {
-				return nil
+				continue
 			}
-			go func(ev *gogithub.WorkflowJobEvent) {
-				if err := l.handler(ctx, ev); err != nil {
+			g.GoContext(ctx, func() error {
+				if err := l.handler(ctx, event); err != nil {
 					ctxlog.Error(ctx, "workflow_job handler failed", "err", err)
+					return err
 				}
-			}(event)
+				return nil
+			})
 		case <-ctx.Done():
 			cancel()
-			return ctx.Err()
+			var errs errors.M
+			errs.Append(g.Wait())
+			errs.Append(ctx.Err())
+			return errs.Err()
 		case <-l.doneCh:
 			cancel()
-			return nil
+			return g.Wait()
 		}
 	}
 }

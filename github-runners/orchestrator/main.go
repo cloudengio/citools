@@ -67,13 +67,13 @@ commands:
         summary: show the current configuration
       - name: describe
         summary: describe the configuration spec
-  - name: tart
-    summary: tart related commands
+  - name: vms
+    summary: inspect and clean up the VMs created by the orchestrator's pools
     commands:
-      - name: list-vms
-        summary: list tart VMs that match the naming convention used by this orchestrator
-      - name: delete-vms
-        summary: delete tart VMs that match the naming convention used by this orchestrator
+      - name: list
+        summary: list the VMs created by the orchestrator's configured pools
+      - name: delete
+        summary: delete the VMs created by the orchestrator's configured pools
 `
 
 type GlobalFlags struct {
@@ -96,9 +96,9 @@ func createCLI() *subcmd.CommandSetYAML {
 	cmdSet.Set("config", "show").MustRunner(cfgCmd.Show, &struct{}{})
 	cmdSet.Set("config", "describe").MustRunner(cfgCmd.Describe, &struct{}{})
 
-	tartCmd := TartCommand{}
-	cmdSet.Set("tart", "list-vms").MustRunner(tartCmd.ListVMs, &TartListVMsFlags{})
-	cmdSet.Set("tart", "delete-vms").MustRunner(tartCmd.DeleteVMs, &TartDeleteVMsFlags{})
+	vmCmd := VMCommand{}
+	cmdSet.Set("vms", "list").MustRunner(vmCmd.List, &VMListFlags{})
+	cmdSet.Set("vms", "delete").MustRunner(vmCmd.Delete, &VMDeleteFlags{})
 
 	ghCmd := GitHubCommand{}
 	cmdSet.Set("github", "list-runners").MustRunner(ghCmd.ListRunners, &ListRunnersFlags{})

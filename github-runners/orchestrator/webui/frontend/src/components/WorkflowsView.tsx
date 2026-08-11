@@ -1,6 +1,7 @@
 import { logURL, type WorkflowStatus } from '../api/client'
 import { Badge } from './Badge'
-import { fmtDuration, fmtTime } from '../format'
+import { LiveDuration } from './LiveDuration'
+import { fmtTime } from '../format'
 
 function LogLinks({ wf }: { wf: WorkflowStatus }) {
   const logs = wf.logs ?? []
@@ -42,7 +43,7 @@ function WorkflowRow({ wf }: { wf: WorkflowStatus }) {
       <td className="mono">{wf.pool ?? '—'}</td>
       <td className="mono">{wf.vm_id ?? '—'}</td>
       <td>{fmtTime(wf.queued_at)}</td>
-      <td>{fmtDuration(wf.started_at, wf.completed_at)}</td>
+      <td><LiveDuration from={wf.started_at} to={wf.completed_at} /></td>
       <td><LogLinks wf={wf} /></td>
     </tr>
   )

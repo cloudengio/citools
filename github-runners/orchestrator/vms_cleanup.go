@@ -14,28 +14,27 @@ import (
 	"time"
 
 	"cloudeng.io/logging/ctxlog"
-	"cloudeng.io/macos/tartvm"
 	"cloudeng.io/vms/vmspool"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/vmsclient"
 )
 
-// TartCommand implements the tart subcommands used to inspect and clean up the
-// VMs created by the orchestrator's VM pools.
-type TartCommand struct{}
+// VMCommand implements the vms subcommands used to inspect and clean up the VMs
+// created by the orchestrator's VM pools, across all configured backends.
+type VMCommand struct{}
 
-type TartListVMsFlags struct {
-	JSON bool `subcmd:"json,false,print the tart list entries as JSON rather than as a table"`
+type VMListFlags struct {
+	JSON bool `subcmd:"json,false,print the VM list as JSON rather than as a table"`
 }
 
-func (t TartCommand) ListVMs(ctx context.Context, flags any, _ []string) error {
-	fv := flags.(*TartListVMsFlags)
-	entries, err := listTartVMs(ctx)
+func (t VMCommand) List(ctx context.Context, flags any, _ []string) error {
+	fv := flags.(*VMListFlags)
+	entries, err := listVMs(ctx)
 	if err != nil {
 		return err
 	}
 	if fv.JSON {
 		if entries == nil {
-			entries = tartvm.ListEntries{}
+			entries = []vmspool.VMInfo{}
 		}
 		out, err := json.MarshalIndent(entries, "", "  ")
 		if err != nil {
@@ -44,18 +43,18 @@ func (t TartCommand) ListVMs(ctx context.Context, flags any, _ []string) error {
 		fmt.Println(string(out))
 		return nil
 	}
-	return writeTartTable(os.Stdout, entries)
+	return writeVMTable(os.Stdout, entries)
 }
 
-type TartDeleteVMsFlags struct {
+type VMDeleteFlags struct {
 	DryRun      bool          `subcmd:"dry-run,false,list the VMs that would be deleted without deleting them"`
-	StopTimeout time.Duration `subcmd:"stop-timeout,10s,time to wait for a running VM to shut down gracefully before tart forcibly stops it"`
+	StopTimeout time.Duration `subcmd:"stop-timeout,10s,time to wait for a running VM to shut down gracefully before it is forcibly stopped"`
 }
 
-func (t TartCommand) DeleteVMs(ctx context.Context, flags any, _ []string) error {
-	fv := flags.(*TartDeleteVMsFlags)
+func (t VMCommand) Delete(ctx context.Context, flags any, _ []string) error {
+	fv := flags.(*VMDeleteFlags)
 	if fv.DryRun {
-		entries, err := listTartVMs(ctx)
+		entries, err := listVMs(ctx)
 		if err != nil {
 			return err
 		}
@@ -68,7 +67,7 @@ func (t TartCommand) DeleteVMs(ctx context.Context, flags any, _ []string) error
 	if !ok {
 		return fmt.Errorf("no config in context")
 	}
-	deleted, err := vmsclient.DeleteTartVMs(ctx, cfg.VMPools, fv.StopTimeout)
+	deleted, err := vmsclient.DeletePoolVMs(ctx, cfg.VMPools, fv.StopTimeout)
 	// Report what was deleted even if some of the deletions failed.
 	for _, name := range deleted {
 		fmt.Printf("deleted %s\n", name)
@@ -83,7 +82,7 @@ func (t TartCommand) DeleteVMs(ctx context.Context, flags any, _ []string) error
 // rather than returned: an orphaned VM costs disk space but does not prevent
 // the orchestrator from running.
 func sweepOrphanedVMs(ctx context.Context, cfg Config) {
-	deleted, err := vmsclient.DeleteTartVMs(ctx, cfg.VMPools, sweepStopTimeout(cfg))
+	deleted, err := vmsclient.DeletePoolVMs(ctx, cfg.VMPools, sweepStopTimeout(cfg))
 	if len(deleted) > 0 {
 		ctxlog.Info(ctx, "deleted VMs orphaned by a previous run", "vms", deleted)
 	}
@@ -105,20 +104,20 @@ func sweepStopTimeout(cfg Config) time.Duration {
 	return timeout
 }
 
-func listTartVMs(ctx context.Context) (tartvm.ListEntries, error) {
+func listVMs(ctx context.Context) ([]vmspool.VMInfo, error) {
 	cfg, ok := ConfigFromContext(ctx)
 	if !ok {
 		return nil, fmt.Errorf("no config in context")
 	}
-	return vmsclient.ListTartVMs(ctx, cfg.VMPools)
+	return vmsclient.ListPoolVMs(ctx, cfg.VMPools)
 }
 
-func writeTartTable(out io.Writer, entries tartvm.ListEntries) error {
+func writeVMTable(out io.Writer, entries []vmspool.VMInfo) error {
 	tw := tabwriter.NewWriter(out, 0, 8, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tSTATE\tRUNNING\tDISK\tSIZE\tACCESSED")
+	fmt.Fprintln(tw, "NAME\tPOOL\tSTATE\tRUNNING\tACCESSED")
 	for _, entry := range entries {
-		fmt.Fprintf(tw, "%s\t%s\t%v\t%d\t%d\t%s\n",
-			entry.Name, entry.State, entry.Running, entry.Disk, entry.Size,
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%v\t%s\n",
+			entry.Name, entry.Pool, entry.State, entry.Running,
 			entry.Accessed.Local().Format(time.RFC3339))
 	}
 	return tw.Flush()

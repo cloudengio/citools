@@ -9,44 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"cloudeng.io/macos/tartvm"
 	"cloudeng.io/vms/vmspool"
 )
-
-func testPools() *Pools {
-	return &Pools{
-		configs: map[string]PoolConfig{
-			"macos": {TartConfig: TartConfig{Image: "macos-ci"}},
-			"linux": {TartConfig: TartConfig{Image: "linux-ci"}},
-		},
-		tracker: newPoolStatusTracker(),
-	}
-}
-
-func TestPoolForVMName(t *testing.T) {
-	p := testPools()
-	cases := map[string]string{
-		vmNamePrefix("macos", "macos-ci") + "20260101-000000-0001": "macos",
-		vmNamePrefix("linux", "linux-ci") + "20260101-000000-0002": "linux",
-		"some-unrelated-vm": "",
-		// right pool name but wrong image must not match.
-		vmNamePrefix("macos", "linux-ci") + "x": "",
-	}
-	for name, want := range cases {
-		if got := p.poolForVMName(name); got != want {
-			t.Errorf("poolForVMName(%q) = %q, want %q", name, got, want)
-		}
-	}
-}
-
-func TestVMSnapshotFromEntry(t *testing.T) {
-	acc := time.Now()
-	e := tartvm.ListEntry{Name: "vm1", State: "running", Running: true, Source: "local", Disk: 50, Accessed: acc}
-	s := vmSnapshotFromEntry(e)
-	if s.Name != "vm1" || !s.Running || s.State != "running" || s.DiskGiB != 50 || !s.Accessed.Equal(acc) {
-		t.Errorf("unexpected snapshot: %+v", s)
-	}
-}
 
 func TestPoolStatusTrackerCounters(t *testing.T) {
 	tr := newPoolStatusTracker()
