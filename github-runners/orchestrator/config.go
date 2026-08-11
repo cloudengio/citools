@@ -9,6 +9,7 @@ import (
 	"cloudeng.io/file/crawl/crawlcmd"
 	macoskeychain "cloudeng.io/macos/keychain/plugin"
 	"cloudeng.io/webapi/operations"
+	"cloudeng.io/webapp/webassets"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/githubclient"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/vmsclient"
 )
@@ -20,6 +21,15 @@ type Config struct {
 	ICloudKeychain ICloudKeychainConfig            `yaml:"icloud_keychain" doc:"icloud keychain configuration for loading API keys"`
 	VMPools        map[string]vmsclient.PoolConfig `yaml:"vm_pools" doc:"configuration for VM pools to use for runner provisioning"`
 	Webhook        WebhookConfig                   `yaml:"webhook" doc:"configuration for the GitHub webhook relay service"`
+	WebUI          WebUIConfig                     `yaml:"web_ui" doc:"configuration for the management web UI and JSON API"`
+}
+
+// WebUIConfig configures the management web UI and its OpenAPI-specified JSON
+// API, served by the run command.
+type WebUIConfig struct {
+	Enabled       bool             `yaml:"enabled" doc:"enable the web UI and management API"`
+	ListenAddress string           `yaml:"listen_address" doc:"address for the web UI/API HTTP server, e.g. 127.0.0.1:8088"`
+	Reload        webassets.Config `yaml:"reload" doc:"optionally serve the web UI assets from the local filesystem (reload_root should point at the webui directory) so the SPA can be rebuilt without recompiling the binary"`
 }
 
 type GlobalConfig struct {

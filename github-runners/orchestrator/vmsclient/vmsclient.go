@@ -185,12 +185,16 @@ func (p *Pool) Name() string {
 }
 
 type Pools struct {
-	pools map[string]*Pool
+	pools   map[string]*Pool
+	configs map[string]PoolConfig
+	tracker *PoolStatusTracker
 }
 
 func NewPools(ctx context.Context, cfg map[string]PoolConfig, createFile func(string) io.Writer) (*Pools, error) {
 	p := &Pools{
-		pools: make(map[string]*Pool),
+		pools:   make(map[string]*Pool),
+		configs: cfg,
+		tracker: newPoolStatusTracker(),
 	}
 	var g errgroup.T
 	for name, poolCfg := range cfg {
@@ -204,6 +208,7 @@ func NewPools(ctx context.Context, cfg map[string]PoolConfig, createFile func(st
 		eventCh := make(chan vmspool.Event, 100)
 		go func() {
 			for e := range eventCh {
+				p.tracker.record(name, e)
 				ctxlog.Info(ctx, "vm pool event", "pool", name, "event", e.Kind)
 			}
 		}()

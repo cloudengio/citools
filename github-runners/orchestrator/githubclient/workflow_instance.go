@@ -131,13 +131,15 @@ func (wi *WorkflowInstance) Close(ctx context.Context) {
 
 }
 
-func (wi *WorkflowInstance) RunJob(ctx context.Context, cq *CompletionQueue) {
+// RunJob runs the job on the instance's VM and returns the local outcome (nil on
+// success). The VM has finished running by the time this returns.
+func (wi *WorkflowInstance) RunJob(ctx context.Context, cq *CompletionQueue) error {
 	if wi.vm == nil || wi.token == nil {
 		ctxlog.Error(ctx, "VM or token not initialized for workflow instance", "workflow_instance", wi.Name)
-		return
+		return fmt.Errorf("VM or token not initialized for workflow instance %s", wi.Name)
 	}
 	shr := newSelfHostedRunner(wi, cq, wi.RepoURL, wi.token.GetToken())
-	shr.runQueuedJob(ctx, wi)
+	return shr.runQueuedJob(ctx, wi)
 }
 
 func newWorkflowInstanceManager(lm *internal.LogFileManager) *workflowInstanceManager {

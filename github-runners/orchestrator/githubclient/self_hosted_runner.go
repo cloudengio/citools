@@ -98,7 +98,11 @@ func (shr *selfHostedRunner) extractLogs(ctx context.Context, vm *vmspool.VM, st
 	return nil
 }
 
-func (shr *selfHostedRunner) runQueuedJob(ctx context.Context, inst *WorkflowInstance) {
+// runQueuedJob configures and runs the job on the VM, extracts diagnostics and
+// stops the VM, then pushes the outcome onto the completion queue. It returns
+// the local outcome (nil on success) so the caller can record that the VM has
+// finished running independently of GitHub's completion webhook.
+func (shr *selfHostedRunner) runQueuedJob(ctx context.Context, inst *WorkflowInstance) error {
 	vm := inst.GetVM()
 	var errs errors.M
 	err := shr.runCmds(ctx, vm, inst.RunStdoutStderr, inst.RunStdoutStderr,
@@ -125,9 +129,10 @@ func (shr *selfHostedRunner) runQueuedJob(ctx context.Context, inst *WorkflowIns
 	ce := vmsclient.CompletionEvent[WorkflowInstance]{Payload: *inst}
 	if err := errs.Err(); err != nil {
 		shr.completionQueue.PushFailure(ce, err)
-		return
+		return err
 	}
 	shr.completionQueue.PushSuccess(ce)
+	return nil
 }
 
 func (shr *selfHostedRunner) runCmds(ctx context.Context, vm *vmspool.VM, stdout, stderr io.Writer, cmds ...execCommand) error {

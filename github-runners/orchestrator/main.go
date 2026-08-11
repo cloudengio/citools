@@ -58,6 +58,8 @@ commands:
         args:
           - <run_id> (one or more run IDs to cancel)
           - ...
+  - name: webapp-build
+    summary: build the embedded web UI frontend (runs npm install, gen and build)
   - name: config
     summary: config related commands
     commands:
@@ -86,6 +88,9 @@ func createCLI() *subcmd.CommandSetYAML {
 	runCmd := RunCommand{}
 	cmdSet.Set("run").MustRunner(runCmd.Run, &RunFlags{})
 	cmdSet.Set("run-job").MustRunner(runCmd.RunJob, &RunJobFlags{})
+
+	webappCmd := WebappBuildCommand{}
+	cmdSet.Set("webapp-build").MustRunner(webappCmd.Run, &WebappBuildFlags{})
 
 	cfgCmd := ConfigCommand{}
 	cmdSet.Set("config", "show").MustRunner(cfgCmd.Show, &struct{}{})
@@ -133,6 +138,12 @@ func main() {
 	ks := keys.NewInMemoryKeyStore()
 	ctx = keys.ContextWithKeyStore(ctx, ks)
 	cli.WithMain(func(ctx context.Context, cmdRunner func(ctx context.Context) error) error {
+		// webapp-build is a pure tooling command: it shells out to npm and needs
+		// no orchestrator configuration, keychain access or GitHub clients. Skip
+		// all of that setup so building the UI never touches the keychain.
+		if isWebappBuildInvocation() {
+			return cmdRunner(ctx)
+		}
 		var cfg Config
 		if err := cmdyaml.ParseConfigFilesStrict(ctx, &cfg, globalFlags.ConfigFile); err != nil {
 			return fmt.Errorf("Error reading config file: %v", err)

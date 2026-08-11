@@ -29,6 +29,7 @@ type WorkflowEventHandler struct {
 	completeQueue   *CompletionQueue
 	workflowManager *workflowInstanceManager
 	clients         *RepoClients
+	status          *statusTracker
 }
 
 type CompletionQueue = vmsclient.CompletionQueue[WorkflowInstance]
@@ -37,7 +38,7 @@ func NewCompletionQueue(ctx context.Context, size int, successfulRetention, fail
 	return vmsclient.NewCompletionQueue[WorkflowInstance](ctx, size, successfulRetention, failedRetention)
 }
 
-func NewWorkflowEventHandler(ctx context.Context, tmpDir string, cq *CompletionQueue, poolConfigs map[string]vmsclient.PoolConfig, repoConfigs []RepositoryConfig, clients *RepoClients) (*WorkflowEventHandler, error) {
+func NewWorkflowEventHandler(ctx context.Context, tmpDir string, cq *CompletionQueue, statusRetention time.Duration, poolConfigs map[string]vmsclient.PoolConfig, repoConfigs []RepositoryConfig, clients *RepoClients) (*WorkflowEventHandler, error) {
 	lm, err := internal.NewLogFileManager(tmpDir)
 	if err != nil {
 		return nil, err
@@ -67,7 +68,59 @@ func NewWorkflowEventHandler(ctx context.Context, tmpDir string, cq *CompletionQ
 		completeQueue:   cq,
 		lm:              lm,
 		clients:         clients,
+		status:          newStatusTracker(statusRetention),
 	}, nil
+}
+
+// Workflows returns a snapshot of every running and recently-completed workflow
+// job tracked by the orchestrator.
+func (r *WorkflowEventHandler) Workflows() []WorkflowSnapshot {
+	return r.status.list()
+}
+
+// Workflow returns the snapshot for a single workflow job by runner-instance
+// name.
+func (r *WorkflowEventHandler) Workflow(name string) (WorkflowSnapshot, bool) {
+	return r.status.get(name)
+}
+
+// PoolStatus returns a snapshot of every configured VM pool and its VMs.
+func (r *WorkflowEventHandler) PoolStatus(ctx context.Context) ([]vmsclient.PoolSnapshot, error) {
+	return r.vmPools.Status(ctx)
+}
+
+// Subscribe returns a coalescing change signal that fires when either pool or
+// workflow state changes, plus a cancel function that must be called to release
+// both underlying subscriptions.
+func (r *WorkflowEventHandler) Subscribe() (<-chan struct{}, func()) {
+	poolCh, poolCancel := r.vmPools.Subscribe()
+	wfCh, wfCancel := r.status.bc.Subscribe()
+	merged := make(chan struct{}, 1)
+	done := make(chan struct{})
+	notify := func() {
+		select {
+		case merged <- struct{}{}:
+		default:
+		}
+	}
+	go func() {
+		for {
+			select {
+			case <-poolCh:
+				notify()
+			case <-wfCh:
+				notify()
+			case <-done:
+				return
+			}
+		}
+	}()
+	cancel := func() {
+		close(done)
+		poolCancel()
+		wfCancel()
+	}
+	return merged, cancel
 }
 
 func (r *WorkflowEventHandler) Close(ctx context.Context) error {
@@ -168,33 +221,44 @@ func (r *WorkflowEventHandler) HandleWebhooks(ctx context.Context, event *gogith
 	}
 }
 
-func (r *WorkflowEventHandler) getInstanceForEvent(ctx context.Context, event *gogithub.WorkflowJobEvent) (*WorkflowInstance, bool) {
+// getInstanceForEvent resolves the runner-instance name for a workflow_job
+// event (the name the orchestrator registered the runner under) and looks up the
+// still-live instance for it. The returned name is valid even when the instance
+// is no longer live (ok is false), so callers can still update the status
+// tracker, which retains records past instance teardown.
+func (r *WorkflowEventHandler) getInstanceForEvent(ctx context.Context, event *gogithub.WorkflowJobEvent) (*WorkflowInstance, string, bool) {
 	job := event.GetWorkflowJob()
 	if job == nil {
 		ctxlog.Error(ctx, "workflow_job event has no workflow_job property")
-		return nil, false
+		return nil, "", false
 	}
 	jobId := event.GetWorkflowJob().GetID()
 	if jobId == 0 {
 		ctxlog.Error(ctx, "workflow_job event has no workflow_job.id property")
-		return nil, false
+		return nil, "", false
 	}
 	fullName := event.GetRepo().GetFullName()
 	if len(fullName) == 0 {
 		ctxlog.Error(ctx, "workflow_job event has no repository.full_name property")
-		return nil, false
+		return nil, "", false
 	}
-	njob, err := r.clients.GetWorkflowJobFullName(ctx, fullName, jobId)
-	if err != nil {
-		ctxlog.Error(ctx, "failed to get workflow job from GitHub", "job_id", jobId, "repo_full_name", fullName, "error", err)
-		return nil, false
+	// Prefer the runner name carried on the webhook; fall back to the API for
+	// events (e.g. queued) that don't populate it.
+	runnerName := job.GetRunnerName()
+	if runnerName == "" {
+		njob, err := r.clients.GetWorkflowJobFullName(ctx, fullName, jobId)
+		if err != nil {
+			ctxlog.Error(ctx, "failed to get workflow job from GitHub", "job_id", jobId, "repo_full_name", fullName, "error", err)
+			return nil, "", false
+		}
+		runnerName = njob.GetRunnerName()
 	}
-	runnerName := njob.GetRunnerName()
-	return r.workflowManager.getInstance(runnerName)
+	inst, ok := r.workflowManager.getInstance(runnerName)
+	return inst, runnerName, ok
 }
 
 func (r *WorkflowEventHandler) handleInProgressEvent(ctx context.Context, event *gogithub.WorkflowJobEvent) {
-	inst, ok := r.getInstanceForEvent(ctx, event)
+	inst, _, ok := r.getInstanceForEvent(ctx, event)
 	if !ok {
 		ctxlog.Error(ctx, "workflow_job event has no corresponding workflow instance")
 		err := r.clients.RerunWorkflowJobFullName(ctx, event.GetRepo().GetFullName(), event.GetWorkflowJob().GetID())
@@ -208,13 +272,36 @@ func (r *WorkflowEventHandler) handleInProgressEvent(ctx context.Context, event 
 }
 
 func (r *WorkflowEventHandler) handleCompleted(ctx context.Context, event *gogithub.WorkflowJobEvent) {
-	inst, ok := r.getInstanceForEvent(ctx, event)
+	inst, runnerName, ok := r.getInstanceForEvent(ctx, event)
+	conclusion := event.GetWorkflowJob().GetConclusion()
 	if !ok {
-		ctxlog.Info(ctx, "workflow_job event has completed locally")
+		// Normal path: the job already finished on the VM (state vm_completed)
+		// and its instance was torn down; GitHub has now acknowledged completion.
+		// Advance the retained status record to the terminal completed state.
+		if runnerName != "" {
+			r.status.upsert(runnerName, func(rec *WorkflowSnapshot) {
+				rec.State = WorkflowCompleted
+				rec.CompletedAt = time.Now()
+				if conclusion != "" {
+					rec.Result = conclusion
+				}
+			})
+		}
+		ctxlog.Info(ctx, "workflow_job completed on github", "conclusion", conclusion)
 		return
 	}
+	// The instance is still live: GitHub reported completion while the job was
+	// still running locally, i.e. it was canceled on GitHub. Tear the VM down.
 	logger := LoggerWithWorkflowInstance(ctxlog.Logger(ctx), inst)
-	logger.Info("workflow_job completed event, but workflow instance still exists, cleaning up since likely canceled on github")
+	logger.Info("workflow_job completed on github while still running locally, treating as canceled", "conclusion", conclusion)
+	r.status.upsert(inst.Name, func(rec *WorkflowSnapshot) {
+		rec.State = WorkflowCanceled
+		rec.Err = "job canceled on github"
+		rec.CompletedAt = time.Now()
+		if conclusion != "" {
+			rec.Result = conclusion
+		}
+	})
 	vm := inst.GetVM()
 	_, _ = vm.StopAndRelease(ctx, 30*time.Second)
 	ce := vmsclient.CompletionEvent[WorkflowInstance]{Payload: *inst}
@@ -231,16 +318,47 @@ func (r *WorkflowEventHandler) handleQueuedEvent(ctx context.Context, event *gog
 	logger := LoggerWithWorkflowInstance(ctxlog.Logger(ctx), inst)
 	ctx = ctxlog.WithLogger(ctx, logger)
 
+	r.status.upsert(inst.Name, func(rec *WorkflowSnapshot) {
+		snapshotFromInstance(inst)(rec)
+		rec.State = WorkflowAcquiring
+		rec.QueuedAt = time.Now()
+	})
+
 	if err := inst.AcquireVMAndToken(ctx, r.vmPools, r.clients); err != nil {
 		ctxlog.Error(ctx, "failed to acquire VM and token", "error", err)
+		r.status.upsert(inst.Name, func(rec *WorkflowSnapshot) {
+			rec.State = WorkflowFailed
+			rec.Err = err.Error()
+			rec.CompletedAt = time.Now()
+		})
 		return err
 	}
 
 	defer r.workflowManager.deleteInstance(ctx, inst.Name)
 
-	inst.RunJob(ctx, r.completeQueue)
-	//	shr := newSelfHostedRunner(r.lm, pool, inst, r.completeQueue, event.GetRepo().GetHTMLURL(), token.GetToken())
-	//	shr.runQueuedJob(ctx, inst)
+	r.status.upsert(inst.Name, func(rec *WorkflowSnapshot) {
+		snapshotFromInstance(inst)(rec)
+		rec.State = WorkflowRunning
+		rec.StartedAt = time.Now()
+		if vm := inst.GetVM(); vm != nil {
+			rec.VMID = vm.ID()
+		}
+	})
+
+	runErr := inst.RunJob(ctx, r.completeQueue)
+	// The VM has finished running the job locally at this point; record the
+	// vm_completed state. GitHub's "completed" webhook (handleCompleted) will
+	// later advance this to the completed state.
+	r.status.upsert(inst.Name, func(rec *WorkflowSnapshot) {
+		rec.State = WorkflowVMCompleted
+		rec.VMCompletedAt = time.Now()
+		if runErr != nil {
+			rec.Result = "Failed"
+			rec.Err = runErr.Error()
+		} else {
+			rec.Result = "Succeeded"
+		}
+	})
 	return nil
 }
 
