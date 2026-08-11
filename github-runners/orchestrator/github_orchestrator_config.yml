@@ -1,0 +1,87 @@
+# macOS Tart Orchestrator Configuration
+
+logging:
+  level: 2
+  format: text
+  file: "-"
+
+web_ui:
+  enabled: true
+  listen_address: 127.0.0.1:8088
+
+global:
+  tmp_dir: "github-orchestrator-*"
+  completion_queue_size: 1000
+  failed_vm_retention_period: 1h
+  successful_vm_retention_period: 15m
+
+vm_pools:
+  macos:
+    size: 2
+    delete_acquired_on_close: true
+    tart_config:
+      os: macos
+      runner_dir: /Users/admin/actions-runner
+      image: macos-ci
+
+  linux:
+    size: 2
+    delete_acquired_on_close: true
+    tart_config:
+      os: linux
+      runner_dir: "/home/admin/actions-runner"
+      image: linux-ci
+      run_options: ["--no-graphics", "--no-audio", "--nested"] # for docker.
+
+icloud_keychain:
+  keychain_type: all
+  items:
+    - cloudengio-github-runner
+    - onyourbehalf-github-runner
+    - webhook-secrets
+
+runners: &runner_config
+  - name_prefix: "go-macos"
+    vm_pool: "macos"
+    labels: ["self-hosted", "macos", "arm64"]
+    replace: true
+    ephemeral: true
+    timeout: 30m
+
+  - name_prefix: "go-linux"
+    vm_pool: "linux"
+    labels: ["self-hosted", "linux", "arm64"]
+    replace: true
+    ephemeral: true
+    timeout: 30m
+
+cloudeng_repos: &cloudeng_repos
+  owner: "cloudengio"
+  key_id: github-cloudengio-runner-token
+  user_id: cnicolaou
+  runners: *runner_config
+
+onyourbehalf_token: &onyourbehalf_token
+  key_id: github-onyourbehalf-runner-token
+  user_id: cnicolaou
+
+repositories:
+  - repo: "go.pkgs"
+    <<: *cloudeng_repos
+  - repo: "go.webapp"
+    <<: *cloudeng_repos
+  - repo: "go.webapi"
+    <<: *cloudeng_repos
+  - repo: "go.macos"
+    <<: *cloudeng_repos
+  - owner: "onyourbehalf"
+    repo: "core"
+    <<: *onyourbehalf_token
+    runners: *runner_config
+
+webhook:
+  relay_url: "https://onyourbehalf.ai:10444/webhooks/github_workflows/relay"
+  rate_control:
+    exponential_backoff:
+      initial_delay: 1s
+      steps: 10

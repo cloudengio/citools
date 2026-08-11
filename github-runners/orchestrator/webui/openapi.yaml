@@ -1,0 +1,400 @@
+openapi: 3.0.3
+info:
+  title: GitHub Runner Orchestrator API
+  description: >
+    Read-only management API exposed by the orchestrator's `run` command. It
+    reports the current configuration, the state of the VM pools and the VMs
+    within them, and the GitHub workflow jobs currently (or recently) running,
+    including downloadable log files.
+  version: 0.1.0
+servers:
+  - url: /api/v1
+paths:
+  /config:
+    get:
+      operationId: getConfig
+      summary: Current orchestrator configuration (structured summary)
+      tags: [config]
+      responses:
+        "200":
+          description: The current configuration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigSummary"
+  /config/file:
+    get:
+      operationId: downloadConfigFile
+      summary: Download the raw YAML configuration file
+      tags: [config]
+      responses:
+        "200":
+          description: The raw configuration file as loaded from disk.
+          content:
+            application/yaml:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: The configuration file path is unknown or unreadable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /pools:
+    get:
+      operationId: listPools
+      summary: List VM pools and the VMs within each pool
+      tags: [pools]
+      responses:
+        "200":
+          description: The current state of every configured VM pool.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PoolStatus"
+  /workflows:
+    get:
+      operationId: listWorkflows
+      summary: List running and recently-completed workflow jobs
+      tags: [workflows]
+      parameters:
+        - name: state
+          in: query
+          description: Optional filter by workflow state.
+          required: false
+          schema:
+            $ref: "#/components/schemas/WorkflowState"
+      responses:
+        "200":
+          description: Running and recently-completed workflow jobs.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WorkflowStatus"
+  /workflows/{name}:
+    get:
+      operationId: getWorkflow
+      summary: Get a single workflow job by its runner-instance name
+      tags: [workflows]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The workflow job.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowStatus"
+        "404":
+          description: No such workflow.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /workflows/{name}/logs:
+    get:
+      operationId: listWorkflowLogs
+      summary: List downloadable log artifacts for a workflow job
+      tags: [workflows]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The available log artifacts.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LogArtifact"
+        "404":
+          description: No such workflow.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /workflows/{name}/logs/{artifact}:
+    get:
+      operationId: downloadWorkflowLog
+      summary: Download a specific log artifact for a workflow job
+      tags: [workflows]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: artifact
+          in: path
+          required: true
+          description: The artifact id, e.g. "job" or "diag".
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The log artifact content.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: No such workflow or artifact.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /events:
+    get:
+      operationId: streamEvents
+      summary: Server-Sent Events stream of pool and workflow state changes
+      description: >
+        A text/event-stream of state-change events. Each event's `data` field is
+        a JSON-encoded Event object. Clients should reconcile their local view on
+        each event and may fall back to the REST endpoints for a full snapshot.
+      tags: [events]
+      responses:
+        "200":
+          description: An SSE stream.
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/Event"
+components:
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    WorkflowState:
+      type: string
+      description: >
+        Lifecycle state of a workflow job within the orchestrator. `vm_completed`
+        means the job finished on the local VM but GitHub has not yet delivered
+        the completion webhook; `completed` means GitHub acknowledged completion.
+      enum:
+        - queued
+        - acquiring
+        - running
+        - vm_completed
+        - completed
+        - failed
+        - canceled
+    VMState:
+      type: string
+      description: State of a VM as reported by the pool.
+      enum:
+        - creating
+        - staging
+        - available
+        - acquired
+        - stopped
+        - deleted
+        - failed
+        - unknown
+    ConfigSummary:
+      type: object
+      required: [config_file, global, repositories, pools, webhook]
+      properties:
+        config_file:
+          type: string
+          description: Path to the YAML config file this orchestrator was started with.
+        global:
+          $ref: "#/components/schemas/GlobalConfigSummary"
+        repositories:
+          type: array
+          items:
+            $ref: "#/components/schemas/RepositorySummary"
+        pools:
+          type: array
+          items:
+            $ref: "#/components/schemas/PoolConfigSummary"
+        webhook:
+          $ref: "#/components/schemas/WebhookSummary"
+    GlobalConfigSummary:
+      type: object
+      properties:
+        tmp_dir:
+          type: string
+        completion_queue_size:
+          type: integer
+        failed_vm_retention_period:
+          type: string
+          description: Go duration string, e.g. "30m".
+        successful_vm_retention_period:
+          type: string
+    RepositorySummary:
+      type: object
+      properties:
+        owner:
+          type: string
+        repo:
+          type: string
+        runners:
+          type: array
+          items:
+            $ref: "#/components/schemas/RunnerSummary"
+    RunnerSummary:
+      type: object
+      properties:
+        name_prefix:
+          type: string
+        labels:
+          type: array
+          items:
+            type: string
+        vm_pool:
+          type: string
+    PoolConfigSummary:
+      type: object
+      properties:
+        name:
+          type: string
+        image:
+          type: string
+        size:
+          type: integer
+        runner_dir:
+          type: string
+    WebhookSummary:
+      type: object
+      properties:
+        relay_url:
+          type: string
+    PoolStatus:
+      type: object
+      required: [name, size, vms]
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+          description: The VM backend kind for this pool, e.g. "tart".
+        image:
+          type: string
+        size:
+          type: integer
+          description: Configured pool size (target number of warm VMs).
+        vms:
+          type: array
+          items:
+            $ref: "#/components/schemas/VMStatus"
+    VMStatus:
+      type: object
+      required: [id, state]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        pool:
+          type: string
+        state:
+          $ref: "#/components/schemas/VMState"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        last_event:
+          type: string
+          description: The most recent pool event kind observed for this VM.
+    WorkflowStatus:
+      type: object
+      required: [name, state]
+      properties:
+        name:
+          type: string
+          description: The runner instance name assigned by the orchestrator.
+        state:
+          $ref: "#/components/schemas/WorkflowState"
+        repo_full_name:
+          type: string
+        repo_url:
+          type: string
+        workflow_name:
+          type: string
+        job_name:
+          type: string
+        job_id:
+          type: integer
+          format: int64
+        labels:
+          type: array
+          items:
+            type: string
+        pool:
+          type: string
+        vm_id:
+          type: string
+        result:
+          type: string
+          description: Terminal result if completed, e.g. "Succeeded".
+        error:
+          type: string
+          description: Error detail if the job failed or was canceled.
+        queued_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+        vm_completed_at:
+          type: string
+          format: date-time
+          description: When the job finished running on the local VM.
+        completed_at:
+          type: string
+          format: date-time
+          description: When GitHub acknowledged completion.
+        logs:
+          type: array
+          items:
+            $ref: "#/components/schemas/LogArtifact"
+    LogArtifact:
+      type: object
+      required: [id, filename, href]
+      properties:
+        id:
+          type: string
+          description: Stable artifact id, e.g. "job" or "diag".
+        filename:
+          type: string
+        content_type:
+          type: string
+        size_bytes:
+          type: integer
+          format: int64
+        href:
+          type: string
+          description: Relative URL to download this artifact.
+    Event:
+      type: object
+      required: [type, timestamp]
+      properties:
+        type:
+          type: string
+          enum: [pool, workflow, hello]
+        timestamp:
+          type: string
+          format: date-time
+        pool:
+          $ref: "#/components/schemas/PoolStatus"
+        workflow:
+          $ref: "#/components/schemas/WorkflowStatus"

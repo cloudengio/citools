@@ -1,0 +1,10 @@
+# Configuration for oapi-codegen. Regenerate with `go generate ./webui/...`.
+package: webui
+output: api.gen.go
+generate:
+  models: true
+  std-http-server: true
+  strict-server: true
+  embedded-spec: true
+output-options:
+  skip-prune: true

@@ -1,0 +1,73 @@
+import { logURL, type WorkflowStatus } from '../api/client'
+import { Badge } from './Badge'
+import { LiveDuration } from './LiveDuration'
+import { fmtTime } from '../format'
+
+function LogLinks({ wf }: { wf: WorkflowStatus }) {
+  const logs = wf.logs ?? []
+  if (logs.length === 0) return <span className="muted">—</span>
+  return (
+    <>
+      {logs.map((l) => (
+        <a key={l.id} className="loglink" href={logURL(wf.name, l.id)} download>
+          {l.id}
+        </a>
+      ))}
+    </>
+  )
+}
+
+function WorkflowRow({ wf }: { wf: WorkflowStatus }) {
+  return (
+    <tr>
+      <td>
+        <Badge value={wf.state} />
+        {wf.state === 'vm_completed' && <div className="hint">awaiting GitHub</div>}
+      </td>
+      <td>
+        <div className="mono">{wf.name}</div>
+        {wf.error && <div className="err-text">{wf.error}</div>}
+        {wf.result && <div className="muted">{wf.result}</div>}
+      </td>
+      <td>
+        {wf.repo_url ? (
+          <a href={wf.repo_url} target="_blank" rel="noreferrer">{wf.repo_full_name ?? wf.repo_url}</a>
+        ) : (
+          wf.repo_full_name ?? '—'
+        )}
+        <div className="muted">{wf.workflow_name}{wf.job_name ? ` / ${wf.job_name}` : ''}</div>
+      </td>
+      <td>
+        {(wf.labels ?? []).map((l) => <span key={l} className="chip sm">{l}</span>)}
+      </td>
+      <td className="mono">{wf.pool ?? '—'}</td>
+      <td className="mono">{wf.vm_id ?? '—'}</td>
+      <td>{fmtTime(wf.queued_at)}</td>
+      <td><LiveDuration from={wf.started_at} to={wf.completed_at} /></td>
+      <td><LogLinks wf={wf} /></td>
+    </tr>
+  )
+}
+
+export function WorkflowsView({ workflows }: { workflows: WorkflowStatus[] }) {
+  return (
+    <section>
+      <h2>Workflows <span className="muted">({workflows.length})</span></h2>
+      {workflows.length === 0 ? (
+        <p className="muted">No running or recently-completed workflows.</p>
+      ) : (
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>State</th><th>Runner</th><th>Repository</th><th>Labels</th>
+              <th>Pool</th><th>VM</th><th>Queued</th><th>Duration</th><th>Logs</th>
+            </tr>
+          </thead>
+          <tbody>
+            {workflows.map((wf) => <WorkflowRow key={wf.name} wf={wf} />)}
+          </tbody>
+        </table>
+      )}
+    </section>
+  )
+}
