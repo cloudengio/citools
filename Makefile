@@ -1,0 +1,31 @@
+.PHONY: build test pr
+
+SUBMODULES = $(wildcard */)
+
+build:
+	multimod build
+
+test:
+	multimod test
+
+lint:
+	multimod lint
+
+deps:
+	multimod update
+	go work sync
+	multimod tidy
+
+pr:
+	go install cloudeng.io/go/cmd/goannotate@latest \
+		cloudeng.io/go/cmd/gousage@latest \
+		cloudeng.io/go/cmd/gomarkdown@latest
+	go install golang.org/x/tools/cmd/goimports@latest
+	multimod --config=.multimod.yaml usage annotate markdown
+
+all:
+	multimod update
+	multimod build
+	multimod test
+	multimod lint
+	multimod --config=.multimod.yaml markdown
