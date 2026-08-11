@@ -91,10 +91,11 @@ func (r *WorkflowEventHandler) PoolStatus(ctx context.Context) ([]vmsclient.Pool
 
 // Subscribe returns a coalescing change signal that fires when either pool or
 // workflow state changes, plus a cancel function that must be called to release
-// both underlying subscriptions.
-func (r *WorkflowEventHandler) Subscribe() (<-chan struct{}, func()) {
-	poolCh, poolCancel := r.vmPools.Subscribe()
-	wfCh, wfCancel := r.status.bc.Subscribe()
+// both underlying subscriptions. The subscriptions are also released when ctx is
+// cancelled.
+func (r *WorkflowEventHandler) Subscribe(ctx context.Context) (<-chan struct{}, func()) {
+	poolCh, poolCancel := r.vmPools.Subscribe(ctx)
+	wfCh, wfCancel := r.status.subscribe(ctx)
 	merged := make(chan struct{}, 1)
 	done := make(chan struct{})
 	notify := func() {

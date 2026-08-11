@@ -5,6 +5,7 @@
 package githubclient
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -95,7 +96,7 @@ func TestStatusTrackerRetentionPrunesTerminal(t *testing.T) {
 
 func TestStatusTrackerNotifies(t *testing.T) {
 	tr := newStatusTracker(time.Hour)
-	ch, cancel := tr.bc.Subscribe()
+	ch, cancel := tr.subscribe(context.Background())
 	defer cancel()
 	tr.upsert("w1", func(r *WorkflowSnapshot) { r.State = WorkflowQueued })
 	select {

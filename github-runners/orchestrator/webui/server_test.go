@@ -57,7 +57,7 @@ func (fakeBackend) WorkflowLog(_ context.Context, _, artifact string) (io.ReadCl
 	return io.NopCloser(strings.NewReader("hello log")), LogArtifact{Id: artifact, Filename: "job.txt"}, nil
 }
 
-func (f *fakeBackend) Subscribe() (<-chan struct{}, func()) {
+func (f *fakeBackend) Subscribe(context.Context) (<-chan struct{}, func()) {
 	return f.changes, func() {}
 }
 

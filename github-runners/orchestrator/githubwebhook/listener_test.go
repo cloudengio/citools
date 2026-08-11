@@ -29,6 +29,7 @@ const waitTimeout = 2 * time.Second
 type fakeRelay struct {
 	server     *httptest.Server
 	deliveries chan relayDelivery
+	done       chan struct{}
 	requests   atomic.Int64
 }
 
@@ -40,9 +41,16 @@ type relayDelivery struct {
 
 func newFakeRelay(t *testing.T) *fakeRelay {
 	t.Helper()
-	f := &fakeRelay{deliveries: make(chan relayDelivery, 16)}
+	f := &fakeRelay{
+		deliveries: make(chan relayDelivery, 16),
+		done:       make(chan struct{}),
+	}
 	f.server = httptest.NewServer(http.HandlerFunc(f.serve))
+	// Cleanups run LIFO: close done first so any in-flight hanging read returns,
+	// then Close the server without it blocking on that request. This keeps a
+	// leaked listener (e.g. after a test failure) from hanging the whole suite.
 	t.Cleanup(f.server.Close)
+	t.Cleanup(func() { close(f.done) })
 	return f
 }
 
@@ -60,6 +68,7 @@ func (f *fakeRelay) serve(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(d.body)
 	case <-r.Context().Done():
+	case <-f.done:
 	}
 }
 

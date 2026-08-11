@@ -5,6 +5,10 @@ logging:
   format: text
   file: "-"
 
+web_ui:
+  enabled: true
+  listen_address: 127.0.0.1:8088
+
 global:
   tmp_dir: "github-orchestrator-*"
   completion_queue_size: 1000
@@ -81,6 +85,3 @@ webhook:
     exponential_backoff:
       initial_delay: 1s
       steps: 10
-    #events: ["push", "pull_request"]
-    #secret_id: "github_webhook"
-    #scret_user: cnicolaou@onyourbehalf.ai

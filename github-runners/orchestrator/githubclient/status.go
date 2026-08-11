@@ -5,11 +5,12 @@
 package githubclient
 
 import (
+	"context"
 	"sort"
 	"sync"
 	"time"
 
-	"github.com/cloudengio/citools/runners/macos/orchestrator/internal"
+	"cloudeng.io/sync/patterns"
 )
 
 // WorkflowState is the lifecycle state of a workflow job within the
@@ -65,15 +66,22 @@ type statusTracker struct {
 	mu        sync.Mutex
 	records   map[string]*WorkflowSnapshot
 	retention time.Duration
-	bc        *internal.Broadcaster
+	pubsub    *patterns.PubSub[struct{}]
 }
 
 func newStatusTracker(retention time.Duration) *statusTracker {
 	return &statusTracker{
 		records:   make(map[string]*WorkflowSnapshot),
 		retention: retention,
-		bc:        internal.NewBroadcaster(),
+		pubsub:    patterns.New[struct{}](),
 	}
+}
+
+// subscribe returns a change-signal channel and a cancel function; the
+// subscription is also released when ctx is cancelled.
+func (t *statusTracker) subscribe(ctx context.Context) (<-chan struct{}, func()) {
+	sub := t.pubsub.Subscribe(ctx, 1)
+	return sub.C(), func() { t.pubsub.Unsubscribe(sub) }
 }
 
 // upsert applies mutate to the snapshot for name (creating it if absent) and
@@ -88,7 +96,7 @@ func (t *statusTracker) upsert(name string, mutate func(*WorkflowSnapshot)) {
 	mutate(rec)
 	t.pruneLocked()
 	t.mu.Unlock()
-	t.bc.Notify()
+	t.pubsub.Publish(struct{}{})
 }
 
 // pruneLocked drops completed records older than the retention period. The

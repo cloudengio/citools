@@ -60,7 +60,7 @@ func (c *Repo) GetRegistrationToken(ctx context.Context) (*gogithub.Registration
 	return c.token, nil
 }
 
-func (c *Repo) GetWorflowJob(ctx context.Context, jobID int64) (*gogithub.WorkflowJob, error) {
+func (c *Repo) GetWorkflowJob(ctx context.Context, jobID int64) (*gogithub.WorkflowJob, error) {
 	job, err := github.GetWorkflowJob(ctx, c.owner, c.repo, jobID, c.opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get workflow job %d for repository %s/%s: %w", jobID, c.owner, c.repo, err)
@@ -127,7 +127,7 @@ func (rc *RepoClients) GetWorkflowJobFullName(ctx context.Context, fullName stri
 	if !ok {
 		return nil, fmt.Errorf("no client for repository: '%s'", fullName)
 	}
-	return r.GetWorflowJob(ctx, jobID)
+	return r.GetWorkflowJob(ctx, jobID)
 }
 
 func (rc *RepoClients) RerunWorkflowJobFullName(ctx context.Context, fullName string, jobID int64) error {

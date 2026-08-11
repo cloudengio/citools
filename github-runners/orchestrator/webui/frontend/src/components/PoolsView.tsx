@@ -33,7 +33,7 @@ function Pool({ pool }: { pool: PoolStatus }) {
       ) : (
         <table className="tbl">
           <thead>
-            <tr><th>VM</th><th>State</th><th>tart state</th><th>Updated</th></tr>
+            <tr><th>VM</th><th>State</th><th>Last state</th><th>Updated</th></tr>
           </thead>
           <tbody>
             {vms.map((vm) => <VMRow key={vm.id} vm={vm} />)}

@@ -28,7 +28,8 @@ func TestSSEStreamStopsOnBaseContextCancel(t *testing.T) {
 	ts.Start()
 	defer ts.Close()
 
-	resp, err := http.Get(ts.URL + BasePath + "/events") //nolint:noctx
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(ts.URL + BasePath + "/events") //nolint:noctx
 	if err != nil {
 		t.Fatal(err)
 	}

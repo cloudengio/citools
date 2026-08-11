@@ -44,7 +44,7 @@ func newSelfHostedRunner(inst *WorkflowInstance, cq *CompletionQueue, repoURL, t
 
 func (shr *selfHostedRunner) createConfigCommand() execCommand {
 	var args strings.Builder
-	fmt.Fprintf(&args, `cd %s && ./config.sh `, shr.runnerDir)
+	fmt.Fprintf(&args, "cd %s && ./config.sh ", shr.runnerDir)
 	args.WriteString("--unattended ")
 	if shr.inst.RunnerConfig.Ephemeral {
 		args.WriteString("--ephemeral ")
@@ -52,12 +52,12 @@ func (shr *selfHostedRunner) createConfigCommand() execCommand {
 	if shr.inst.RunnerConfig.Replace {
 		args.WriteString("--replace ")
 	}
-	fmt.Fprintf(&args, `--url %s --name %s --labels %s`,
+	fmt.Fprintf(&args, "--url %s --name %s --labels %s",
 		shr.repoURL, shr.inst.Name, strings.Join(shr.inst.RunnerConfig.Labels, ","))
 	var redacted strings.Builder
 	redacted.WriteString(args.String())
 	redacted.WriteString(" --token ******")
-	fmt.Fprintf(&args, ` --token %s`, shr.token)
+	fmt.Fprintf(&args, " --token %s", shr.token)
 	return execCommand{
 		step:     "config",
 		cmd:      "bash",
@@ -68,7 +68,7 @@ func (shr *selfHostedRunner) createConfigCommand() execCommand {
 
 func (shr *selfHostedRunner) createRunCommand() execCommand {
 	var args strings.Builder
-	fmt.Fprintf(&args, `bash -lc 'cd %s && ./run.sh'`, shr.runnerDir)
+	fmt.Fprintf(&args, "cd %s && ./run.sh", shr.runnerDir)
 	return execCommand{
 		step:     "run",
 		cmd:      "bash",
@@ -79,7 +79,7 @@ func (shr *selfHostedRunner) createRunCommand() execCommand {
 
 func (shr *selfHostedRunner) createExtractLogsCommand() execCommand {
 	var args strings.Builder
-	fmt.Fprintf(&args, `cd %s && tar czf - _diag`, shr.runnerDir)
+	fmt.Fprintf(&args, "cd %s && tar czf - _diag", shr.runnerDir)
 	return execCommand{
 		step:     "extract-logs",
 		cmd:      "bash",
@@ -119,9 +119,8 @@ func (shr *selfHostedRunner) runQueuedJob(ctx context.Context, inst *WorkflowIns
 		if stopErr != nil {
 			ctxlog.Error(ctx, "failed to stop VM after run error", "vm", vm.ID(), "stop_err", stopErr, "run_err", runErr)
 		} else {
-			ctxlog.Error(ctx, "failed to stop VM after run error", "vm", vm.ID(), "run_err", runErr)
+			ctxlog.Error(ctx, "successfully stopped VM, but VM has run error", "vm", vm.ID(), "run_err", runErr)
 		}
-		ctxlog.Error(ctx, "failed to stop vm", "vm", vm.ID(), "error", stopErr)
 	}
 	errs.Append(runErr)
 	errs.Append(stopErr)

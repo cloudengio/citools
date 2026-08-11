@@ -1,4 +1,4 @@
-// Copyright 2026 cloudeng llc. All rights reserved."
+// Copyright 2026 cloudeng llc. All rights reserved.
 // Use of this source code is governed by the Apache-2.0
 // license that can be found in the LICENSE file.
 
@@ -32,7 +32,7 @@ func (c ConfigCommand) Describe(ctx context.Context, _ any, _ []string) error {
 	if !ok {
 		return fmt.Errorf("no config in context")
 	}
-	desc, err := structdoc.Describe(cfg, "doc", "rootd configuration options\n")
+	desc, err := structdoc.Describe(cfg, "doc", "root configuration options\n")
 	if err != nil {
 		return fmt.Errorf("error describing config: %v", err)
 	}

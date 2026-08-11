@@ -37,8 +37,9 @@ type Backend interface {
 	// WorkflowLog opens a log artifact for a workflow job. The caller closes the
 	// returned reader.
 	WorkflowLog(ctx context.Context, name, artifact string) (io.ReadCloser, LogArtifact, error)
-	// Subscribe returns a coalescing change signal and a cancel function.
-	Subscribe() (<-chan struct{}, func())
+	// Subscribe returns a coalescing change signal and a cancel function. The
+	// subscription is also released when ctx is cancelled.
+	Subscribe(ctx context.Context) (<-chan struct{}, func())
 }
 
 // Server implements StrictServerInterface over a Backend.
@@ -177,7 +178,7 @@ func (s *Server) StreamEvents(ctx context.Context, _ StreamEventsRequestObject) 
 // on connect and whenever the backend signals a change, plus a periodic
 // heartbeat to keep the connection alive.
 func (s *Server) pumpEvents(ctx context.Context, pw *io.PipeWriter) {
-	changes, cancel := s.backend.Subscribe()
+	changes, cancel := s.backend.Subscribe(ctx)
 	defer cancel()
 	defer pw.Close() //nolint:errcheck
 

@@ -7,6 +7,7 @@ package githubwebhook
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"cloudeng.io/algo/ratecontrol"
@@ -16,6 +17,9 @@ import (
 	gogithub "github.com/google/go-github/v89/github"
 )
 
+// retryBackoff is the delay between retries after a transient relay read error.
+const retryBackoff = 100 * time.Millisecond
+
 // Handler processes a single workflow_job webhook event. Any error it returns
 // is logged; because handlers run in their own goroutine there is no caller to
 // return it to.
@@ -24,6 +28,7 @@ type Handler func(context.Context, *gogithub.WorkflowJobEvent) error
 type Listener struct {
 	relayURL string
 	doneCh   chan struct{}
+	stopOnce sync.Once
 	handler  Handler
 }
 
@@ -43,7 +48,7 @@ func (l *Listener) DoneCh() <-chan struct{} {
 
 // Listen starts listening for workflow_job events from the relay. It will
 // block until the context is cancelled or the listener is stopped. For each
-// workflow_run event received, the handler function is called in a separate
+// workflow_job event received, the handler function is called in a separate
 // goroutine.
 func (l *Listener) Listen(ctx context.Context, opts []operations.Option) error {
 	for {
@@ -51,16 +56,20 @@ func (l *Listener) Listen(ctx context.Context, opts []operations.Option) error {
 		eventCh := make(chan *gogithub.WorkflowJobEvent, 1)
 		go l.waitForEvent(wctx, eventCh, opts)
 		select {
-		case event := <-eventCh:
+		case event, ok := <-eventCh:
 			cancel()
+			if !ok {
+				// channel closed, return any error
+				return ctx.Err()
+			}
 			if event == nil {
 				return nil
 			}
-			go func() {
-				if err := l.handler(ctx, event); err != nil {
+			go func(ev *gogithub.WorkflowJobEvent) {
+				if err := l.handler(ctx, ev); err != nil {
 					ctxlog.Error(ctx, "workflow_job handler failed", "err", err)
 				}
-			}()
+			}(event)
 		case <-ctx.Done():
 			cancel()
 			return ctx.Err()
@@ -89,9 +98,20 @@ func (l *Listener) waitForEvent(ctx context.Context, eventCh chan<- *gogithub.Wo
 			if ctx.Err() != nil {
 				return
 			}
-			ctxlog.Warn(ctx, "waitForEvent: read failed, retrying", "relay_url", l.relayURL,
-				"relay_closed", errors.Is(err, github.ErrRelayClosed), "err", err)
-			time.Sleep(time.Second) // Need a better backoff/retry strategy here
+			if errors.Is(err, github.ErrRelayClosed) {
+				// The relay closed cleanly; stop reading so that Listen observes
+				// the closed eventCh and returns nil.
+				ctxlog.Info(ctx, "waitForEvent: relay closed", "relay_url", l.relayURL)
+				return
+			}
+			ctxlog.Warn(ctx, "waitForEvent: read failed, retrying", "relay_url", l.relayURL, "err", err)
+			// Back off briefly before retrying, but wake immediately if the
+			// context is cancelled so shutdown is not delayed.
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(retryBackoff):
+			}
 			continue
 		}
 		select {
@@ -104,5 +124,5 @@ func (l *Listener) waitForEvent(ctx context.Context, eventCh chan<- *gogithub.Wo
 
 // Stop stops the listener. It is safe to call Stop multiple times.
 func (l *Listener) Stop() {
-	close(l.doneCh)
+	l.stopOnce.Do(func() { close(l.doneCh) })
 }
