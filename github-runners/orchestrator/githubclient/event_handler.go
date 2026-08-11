@@ -208,7 +208,7 @@ func (r *WorkflowEventHandler) HandleWebhooks(ctx context.Context, event *gogith
 	logger.Info("handling workflow_job event")
 	switch event.GetAction() {
 	case "queued":
-		go r.handleQueuedEvent(ctx, event, pool, runner)
+		go r.handleQueuedEvent(ctx, event, pool, runner) //nolint:errcheck
 		return nil
 	case "in_progress":
 		r.handleInProgressEvent(ctx, event)

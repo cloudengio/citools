@@ -114,9 +114,9 @@ func listVMs(ctx context.Context) ([]vmspool.VMInfo, error) {
 
 func writeVMTable(out io.Writer, entries []vmspool.VMInfo) error {
 	tw := tabwriter.NewWriter(out, 0, 8, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tPOOL\tSTATE\tRUNNING\tACCESSED")
+	fmt.Fprintln(tw, "NAME\tPOOL\tSTATE\tRUNNING\tACCESSED") //nolint:errcheck
 	for _, entry := range entries {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%v\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%v\t%s\n", //nolint:errcheck
 			entry.Name, entry.Pool, entry.State, entry.Running,
 			entry.Accessed.Local().Format(time.RFC3339))
 	}

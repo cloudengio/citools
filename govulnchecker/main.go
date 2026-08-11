@@ -172,7 +172,7 @@ func main() {
 		// Re-marshal to our struct to easily check the fields
 		rawBytes, _ := json.Marshal(raw)
 		var msg GovulncheckMessage
-		json.Unmarshal(rawBytes, &msg)
+		_ = json.Unmarshal(rawBytes, &msg)
 
 		if msg.Config != nil {
 			scanLevel = msg.Config.ScanLevel

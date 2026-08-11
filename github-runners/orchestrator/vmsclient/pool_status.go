@@ -94,7 +94,7 @@ func (p *Pools) Status(ctx context.Context) ([]PoolSnapshot, error) {
 			Name:     name,
 			Kind:     prov.Kind(),
 			Image:    prov.Image(),
-			Size:     p.configs[name].Config.Size,
+			Size:     p.configs[name].Size,
 			VMs:      vms,
 			Counters: counters,
 			Updated:  updated,

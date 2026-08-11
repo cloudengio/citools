@@ -74,7 +74,7 @@ func get(t *testing.T, url string) (int, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, string(b)
 }
@@ -115,7 +115,7 @@ func TestConfigFileDownloadHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if cd := resp.Header.Get("Content-Disposition"); !strings.Contains(cd, "cfg.yml") {
 		t.Errorf("Content-Disposition = %q, want filename cfg.yml", cd)
 	}
@@ -144,7 +144,7 @@ func TestSSEHelloAndSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
 		t.Fatalf("Content-Type = %q", ct)
 	}

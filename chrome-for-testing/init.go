@@ -31,7 +31,6 @@ type browser struct {
 	goos        string
 	binaryPath  string
 	userDataDir string
-	nssDir      string
 	debug       bool
 }
 

@@ -73,7 +73,7 @@ func currentPlatform() (string, error) {
 	case "linux":
 		// Chrome for Testing only publishes an x64 (amd64) Linux build.
 		if runtime.GOARCH != "amd64" {
-			return "", fmt.Errorf("Chrome for Testing has no linux/%s build; use an x64 (amd64) runner", runtime.GOARCH)
+			return "", fmt.Errorf("chrome for Testing has no linux/%s build; use an x64 (amd64) runner", runtime.GOARCH)
 		}
 		return "linux64", nil
 	case "windows":
