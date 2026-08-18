@@ -19,6 +19,7 @@ require (
 	github.com/google/go-github/v89 v89.0.0
 	github.com/oapi-codegen/runtime v1.6.0
 	gopkg.in/yaml.v3 v3.0.1
+	howett.net/plist v1.0.1
 )
 
 require (

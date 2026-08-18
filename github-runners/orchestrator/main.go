@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
+	"syscall"
 
 	"cloudeng.io/cmdutil"
 	"cloudeng.io/cmdutil/cmdyaml"
@@ -58,6 +60,21 @@ commands:
         args:
           - <run_id> (one or more run IDs to cancel)
           - ...
+  - name: install
+    summary: write the bundled minimal orchestrator config file to a standard location
+  - name: bundle
+    summary: build a signed macOS .app bundle that installs the orchestrator
+  - name: service
+    summary: manage the orchestrator as a per-user launchd login service
+    commands:
+      - name: install
+        summary: install and load the login service (LaunchAgent)
+      - name: uninstall
+        summary: unload and remove the login service
+      - name: status
+        summary: show the login service status
+      - name: restart
+        summary: restart the login service
   - name: webapp-build
     summary: build the embedded web UI frontend (runs npm install, gen and build)
   - name: config
@@ -88,6 +105,18 @@ func createCLI() *subcmd.CommandSetYAML {
 	runCmd := RunCommand{}
 	cmdSet.Set("run").MustRunner(runCmd.Run, &RunFlags{})
 	cmdSet.Set("run-job").MustRunner(runCmd.RunJob, &RunJobFlags{})
+
+	installCmd := InstallCommand{}
+	cmdSet.Set("install").MustRunner(installCmd.Run, &InstallFlags{})
+
+	bundleCmd := BundleCommand{}
+	cmdSet.Set("bundle").MustRunner(bundleCmd.Run, &BundleFlags{})
+
+	serviceCmd := ServiceCommand{}
+	cmdSet.Set("service", "install").MustRunner(serviceCmd.Install, &ServiceInstallFlags{})
+	cmdSet.Set("service", "uninstall").MustRunner(serviceCmd.Uninstall, &struct{}{})
+	cmdSet.Set("service", "status").MustRunner(serviceCmd.Status, &struct{}{})
+	cmdSet.Set("service", "restart").MustRunner(serviceCmd.Restart, &struct{}{})
 
 	webappCmd := WebappBuildCommand{}
 	cmdSet.Set("webapp-build").MustRunner(webappCmd.Run, &WebappBuildFlags{})
@@ -121,7 +150,28 @@ func verbose() bool {
 	return globalFlags.Verbose
 }
 
+// ensureToolPath prepends the standard Homebrew bin directories to PATH (if they
+// exist and are not already present), so tools the orchestrator invokes — tart,
+// go, docker — are found even when it is launched from a .app or by launchd,
+// which provide only a minimal PATH.
+func ensureToolPath() {
+	path := os.Getenv("PATH")
+	var prepend []string
+	for _, d := range []string{"/opt/homebrew/bin", "/usr/local/bin"} {
+		if strings.Contains(":"+path+":", ":"+d+":") {
+			continue
+		}
+		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
+			prepend = append(prepend, d)
+		}
+	}
+	if len(prepend) > 0 {
+		_ = os.Setenv("PATH", strings.Join(prepend, ":")+":"+path)
+	}
+}
+
 func main() {
+	ensureToolPath()
 	ctx := context.Background()
 	ctx, cancel := context.WithCancelCause(ctx)
 	cli := createCLI()
@@ -138,18 +188,18 @@ func main() {
 	ks := keys.NewInMemoryKeyStore()
 	ctx = keys.ContextWithKeyStore(ctx, ks)
 	cli.WithMain(func(ctx context.Context, cmdRunner func(ctx context.Context) error) error {
-		// webapp-build is a pure tooling command: it shells out to npm and needs
-		// no orchestrator configuration, keychain access or GitHub clients. Skip
-		// all of that setup so building the UI never touches the keychain.
-		if isWebappBuildInvocation() {
+		// Bootstrap/tooling commands need no orchestrator configuration, keychain
+		// access or GitHub clients: webapp-build and bundle are build tools, and
+		// install generates the config file itself. Skip that setup for them.
+		if isWebappBuildInvocation() || isInstallInvocation() || isBundleInvocation() || isServiceInvocation() {
 			return cmdRunner(ctx)
 		}
 		var cfg Config
 		if err := cmdyaml.ParseConfigFilesStrict(ctx, &cfg, globalFlags.ConfigFile); err != nil {
-			return fmt.Errorf("error reading config file: %v", err)
+			return fmt.Errorf("failed to read the configuration file %q: %v\nedit that file to correct it", globalFlags.ConfigFile, err)
 		}
-		if cfg.Validate() != nil {
-			return fmt.Errorf("invalid config: %v", cfg.Validate())
+		if err := cfg.Validate(); err != nil {
+			return fmt.Errorf("the configuration file %q is invalid: %v\nedit that file to correct it", globalFlags.ConfigFile, err)
 		}
 		loggerConfig := cfg.Logging.WithFlagOverrides(
 			fs.FlagSet(), globalFlags.LoggingFlags)
@@ -174,12 +224,21 @@ func main() {
 		repoClients = rc
 		return cmdRunner(ctx)
 	})
-	cmdutil.HandleSignals(func() { cancel(cmdutil.ErrInterrupt) }, os.Interrupt)
+	// Handle SIGTERM as well as SIGINT so the orchestrator shuts down cleanly
+	// (draining/deleting VMs) when launchd stops the login service.
+	cmdutil.HandleSignals(func() { cancel(cmdutil.ErrInterrupt) }, os.Interrupt, syscall.SIGTERM)
 	if err := cli.Dispatch(ctx); err != nil {
 		if errors.Is(err, cmdutil.ErrInterrupt) {
 			return
 		}
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		// Exit non-zero so callers (the launcher, shells, CI) can detect the
+		// failure. os.Exit skips deferred cleanup, so flush the logger first.
+		if logCloser != nil {
+			_ = logCloser()
+			logCloser = nil
+		}
+		os.Exit(1)
 	}
 }
 
@@ -188,7 +247,10 @@ func loadKeychain(ctx context.Context, cfg ICloudKeychainConfig) (context.Contex
 	if !ok {
 		return ctx, fmt.Errorf("no keystore in context")
 	}
-	fs := cfg.FS()
+	fs, err := cfg.FS(false)
+	if err != nil {
+		return ctx, fmt.Errorf("error creating keychain fs: %v", err)
+	}
 	for _, item := range cfg.Items {
 		if err := ims.ReadYAML(ctx, fs, item); err != nil {
 			return ctx, fmt.Errorf("error reading keychain item %q: %v", item, err)

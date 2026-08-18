@@ -30,3 +30,25 @@ export const eventsURL = `${BASE}/events`
 
 export const logURL = (workflow: string, artifactId: string) =>
   `${BASE}/workflows/${encodeURIComponent(workflow)}/logs/${encodeURIComponent(artifactId)}`
+
+// cancelWorkflow requests cancellation of a running workflow job, which cancels
+// its GitHub run and tears down its VM. Rejects with the server's error message.
+export async function cancelWorkflow(name: string): Promise<void> {
+  const resp = await fetch(
+    `${BASE}/workflows/${encodeURIComponent(name)}/cancel`,
+    { method: 'POST' },
+  )
+  if (!resp.ok) {
+    let msg = `${resp.status} ${resp.statusText}`
+    try {
+      const body = (await resp.json()) as { error?: string }
+      if (body?.error) msg = body.error
+    } catch {
+      /* no JSON body */
+    }
+    throw new Error(msg)
+  }
+}
+
+// CANCELLABLE_STATES are the workflow states for which cancellation is offered.
+export const CANCELLABLE_STATES: WorkflowState[] = ['queued', 'acquiring', 'running']

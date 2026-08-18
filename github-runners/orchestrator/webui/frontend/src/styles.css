@@ -71,6 +71,10 @@ a { color: var(--accent); }
 
 .btn { background: var(--panel2); border: 1px solid var(--border); color: var(--fg); border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; text-decoration: none; }
 .btn:hover { border-color: var(--accent); }
+.btn-danger { background: var(--panel2); border: 1px solid var(--border); color: #ff6b6b; border-radius: 6px; padding: 3px 9px; font-size: 12px; cursor: pointer; }
+.btn-danger:hover:not(:disabled) { border-color: #ff6b6b; background: rgba(255, 107, 107, 0.12); }
+.btn-danger:disabled { opacity: .6; cursor: default; }
+.btn-danger.sm { padding: 2px 8px; font-size: 11px; }
 .link { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 0; }
 
 .error { background: #46201d; color: #e07b70; border: 1px solid #6b2b26; border-radius: 6px; padding: 8px 12px; margin: 12px 0; }

@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -242,6 +243,20 @@ func (b *webuiBackend) Workflows(_ context.Context) ([]webui.WorkflowStatus, err
 		out = append(out, workflowStatusFromSnapshot(s))
 	}
 	return out, nil
+}
+
+func (b *webuiBackend) CancelWorkflow(ctx context.Context, name string) error {
+	wh := b.handler()
+	if wh == nil {
+		return fmt.Errorf("orchestrator is still initializing")
+	}
+	if err := wh.Cancel(ctx, name); err != nil {
+		if errors.Is(err, githubclient.ErrWorkflowNotRunning) {
+			return webui.ErrWorkflowNotFound
+		}
+		return err
+	}
+	return nil
 }
 
 func (b *webuiBackend) Workflow(_ context.Context, name string) (webui.WorkflowStatus, bool, error) {

@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -15,6 +16,10 @@ import (
 	"path/filepath"
 	"time"
 )
+
+// ErrWorkflowNotFound is returned by Backend.CancelWorkflow when no running
+// workflow with the given name exists.
+var ErrWorkflowNotFound = errors.New("no such running workflow")
 
 // BasePath is the URL prefix under which the JSON API is served.
 const BasePath = "/api/v1"
@@ -34,6 +39,10 @@ type Backend interface {
 	Workflows(ctx context.Context) ([]WorkflowStatus, error)
 	// Workflow returns a single workflow job by runner-instance name.
 	Workflow(ctx context.Context, name string) (WorkflowStatus, bool, error)
+	// CancelWorkflow cancels a running workflow job by runner-instance name,
+	// which also tears down its VM. It returns ErrWorkflowNotFound if no such
+	// running workflow exists.
+	CancelWorkflow(ctx context.Context, name string) error
 	// WorkflowLog opens a log artifact for a workflow job. The caller closes the
 	// returned reader.
 	WorkflowLog(ctx context.Context, name, artifact string) (io.ReadCloser, LogArtifact, error)
@@ -130,6 +139,17 @@ func (s *Server) GetWorkflow(ctx context.Context, request GetWorkflowRequestObje
 		return GetWorkflow404JSONResponse{Error: "no such workflow: " + request.Name}, nil
 	}
 	return GetWorkflow200JSONResponse(wf), nil
+}
+
+func (s *Server) CancelWorkflow(ctx context.Context, request CancelWorkflowRequestObject) (CancelWorkflowResponseObject, error) {
+	switch err := s.backend.CancelWorkflow(ctx, request.Name); {
+	case err == nil:
+		return CancelWorkflow202Response{}, nil
+	case errors.Is(err, ErrWorkflowNotFound):
+		return CancelWorkflow404JSONResponse{Error: "no such running workflow: " + request.Name}, nil
+	default:
+		return CancelWorkflow500JSONResponse{Error: err.Error()}, nil
+	}
 }
 
 func (s *Server) ListWorkflowLogs(ctx context.Context, request ListWorkflowLogsRequestObject) (ListWorkflowLogsResponseObject, error) {
