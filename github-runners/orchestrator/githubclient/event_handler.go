@@ -109,6 +109,7 @@ func (r *WorkflowEventHandler) Cancel(ctx context.Context, name string) error {
 	// Reflect the request immediately; the "completed" webhook will move the
 	// record to canceled and tear the VM down.
 	r.status.upsert(name, func(rec *WorkflowSnapshot) {
+		rec.State = WorkflowCanceled
 		if rec.Err == "" {
 			rec.Err = "cancellation requested"
 		}

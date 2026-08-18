@@ -250,7 +250,9 @@ func (b *webuiBackend) CancelWorkflow(ctx context.Context, name string) error {
 	if wh == nil {
 		return fmt.Errorf("orchestrator is still initializing")
 	}
-	if err := wh.Cancel(ctx, name); err != nil {
+	reqCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+	if err := wh.Cancel(reqCtx, name); err != nil {
 		if errors.Is(err, githubclient.ErrWorkflowNotRunning) {
 			return webui.ErrWorkflowNotFound
 		}

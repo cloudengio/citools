@@ -249,7 +249,7 @@ func loadKeychain(ctx context.Context, cfg ICloudKeychainConfig) (context.Contex
 	}
 	fs, err := cfg.FS(false)
 	if err != nil {
-		return ctx, fmt.Errorf("error creating keychain fs: %v", err)
+		return ctx, fmt.Errorf("error creating keychain filesystem: %v", err)
 	}
 	for _, item := range cfg.Items {
 		if err := ims.ReadYAML(ctx, fs, item); err != nil {
