@@ -1,7 +1,42 @@
-import { logURL, type WorkflowStatus } from '../api/client'
+import { useState } from 'react'
+import { CANCELLABLE_STATES, cancelWorkflow, logURL, type WorkflowStatus } from '../api/client'
 import { Badge } from './Badge'
 import { LiveDuration } from './LiveDuration'
 import { fmtTime } from '../format'
+
+function CancelButton({ wf }: { wf: WorkflowStatus }) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  if (!CANCELLABLE_STATES.includes(wf.state)) {
+    return <span className="muted">—</span>
+  }
+
+  const onClick = async () => {
+    if (!window.confirm(`Cancel workflow "${wf.name}"? This cancels the GitHub run and deletes its VM.`)) {
+      return
+    }
+    setBusy(true)
+    setErr(null)
+    try {
+      await cancelWorkflow(wf.name)
+      // The row updates via the SSE-driven refresh once the state changes.
+    } catch (e) {
+      setErr(String(e instanceof Error ? e.message : e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <button className="btn-danger sm" onClick={onClick} disabled={busy}>
+        {busy ? 'Canceling…' : 'Cancel'}
+      </button>
+      {err && <div className="err-text">{err}</div>}
+    </>
+  )
+}
 
 function LogLinks({ wf }: { wf: WorkflowStatus }) {
   const logs = wf.logs ?? []
@@ -45,6 +80,7 @@ function WorkflowRow({ wf }: { wf: WorkflowStatus }) {
       <td>{fmtTime(wf.queued_at)}</td>
       <td><LiveDuration from={wf.started_at} to={wf.completed_at} /></td>
       <td><LogLinks wf={wf} /></td>
+      <td><CancelButton wf={wf} /></td>
     </tr>
   )
 }
@@ -60,7 +96,7 @@ export function WorkflowsView({ workflows }: { workflows: WorkflowStatus[] }) {
           <thead>
             <tr>
               <th>State</th><th>Runner</th><th>Repository</th><th>Labels</th>
-              <th>Pool</th><th>VM</th><th>Queued</th><th>Duration</th><th>Logs</th>
+              <th>Pool</th><th>VM</th><th>Queued</th><th>Duration</th><th>Logs</th><th>Actions</th>
             </tr>
           </thead>
           <tbody>
