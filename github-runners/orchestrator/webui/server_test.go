@@ -53,6 +53,13 @@ func (fakeBackend) Workflow(_ context.Context, name string) (WorkflowStatus, boo
 	return workflowWithLogs(), true, nil
 }
 
+func (fakeBackend) CancelWorkflow(_ context.Context, name string) error {
+	if name != "w1" {
+		return ErrWorkflowNotFound
+	}
+	return nil
+}
+
 func (fakeBackend) WorkflowLog(_ context.Context, _, artifact string) (io.ReadCloser, LogArtifact, error) {
 	return io.NopCloser(strings.NewReader("hello log")), LogArtifact{Id: artifact, Filename: "job.txt"}, nil
 }
@@ -99,6 +106,24 @@ func TestEndpoints(t *testing.T) {
 		if !strings.Contains(body, tc.want) {
 			t.Errorf("%s: body %q missing %q", tc.path, body, tc.want)
 		}
+	}
+}
+
+func TestCancelWorkflow(t *testing.T) {
+	ts := newTestServer(t)
+	post := func(path string) int {
+		resp, err := http.Post(ts.URL+path, "", nil) //nolint:noctx
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	if code := post(BasePath + "/workflows/w1/cancel"); code != http.StatusAccepted {
+		t.Errorf("cancel w1: status %d, want 202", code)
+	}
+	if code := post(BasePath + "/workflows/nope/cancel"); code != http.StatusNotFound {
+		t.Errorf("cancel nope: status %d, want 404", code)
 	}
 }
 

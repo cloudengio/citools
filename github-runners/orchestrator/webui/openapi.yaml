@@ -100,6 +100,32 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /workflows/{name}/cancel:
+    post:
+      operationId: cancelWorkflow
+      summary: Cancel a running workflow job (cancels the GitHub run, which tears down its VM)
+      tags: [workflows]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          description: Cancellation was requested.
+        "404":
+          description: No such running workflow.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Failed to request cancellation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /workflows/{name}/logs:
     get:
       operationId: listWorkflowLogs

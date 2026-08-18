@@ -282,6 +282,9 @@ type ServerInterface interface {
 	// GetWorkflow Get a single workflow job by its runner-instance name
 	// (GET /workflows/{name})
 	GetWorkflow(w http.ResponseWriter, r *http.Request, name string)
+	// CancelWorkflow Cancel a running workflow job (cancels the GitHub run, which tears down its VM)
+	// (POST /workflows/{name}/cancel)
+	CancelWorkflow(w http.ResponseWriter, r *http.Request, name string)
 	// ListWorkflowLogs List downloadable log artifacts for a workflow job
 	// (GET /workflows/{name}/logs)
 	ListWorkflowLogs(w http.ResponseWriter, r *http.Request, name string)
@@ -405,6 +408,32 @@ func (siw *ServerInterfaceWrapper) GetWorkflow(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetWorkflow(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CancelWorkflow operation middleware
+func (siw *ServerInterfaceWrapper) CancelWorkflow(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelWorkflow(w, r, name)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -600,6 +629,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/pools", wrapper.ListPools)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/workflows", wrapper.ListWorkflows)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/workflows/{name}", wrapper.GetWorkflow)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/workflows/{name}/cancel", wrapper.CancelWorkflow)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/workflows/{name}/logs", wrapper.ListWorkflowLogs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/workflows/{name}/logs/{artifact}", wrapper.DownloadWorkflowLog)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/events", wrapper.StreamEvents)
@@ -798,6 +828,50 @@ func (response GetWorkflow404JSONResponse) VisitGetWorkflowResponse(w http.Respo
 	return err
 }
 
+type CancelWorkflowRequestObject struct {
+	Name string `json:"name"`
+}
+
+type CancelWorkflowResponseObject interface {
+	VisitCancelWorkflowResponse(w http.ResponseWriter) error
+}
+
+type CancelWorkflow202Response struct {
+}
+
+func (response CancelWorkflow202Response) VisitCancelWorkflowResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type CancelWorkflow404JSONResponse Error
+
+func (response CancelWorkflow404JSONResponse) VisitCancelWorkflowResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelWorkflow500JSONResponse Error
+
+func (response CancelWorkflow500JSONResponse) VisitCancelWorkflowResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListWorkflowLogsRequestObject struct {
 	Name string `json:"name"`
 }
@@ -897,6 +971,9 @@ type StrictServerInterface interface {
 	// GetWorkflow Get a single workflow job by its runner-instance name
 	// (GET /workflows/{name})
 	GetWorkflow(ctx context.Context, request GetWorkflowRequestObject) (GetWorkflowResponseObject, error)
+	// CancelWorkflow Cancel a running workflow job (cancels the GitHub run, which tears down its VM)
+	// (POST /workflows/{name}/cancel)
+	CancelWorkflow(ctx context.Context, request CancelWorkflowRequestObject) (CancelWorkflowResponseObject, error)
 	// ListWorkflowLogs List downloadable log artifacts for a workflow job
 	// (GET /workflows/{name}/logs)
 	ListWorkflowLogs(ctx context.Context, request ListWorkflowLogsRequestObject) (ListWorkflowLogsResponseObject, error)
@@ -1092,6 +1169,32 @@ func (sh *strictHandler) GetWorkflow(w http.ResponseWriter, r *http.Request, nam
 	}
 }
 
+// CancelWorkflow operation middleware
+func (sh *strictHandler) CancelWorkflow(w http.ResponseWriter, r *http.Request, name string) {
+	var request CancelWorkflowRequestObject
+
+	request.Name = name
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CancelWorkflow(ctx, request.(CancelWorkflowRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CancelWorkflow")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CancelWorkflowResponseObject); ok {
+		if err := validResponse.VisitCancelWorkflowResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListWorkflowLogs operation middleware
 func (sh *strictHandler) ListWorkflowLogs(w http.ResponseWriter, r *http.Request, name string) {
 	var request ListWorkflowLogsRequestObject
@@ -1150,42 +1253,43 @@ func (sh *strictHandler) DownloadWorkflowLog(w http.ResponseWriter, r *http.Requ
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"i8n6B/Z89/zfAAAA//8=",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

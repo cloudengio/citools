@@ -84,6 +84,40 @@ func (r *WorkflowEventHandler) Workflow(name string) (WorkflowSnapshot, bool) {
 	return r.status.get(name)
 }
 
+// ErrWorkflowNotRunning is returned by Cancel when no live workflow with the
+// given name exists (it may already have completed).
+var ErrWorkflowNotRunning = errors.New("no such running workflow")
+
+// Cancel cancels a running workflow job by runner-instance name. It cancels the
+// job's GitHub workflow run; the resulting "completed" webhook then tears the
+// job's VM down through the normal completion path (see handleCompleted). It
+// returns ErrWorkflowNotRunning if no live instance exists for name.
+func (r *WorkflowEventHandler) Cancel(ctx context.Context, name string) error {
+	inst, ok := r.workflowManager.getInstance(name)
+	if !ok {
+		return ErrWorkflowNotRunning
+	}
+	event := inst.Event
+	fullName := event.GetRepo().GetFullName()
+	runID := event.GetWorkflowJob().GetRunID()
+	if fullName == "" || runID == 0 {
+		return fmt.Errorf("workflow %q has no cancellable GitHub run", name)
+	}
+	if err := r.clients.CancelWorkflowRunFullName(ctx, fullName, runID); err != nil {
+		return fmt.Errorf("failed to cancel GitHub run %d for %s: %w", runID, fullName, err)
+	}
+	// Reflect the request immediately; the "completed" webhook will move the
+	// record to canceled and tear the VM down.
+	r.status.upsert(name, func(rec *WorkflowSnapshot) {
+		rec.State = WorkflowCanceled
+		if rec.Err == "" {
+			rec.Err = "cancellation requested"
+		}
+	})
+	ctxlog.Info(ctx, "workflow cancellation requested", "name", name, "repo", fullName, "run_id", runID)
+	return nil
+}
+
 // PoolStatus returns a snapshot of every configured VM pool and its VMs.
 func (r *WorkflowEventHandler) PoolStatus(ctx context.Context) ([]vmsclient.PoolSnapshot, error) {
 	return r.vmPools.Status(ctx)
