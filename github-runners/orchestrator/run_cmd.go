@@ -104,11 +104,11 @@ func (r RunCommand) Run(ctx context.Context, fl any, _ []string) error {
 	// Ensure only one orchestrator runs at a time, so re-opening the app or a
 	// stray/orphaned process can't stack multiple instances. The lock is held for
 	// the lifetime of this run and released automatically when the process exits.
-	lock, err := acquireRunLock()
+	unlockRun, err := acquireRunLock()
 	if err != nil {
 		return err
 	}
-	defer lock.Close() //nolint:errcheck
+	defer unlockRun()
 
 	if cmdutil.IsExplicitlySet(subcmd.FlagSetFromContext(ctx).FlagSet(), "delete-acquired-on-close") {
 		cfg = reconfigureVMPools(cfg, fv.DeleteAcquiredOnClose)

@@ -11,6 +11,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+
+	"cloudeng.io/os/executil"
+
+	"github.com/cloudengio/citools/runners/macos/orchestrator/internal"
 )
 
 // minimalConfigYAML is the minimal, valid orchestrator configuration installed
@@ -95,9 +99,6 @@ func installMinimalConfigIfMissing() (path string, created bool, err error) {
 // defaultInstallPath returns the per-user location for the installed config
 // (~/Library/Application Support/github-runner-orchestrator on macOS).
 func defaultInstallPath() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "github-runner-orchestrator", "github_orchestrator_config.yml"), nil
+	return executil.UserConfigDirPath(
+		filepath.Join(internal.ConfigDir, internal.ConfigFileName))
 }

@@ -11,6 +11,9 @@ web_ui:
 
 global:
   tmp_dir: "github-orchestrator-*"
+  search_paths:
+    - /opt/homebrew/bin
+    - /usr/local/bin
   completion_queue_size: 1000
   failed_vm_retention_period: 1h
   successful_vm_retention_period: 15m

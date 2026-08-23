@@ -6,19 +6,21 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
-	"strings"
 
-	"howett.net/plist"
+	"cloudeng.io/cmdutil/cmdyaml"
+	"cloudeng.io/macos/buildtools"
+	"cloudeng.io/macos/macosutils"
+	"github.com/cloudengio/citools/runners/macos/orchestrator/internal"
 )
 
 // serviceLabel is the launchd label / LaunchAgent identifier for the orchestrator
 // login service.
-const serviceLabel = "io.cloudeng.github-runner-orchestrator"
+const serviceLabel = internal.BundleID
 
 // ServiceCommand manages the orchestrator as a per-user launchd login service
 // (a LaunchAgent), which starts the orchestrator when the user logs in.
@@ -38,6 +40,59 @@ func isServiceInvocation() bool {
 type ServiceInstallFlags struct {
 	Executable string `subcmd:"executable,,path to the orchestrator executable; defaults to this binary"`
 	Config     string `subcmd:"config-file,,path to the config file; defaults to the per-user location"`
+
+	LaunchAgentFile string `subcmd:"launch-agent-file,,'path to the launchd service configuration; defaults to the copy in the app bundle, or to built-in defaults'"`
+}
+
+//go:embed launch_agent.yml
+var defaultLaunchAgentYAML []byte
+
+// loadLaunchAgentConfig returns the configuration for the login service, and a
+// description of where it came from. An explicit path is used as given;
+// otherwise the copy shipped in the app bundle is preferred, falling back to the
+// defaults built into this binary when running outside a bundle.
+func loadLaunchAgentConfig(ctx context.Context, path string) (LaunchAgentConfig, string, error) {
+	source := path
+	if source == "" {
+		if bundled, ok := bundledLaunchAgentConfig(); ok {
+			source = bundled
+		}
+	}
+	var lc LaunchAgentConfig
+	if source == "" {
+		if err := cmdyaml.ParseConfigsStrict(&lc, defaultLaunchAgentYAML); err != nil {
+			return lc, "", fmt.Errorf("parsing the built-in service configuration: %w", err)
+		}
+		return lc, "built-in defaults", nil
+	}
+	if err := cmdyaml.ParseConfigFilesStrict(ctx, &lc, source); err != nil {
+		return lc, "", fmt.Errorf("reading the service configuration %q: %w", source, err)
+	}
+	return lc, source, nil
+}
+
+// bundledLaunchAgentConfig returns the path of the service configuration inside
+// the app bundle this executable belongs to.
+//
+// InAppBundle searches the bundle whose Contents/MacOS holds the running
+// executable, which covers running the orchestrator as a bundle's main
+// executable. It is not enough on its own here: the orchestrator ships in a
+// bundle nested inside the launcher app, and the resource lives in the outer
+// one, so each enclosing bundle is searched in turn as well.
+func bundledLaunchAgentConfig() (string, bool) {
+	exe, err := macosutils.ExecutablePath()
+	if err != nil {
+		return "", false
+	}
+	subBundle, ok := macosutils.InBundle(exe, "Contents", "MacOS")
+	if !ok {
+		return "", false
+	}
+	parentBundle, ok := macosutils.InBundle(subBundle, "Contents", "MacOS")
+	if !ok {
+		return "", false
+	}
+	return macosutils.LocateInBundle(parentBundle, internal.LaunchAgentFileName, macosutils.IsReadable)
 }
 
 func (ServiceCommand) Install(ctx context.Context, fl any, _ []string) error {
@@ -60,17 +115,27 @@ func (ServiceCommand) Install(ctx context.Context, fl any, _ []string) error {
 		config = c
 	}
 
-	if err := installService(ctx, exe, config); err != nil {
+	lc, source, err := loadLaunchAgentConfig(ctx, fv.LaunchAgentFile)
+	if err != nil {
 		return err
 	}
-	path, _ := launchAgentPlistPath()
-	fmt.Printf("installed and loaded login service %s\n  agent:      %s\n  executable: %s\n  config:     %s\n",
-		serviceLabel, path, exe, config)
+	agent := launchAgent(lc, exe, config)
+	// The plist names log files in this directory; launchd will not start a job
+	// whose Standard*Path directory does not exist.
+	if err := os.MkdirAll(lc.LogDirOrDefault(), 0o755); err != nil {
+		return fmt.Errorf("creating log directory: %w", err)
+	}
+	if err := runSteps(ctx, agent.Install()...); err != nil {
+		return err
+	}
+	path, _ := agent.PlistPath()
+	fmt.Printf("installed and loaded login service %s\n  agent:      %s\n  executable: %s\n  config:     %s\n  service:    %s\n",
+		serviceLabel, path, exe, config, source)
 	return nil
 }
 
 func (ServiceCommand) Uninstall(ctx context.Context, _ any, _ []string) error {
-	if err := uninstallService(ctx); err != nil {
+	if err := runSteps(ctx, serviceAgent().Uninstall()...); err != nil {
 		return err
 	}
 	fmt.Printf("removed login service %s\n", serviceLabel)
@@ -78,113 +143,56 @@ func (ServiceCommand) Uninstall(ctx context.Context, _ any, _ []string) error {
 }
 
 func (ServiceCommand) Status(ctx context.Context, _ any, _ []string) error {
-	if !isServiceInstalled() {
+	agent := serviceAgent()
+	if !agent.IsInstalled() {
 		fmt.Println("login service is not installed")
 		return nil
 	}
-	cmd := exec.CommandContext(ctx, "launchctl", "print", serviceTarget())
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	_ = cmd.Run() // launchctl prints a useful message even when not loaded.
-	return nil
+	// Status succeeds whether or not launchd has the job loaded; its output,
+	// which is the point of the command, goes to stdout via the CommandRunner.
+	return runSteps(ctx, agent.Status())
 }
 
 func (ServiceCommand) Restart(ctx context.Context, _ any, _ []string) error {
-	if err := runLaunchctl(ctx, "kickstart", "-k", serviceTarget()); err != nil {
+	if err := runSteps(ctx, serviceAgent().Restart()); err != nil {
 		return err
 	}
 	fmt.Printf("restarted login service %s\n", serviceLabel)
 	return nil
 }
 
-// installService writes the LaunchAgent plist and (re)loads it via launchctl.
-func installService(ctx context.Context, exe, config string) error {
-	data, err := buildLaunchAgentPlist(exe, config)
-	if err != nil {
-		return err
-	}
-	path, err := launchAgentPlistPath()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("creating LaunchAgents directory: %w", err)
-	}
-	if err := os.MkdirAll(logDir(), 0o755); err != nil {
-		return fmt.Errorf("creating log directory: %w", err)
-	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return fmt.Errorf("writing LaunchAgent: %w", err)
-	}
-	// Reload: bootout any previously-loaded instance (ignore errors if none),
-	// then bootstrap the current one.
-	_ = runLaunchctl(ctx, "bootout", serviceTarget())
-	if err := runLaunchctl(ctx, "bootstrap", guiDomain(), path); err != nil {
-		return fmt.Errorf("loading LaunchAgent: %w", err)
-	}
-	return nil
-}
-
-// uninstallService unloads and removes the LaunchAgent.
-func uninstallService(ctx context.Context) error {
-	_ = runLaunchctl(ctx, "bootout", serviceTarget())
-	path, err := launchAgentPlistPath()
-	if err != nil {
-		return err
-	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("removing LaunchAgent: %w", err)
-	}
-	return nil
-}
-
-func isServiceInstalled() bool {
-	path, err := launchAgentPlistPath()
-	if err != nil {
-		return false
-	}
-	_, err = os.Stat(path)
-	return err == nil
-}
-
-func guiDomain() string     { return fmt.Sprintf("gui/%d", os.Getuid()) }
-func serviceTarget() string { return guiDomain() + "/" + serviceLabel }
-
-func logDir() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "Library", "Logs")
-}
-
-func launchAgentPlistPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, "Library", "LaunchAgents", serviceLabel+".plist"), nil
-}
-
-// buildLaunchAgentPlist renders the LaunchAgent plist that runs the orchestrator
-// with `run --delete-orphaned-vms` against config.
-func buildLaunchAgentPlist(exe, config string) ([]byte, error) {
-	dict := map[string]any{
-		"Label":            serviceLabel,
-		"ProgramArguments": []any{exe, "--config", config, "run", "--delete-orphaned-vms"},
-		"RunAtLoad":        true,
-		"KeepAlive":        true,
-		// launchd provides a minimal PATH; add the Homebrew locations so the
-		// orchestrator can find the tools it invokes (tart, go, docker).
-		"EnvironmentVariables": map[string]any{
-			"PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+// launchAgent describes the orchestrator's login service, as configured by the
+// launch_agent section of configFile, running exe against that same file.
+func launchAgent(lc LaunchAgentConfig, exe, configFile string) buildtools.LaunchAgent {
+	args := append([]string{exe, "--config", configFile}, lc.RunArgsOrDefault()...)
+	logDir := lc.LogDirOrDefault()
+	return buildtools.LaunchAgent{
+		Plist: buildtools.LaunchAgentPlist{
+			Label:                serviceLabel,
+			ProgramArguments:     args,
+			RunAtLoad:            lc.RunAtLoadOrDefault(),
+			KeepAlive:            lc.KeepAliveOrDefault(),
+			EnvironmentVariables: lc.EnvironmentOrDefault(),
+			StandardOutPath:      filepath.Join(logDir, serviceLabel+".out.log"),
+			StandardErrorPath:    filepath.Join(logDir, serviceLabel+".err.log"),
 		},
-		"StandardOutPath":   filepath.Join(logDir(), serviceLabel+".out.log"),
-		"StandardErrorPath": filepath.Join(logDir(), serviceLabel+".err.log"),
 	}
-	return plist.MarshalIndent(dict, plist.XMLFormat, "\t")
 }
 
-func runLaunchctl(ctx context.Context, args ...string) error {
-	out, err := exec.CommandContext(ctx, "launchctl", args...).CombinedOutput() //nolint:gosec // G204: args are internal, not user input.
-	if err != nil {
-		return fmt.Errorf("launchctl %s: %s: %w", strings.Join(args, " "), strings.TrimSpace(string(out)), err)
+// serviceAgent identifies an already-installed login service. Uninstall, status
+// and restart act on the installed job, which the Label alone locates, so they
+// need none of the configuration that describes how to run it.
+func serviceAgent() buildtools.LaunchAgent {
+	return buildtools.LaunchAgent{
+		Plist: buildtools.LaunchAgentPlist{Label: serviceLabel},
 	}
-	return nil
+}
+
+// runSteps executes steps, passing their output through to this process so
+// that launchctl's diagnostics reach the user.
+func runSteps(ctx context.Context, steps ...buildtools.Step) error {
+	cmdRunner := buildtools.NewCommandRunner(
+		buildtools.WithStdout(os.Stdout),
+		buildtools.WithStderr(os.Stderr))
+	return buildtools.NewRunner().AddSteps(steps...).Run(ctx, cmdRunner).Error()
 }

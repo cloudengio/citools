@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"syscall"
 
 	"cloudeng.io/cmdutil"
@@ -17,6 +16,7 @@ import (
 	"cloudeng.io/cmdutil/keys"
 	"cloudeng.io/cmdutil/subcmd"
 	"cloudeng.io/logging/ctxlog"
+	"cloudeng.io/os/executil"
 	"cloudeng.io/webapi/clients/github/githubcmd"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/githubclient"
 )
@@ -155,7 +155,8 @@ func verbose() bool {
 // go, docker — are found even when it is launched from a .app or by launchd,
 // which provide only a minimal PATH.
 func ensureToolPath() {
-	path := os.Getenv("PATH")
+
+	/*path := os.Getenv("PATH")
 	var prepend []string
 	for _, d := range []string{"/opt/homebrew/bin", "/usr/local/bin"} {
 		if strings.Contains(":"+path+":", ":"+d+":") {
@@ -166,12 +167,12 @@ func ensureToolPath() {
 		}
 	}
 	if len(prepend) > 0 {
-		_ = os.Setenv("PATH", strings.Join(prepend, ":")+":"+path)
-	}
+		_ = os.Setenv("PATH", strings.Join(prepend, string(os.PathListSeparator))+string(os.PathListSeparator)+path)
+	}*/
+
 }
 
 func main() {
-	ensureToolPath()
 	ctx := context.Background()
 	ctx, cancel := context.WithCancelCause(ctx)
 	cli := createCLI()
@@ -201,10 +202,15 @@ func main() {
 		if err := cfg.Validate(); err != nil {
 			return fmt.Errorf("the configuration file %q is invalid: %v\nedit that file to correct it", globalFlags.ConfigFile, err)
 		}
+
+		// Make sure the orchestrator can find the tools it needs to invoke, even when
+		// launched from a .app or by launchd, which provide only a minimal PATH.
+		os.Setenv("PATH", executil.AppendMissingPathComponents(os.Getenv("PATH"),
+			cfg.Global.SearchPaths...))
+
 		loggerConfig := cfg.Logging.WithFlagOverrides(
 			fs.FlagSet(), globalFlags.LoggingFlags)
-		opts := loggerConfig.Options()
-		logger, err := loggerConfig.NewLoggerOpts(opts)
+		logger, err := loggerConfig.NewLoggerOpts(loggerConfig.Options(), cfg.Logging.Options()...)
 		if err != nil {
 			return fmt.Errorf("error setting up logger: %v", err)
 		}

@@ -14,6 +14,8 @@ import (
 
 	"cloudeng.io/macos/buildtools"
 	"gopkg.in/yaml.v3"
+
+	"github.com/cloudengio/citools/runners/macos/orchestrator/internal"
 )
 
 // BundleConfig is the installer-specific configuration read from the file passed
@@ -38,15 +40,26 @@ type BundleConfig struct {
 	// OrchestratorConfig is the minimal orchestrator config file embedded into
 	// the bundle as the installed default. Defaults to minimal_config.yml.
 	OrchestratorConfig string `yaml:"orchestrator_config"`
+	// LaunchAgentConfig is the launchd login service configuration embedded
+	// into the bundle, which `service install` reads from there. Defaults to
+	// launch_agent.yml.
+	LaunchAgentConfig string `yaml:"launch_agent_config"`
 }
 
 // The bundle is a launcher app that wraps the orchestrator:
 //
 //	github-runner-orchestrator.app/                 (outer app, no entitlements)
 //	  Contents/MacOS/github-runner-orchestrator-launcher   <- CFBundleExecutable
-//	  Contents/Library/github-runner-orchestrator.app/     <- nested orchestrator
+//	  Contents/MacOS/github-runner-orchestrator.app/       <- nested orchestrator
 //	    Contents/MacOS/github-runner-orchestrator          <- keychain entitlement
 //	    Contents/embedded.provisionprofile
+//	  Contents/Resources/                                  <- config and service defaults
+//
+// The nested bundle must live in the outer bundle's Contents/MacOS, not
+// Contents/Library: macosutils.InBundle, which the orchestrator and launcher
+// use to find their way around, resolves a path to its enclosing bundle by way
+// of a Contents/MacOS parent pair, so a bundle placed anywhere else cannot be
+// resolved back to the app that contains it.
 //
 // The launcher (main executable) surfaces failures in a dialog and needs no
 // entitlements or provisioning profile. The orchestrator carries the
@@ -54,26 +67,26 @@ type BundleConfig struct {
 // restricted — only AMFI-authorizes for a bundle's own main executable; hence it
 // is a nested bundle with its own embedded provisioning profile.
 const (
-	defaultExecutable  = "github-runner-orchestrator"
-	launcherExecutable = "github-runner-orchestrator-launcher"
+	defaultExecutable  = internal.OrchestratorBinary
+	launcherExecutable = internal.LauncherBinary
 	launcherPackage    = "./cmd/orchestrator-launcher"
 
 	// orchestratorBundleID is the nested bundle's CFBundleIdentifier; it matches
 	// the App ID / provisioning profile carrying the keychain entitlement.
-	orchestratorBundleID = "io.cloudeng.github-runner-orchestrator"
+	orchestratorBundleID = internal.BundleID
 	// outerBundleID is the default identifier of the outer launcher app. It must
 	// differ from the nested bundle's id and needs no provisioning profile.
-	outerBundleID = "io.cloudeng.github-runner-orchestrator.app"
+	outerBundleID = internal.OuterBundleID
 	// nestedOrchestratorApp is the nested bundle path within the outer app's
 	// Contents directory.
-	nestedOrchestratorDir = "Library"
-	nestedOrchestratorApp = "github-runner-orchestrator.app"
+	nestedOrchestratorDir = "MacOS"
+	nestedOrchestratorApp = internal.NestedOrchestratorApp
 )
 
 // bundledConfigName is the fixed name the orchestrator config is stored under in
 // the bundle's Resources directory, so the app-launch code can locate it
 // regardless of the source config's filename.
-const bundledConfigName = "github_orchestrator_config.yml"
+const bundledConfigName = internal.ConfigFileName
 
 // BundleCommand builds a signed macOS .app bundle that installs the orchestrator.
 type BundleCommand struct{}
@@ -158,6 +171,9 @@ func loadBundleConfig(path string) (BundleConfig, error) {
 	if cfg.OrchestratorConfig == "" {
 		cfg.OrchestratorConfig = "minimal_config.yml"
 	}
+	if cfg.LaunchAgentConfig == "" {
+		cfg.LaunchAgentConfig = internal.LaunchAgentFileName
+	}
 	return cfg, nil
 }
 
@@ -199,6 +215,11 @@ func buildInfoPlist(user map[string]any, executable, bundleID string) (buildtool
 	}
 	var info buildtools.InfoPlist
 	if err := yaml.Unmarshal(merged, &info); err != nil {
+		return buildtools.InfoPlist{}, fmt.Errorf("building Info.plist: %w", err)
+	}
+	// Required keys are no longer checked while unmarshalling, since an
+	// InfoPlist may also describe a launchd job, so check them here.
+	if err := info.Validate(); err != nil {
 		return buildtools.InfoPlist{}, fmt.Errorf("building Info.plist: %w", err)
 	}
 	return info, nil
@@ -256,6 +277,7 @@ func buildAppBundle(ctx context.Context, cfg BundleConfig, outerInfo, innerInfo 
 		outer.WriteInfoPlist(),
 		outer.CopyExecutable(launcher),
 		outer.CopyContents(cfg.OrchestratorConfig, "Resources", bundledConfigName),
+		outer.CopyContents(cfg.LaunchAgentConfig, "Resources", internal.LaunchAgentFileName),
 	)
 
 	if cfg.Signing.Identity != "" {

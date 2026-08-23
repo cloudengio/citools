@@ -14,24 +14,31 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
-	"strings"
-	"sync"
 	"sync/atomic"
-	"syscall"
+
+	"cloudeng.io/macos/macosutils"
+	"cloudeng.io/os/executil"
+	"cloudeng.io/text/textutil"
+	"github.com/cloudengio/citools/runners/macos/orchestrator/internal"
 )
 
 const (
-	orchestratorBinary    = "github-runner-orchestrator"
-	nestedOrchestratorApp = "github-runner-orchestrator.app"
-	serviceLabel          = "io.cloudeng.github-runner-orchestrator"
-	dialogTitle           = "GitHub Runner Orchestrator"
+	// logTailBytes bounds how much of the end of the log file is read to find
+	// the lines shown in the failure dialog, and maxDialogLines how many of
+	// those lines are shown; the full log is always on disk.
+	logTailBytes   = 64 * 1024
+	maxDialogLines = 20
+
+	orchestratorBinary = internal.OrchestratorBinary
+	serviceLabel       = internal.BundleID
+	dialogTitle        = "GitHub Runner Orchestrator"
 )
 
 func main() {
@@ -45,6 +52,12 @@ func main() {
 // optionally install the login service, otherwise run the orchestrator in this
 // session surfacing any failure in a dialog.
 func runLauncher() {
+	// The launcher is entered from a cgo //export, so there is no context to
+	// inherit. A plain background context is deliberate: the orchestrator is
+	// shut down by TerminateLaunchedApp, which signals it to exit gracefully,
+	// whereas cancelling the context would have exec kill it outright.
+	ctx := context.Background()
+
 	orch, err := orchestratorPath()
 	if err != nil {
 		notify("Cannot locate the orchestrator executable:\n" + err.Error())
@@ -59,7 +72,7 @@ func runLauncher() {
 	// Seed the minimal config the first time the app is opened.
 	created := false
 	if _, err := os.Stat(cfg); errors.Is(err, os.ErrNotExist) {
-		if out, err := run(orch, "install"); err != nil {
+		if out, err := run(ctx, orch, "install"); err != nil {
 			notify("Failed to create the configuration file:\n\n" + out)
 			return
 		}
@@ -67,9 +80,9 @@ func runLauncher() {
 	}
 
 	// On first launch, offer to run the orchestrator automatically at login.
-	if created && !serviceInstalled() {
+	if created && !macosutils.IsServiceInstalled(serviceLabel) {
 		if confirm("Start the GitHub Runner Orchestrator automatically when you log in?") {
-			if out, err := run(orch, "service", "install"); err != nil {
+			if out, err := run(ctx, orch, "service", "install"); err != nil {
 				notify("Failed to install the login service:\n\n" + out)
 			} else {
 				notify("Installed. The orchestrator will start automatically when you log in.")
@@ -79,41 +92,31 @@ func runLauncher() {
 	}
 
 	// Otherwise run the orchestrator in this session, surfacing any failure.
-	runOrchestrator(orch, cfg)
+	runOrchestrator(ctx, orch, cfg)
 }
 
-// orchestratorPath returns the path to the orchestrator binary in the nested
-// bundle. The launcher lives at <app>/Contents/MacOS/<launcher>; the orchestrator
-// is the main executable of the nested bundle at
-// <app>/Contents/Library/github-runner-orchestrator.app.
+// orchestratorPath returns the path to the orchestrator binary. The launcher is
+// the main executable of the outer app, and the orchestrator is the main
+// executable of the bundle nested at <app>/Contents/MacOS/<nested>.app.
+// LocateInBundle searches the whole outer bundle, so the exact nesting is not
+// hard-coded here.
 func orchestratorPath() (string, error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return "", err
+	bundle, ok := macosutils.ProcessInBundle()
+	if !ok {
+		return "", fmt.Errorf("the launcher is not running from an app bundle")
 	}
-	macos := filepath.Dir(exe) // <app>/Contents/MacOS
-	return filepath.Join(macos, "..", "Library", nestedOrchestratorApp,
-		"Contents", "MacOS", orchestratorBinary), nil
+	path, ok := macosutils.LocateInBundle(bundle, orchestratorBinary, macosutils.IsExecutable)
+	if !ok {
+		return "", fmt.Errorf("%v not found in the app bundle %v", orchestratorBinary, bundle)
+	}
+	return path, nil
 }
 
 // configPath returns the per-user config location, matching the orchestrator's
 // own default (~/Library/Application Support/github-runner-orchestrator/...).
 func configPath() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "github-runner-orchestrator", "github_orchestrator_config.yml"), nil
-}
-
-// serviceInstalled reports whether the login service (LaunchAgent) is installed.
-func serviceInstalled() bool {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return false
-	}
-	_, err = os.Stat(filepath.Join(home, "Library", "LaunchAgents", serviceLabel+".plist"))
-	return err == nil
+	return executil.UserConfigDirPath(
+		filepath.Join(internal.ConfigDir, internal.ConfigFileName))
 }
 
 // logPath returns the file the orchestrator's output is streamed to.
@@ -123,63 +126,38 @@ func logPath() string {
 }
 
 // run executes the orchestrator with args and returns its combined output. It is
-// used for the short-lived setup subcommands (install, service install).
-func run(orch string, args ...string) (string, error) {
-	cmd := exec.Command(orch, args...) //nolint:gosec // args are internal, not user input.
-	cmd.Env = orchestratorEnv()
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+// used for the short-lived setup subcommands (install, service install), which
+// run before runOrchestrator has built its Launcher and whose output is reported
+// in a dialog rather than streamed to the log.
+func run(ctx context.Context, orch string, args ...string) (string, error) {
+	return macosutils.NewLauncher(macosutils.WithCmdEnv(orchestratorEnv)).RunApp(ctx, orch, args...)
 }
 
 // orchestratorEnv returns the environment for the orchestrator with common
-// Homebrew locations prepended to PATH, so tools it invokes (tart, go, docker)
+// Homebrew locations added to PATH, so tools it invokes (tart, go, docker)
 // are found even when the app is launched from Finder/LaunchServices, which
 // provides only a minimal PATH.
 func orchestratorEnv() []string {
-	env := os.Environ()
-	path := os.Getenv("PATH")
-	var prepend []string
-	for _, d := range []string{"/opt/homebrew/bin", "/usr/local/bin"} {
-		if !strings.Contains(":"+path+":", ":"+d+":") {
-			prepend = append(prepend, d)
-		}
-	}
-	if len(prepend) == 0 {
-		return env
-	}
-	newPath := "PATH=" + strings.Join(prepend, ":") + ":" + path
-	for i, e := range env {
-		if strings.HasPrefix(e, "PATH=") {
-			env[i] = newPath
-			return env
-		}
-	}
-	return append(env, newPath)
+	path := executil.AppendMissingPathComponents(os.Getenv("PATH"),
+		"/opt/homebrew/bin", "/usr/local/bin")
+	return executil.ReplaceEnvVar(os.Environ(), "PATH", path)
 }
 
-// The orchestrator child process, tracked so it can be terminated when the app
-// is quit from the Dock (which does not deliver a Unix signal to this process).
-var (
-	childMu  sync.Mutex
-	child    *exec.Cmd
-	quitting atomic.Bool
-)
-
-func setChild(c *exec.Cmd) {
-	childMu.Lock()
-	child = c
-	childMu.Unlock()
-}
+// orchestratorLauncher holds the Launcher running the orchestrator so that it
+// can be terminated when the app is quit from the Dock (which does not deliver a
+// Unix signal to this process). It is package level, and populated only once
+// runOrchestrator has built it, because the Cocoa delegate calls terminateChild
+// from outside the launcher's own call stack.
+var orchestratorLauncher atomic.Pointer[macosutils.Launcher]
 
 // terminateChild signals the running orchestrator to shut down. Called from the
-// app's applicationWillTerminate when the user quits.
+// app's applicationWillTerminate when the user quits. It is a no-op if the
+// orchestrator is not running: TerminateLaunchedApp reports whether it signalled
+// anything, which the Cocoa delegate has no use for, and only marks the run as
+// deliberately stopped when there was something to stop.
 func terminateChild() {
-	quitting.Store(true)
-	childMu.Lock()
-	c := child
-	childMu.Unlock()
-	if c != nil && c.Process != nil {
-		_ = c.Process.Signal(syscall.SIGTERM)
+	if l := orchestratorLauncher.Load(); l != nil {
+		l.TerminateLaunchedApp()
 	}
 }
 
@@ -187,75 +165,49 @@ func terminateChild() {
 // streaming its combined output to the log file and, if it exits with an error,
 // showing the tail of that output in a dialog. Interrupt/terminate signals are
 // forwarded so quitting the app shuts the orchestrator down cleanly.
-func runOrchestrator(orch, cfg string) {
+func runOrchestrator(ctx context.Context, orch, cfg string) {
 	lp := logPath()
-	_ = os.MkdirAll(filepath.Dir(lp), 0o755)
-	logFile, _ := os.OpenFile(lp, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644) //nolint:errcheck
-	defer func() {
-		if logFile != nil {
-			_ = logFile.Close()
-		}
-	}()
-
-	tail := &tailBuffer{max: 1500}
-	var w io.Writer = tail
-	if logFile != nil {
-		w = io.MultiWriter(logFile, tail)
-	}
-
-	cmd := exec.Command(orch, "--config", cfg, "run", "--delete-orphaned-vms") //nolint:gosec // args are internal.
-	cmd.Stdout, cmd.Stderr = w, w
-	cmd.Env = orchestratorEnv()
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-
-	if err := cmd.Start(); err != nil {
-		notify("Failed to start the orchestrator:\n" + err.Error())
+	if err := os.MkdirAll(filepath.Dir(lp), 0o755); err != nil {
+		notify("Failed to create the log directory:\n" + err.Error())
 		return
 	}
-	setChild(cmd)
-	defer setChild(nil)
-	go func() {
-		for s := range sigCh {
-			if cmd.Process != nil {
-				_ = cmd.Process.Signal(s)
-			}
-		}
-	}()
 
-	// Don't show the failure dialog if the process was stopped because the user
-	// is quitting the app.
-	if err := cmd.Wait(); err != nil && !quitting.Load() {
+	// A Launcher accepts a single LaunchApp, so this one belongs to this run and
+	// is published only for the lifetime of that run. The orchestrator writes
+	// its own log to lp, so its stdout and stderr are left alone.
+	l := macosutils.NewLauncher(
+		macosutils.WithCmdEnv(orchestratorEnv))
+	orchestratorLauncher.Store(l)
+	defer orchestratorLauncher.Store(nil)
+
+	// LaunchApp forwards interrupt/terminate signals to the orchestrator and
+	// reports success once TerminateLaunchedApp has been called, so quitting the
+	// app does not raise a failure dialog.
+	err := l.LaunchApp(ctx, orch, "--log-file", lp, "--config", cfg, "run", "--delete-orphaned-vms")
+	switch {
+	case err == nil:
+	case errors.Is(err, macosutils.ErrFailedToLaunch):
+		// Nothing ever ran, so there is no output to show.
+		notify("Failed to start the orchestrator:\n" + err.Error())
+	default:
 		notify(fmt.Sprintf(
 			"The GitHub Runner Orchestrator stopped with an error (%v).\n\n%s\n\nFull log: %s",
-			err, tail.String(), lp))
+			err, logTail(lp), lp))
 	}
 }
 
-// tailBuffer is a concurrency-safe io.Writer that retains only the last max
-// bytes written.
-type tailBuffer struct {
-	mu  sync.Mutex
-	max int
-	buf []byte
-}
-
-func (t *tailBuffer) Write(p []byte) (int, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.buf = append(t.buf, p...)
-	if len(t.buf) > t.max {
-		t.buf = t.buf[len(t.buf)-t.max:]
+// logTail returns the last maxDialogLines of the log file at path, for display
+// in the failure dialog. Only the end of the file is read: the orchestrator is
+// long running and launchd restarts it, so the log may be large. A file that
+// cannot be read yields nothing, leaving the dialog to report just the error.
+func logTail(path string) []byte {
+	buf, err := macosutils.TailBytes(path, logTailBytes)
+	if err != nil {
+		return nil
 	}
-	return len(p), nil
-}
-
-func (t *tailBuffer) String() string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return string(t.buf)
+	// Reading from an offset can start mid-line; Tail drops that partial line
+	// along with everything before the last maxDialogLines.
+	return textutil.Tail(buf, '\n', maxDialogLines)
 }
 
 // confirm shows a native two-button dialog and reports whether the affirmative
@@ -266,18 +218,11 @@ func confirm(message string) bool {
 		`display dialog %q buttons {"Not Now","Install"} default button "Install" with title %q`,
 		message, dialogTitle)
 	out, err := exec.Command("osascript", "-e", script, "-e", "button returned of result").Output() //nolint:gosec // fixed script, values quoted.
-	return err == nil && string(trimNL(out)) == "Install"
+	return err == nil && string(bytes.TrimRight(out, "\r\n")) == "Install"
 }
 
 // notify shows a native informational dialog. Failures are ignored.
 func notify(message string) {
 	script := fmt.Sprintf(`display dialog %q buttons {"OK"} default button "OK" with title %q`, message, dialogTitle)
 	_ = exec.Command("osascript", "-e", script).Run() //nolint:gosec // fixed script, values quoted.
-}
-
-func trimNL(b []byte) []byte {
-	for len(b) > 0 && (b[len(b)-1] == '\n' || b[len(b)-1] == '\r') {
-		b = b[:len(b)-1]
-	}
-	return b
 }

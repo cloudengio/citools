@@ -9,6 +9,7 @@ require (
 	cloudeng.io/file v0.0.0-20260817221234-f34e7b6f24cd
 	cloudeng.io/logging v0.0.0-20260817221234-f34e7b6f24cd
 	cloudeng.io/macos v0.0.0-20260818043831-21da4581e32a
+	cloudeng.io/os v0.0.0-20260817221234-f34e7b6f24cd
 	cloudeng.io/sync v0.0.12-0.20260804222138-e9281ed260ba
 	cloudeng.io/text v0.0.16-0.20260624171915-da98fe9dec2b
 	cloudeng.io/vms v0.0.0-20260817221234-f34e7b6f24cd
@@ -24,7 +25,6 @@ require (
 
 require (
 	cloudeng.io/io v0.0.0-20260817221234-f34e7b6f24cd // indirect
-	cloudeng.io/os v0.0.0-20260817221234-f34e7b6f24cd // indirect
 	cloudeng.io/path v0.0.10-0.20260312171538-61fcde6ce278 // indirect
 	cloudeng.io/security v0.0.0-20260817221234-f34e7b6f24cd // indirect
 	cloudeng.io/sys v0.0.0-20260817221234-f34e7b6f24cd // indirect
@@ -50,6 +50,7 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/tools v0.49.0 // indirect
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 )
 
 tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
