@@ -1,0 +1,23 @@
+# Configuration for the launchd login service written by
+# `github-runner-orchestrator service install`.
+#
+# This file ships in the app bundle's Contents/Resources, and the service
+# install command reads it from there. Every key is optional; the values shown
+# are the defaults, so an empty file installs the same service.
+
+# Start the orchestrator as soon as the service is loaded, ie. at login.
+run_at_load: true
+
+# Have launchd restart the orchestrator whenever it exits.
+keep_alive: true
+
+# launchd provides only a minimal PATH; these locations let the orchestrator
+# find the tools it invokes (tart, go, docker).
+environment_variables:
+  PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+# Directory for the service's stdout and stderr logs. A leading ~ is expanded.
+log_dir: ~/Library/Logs
+
+# Arguments the service runs the orchestrator with, after --config <config file>.
+run_args: [run, --delete-orphaned-vms]

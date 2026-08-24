@@ -16,7 +16,11 @@ import (
 )
 
 // ErrNoBackend is returned when a pool configuration selects no VM backend.
-var ErrNoBackend = errors.New("no VM backend configured (set tart_config or another backend)")
+var ErrNoBackend = errors.New("no VM backend configured (set tart_config or mock_config)")
+
+// ErrMultipleBackends is returned when a pool configuration selects more than
+// one VM backend, which would leave the choice of backend ambiguous.
+var ErrMultipleBackends = errors.New("more than one VM backend configured (set exactly one of tart_config or mock_config)")
 
 // poolError annotates err with the pool name.
 func poolError(name string, err error) error {
@@ -44,8 +48,12 @@ type Provider interface {
 // newProvider returns the Provider selected by cfg's configured backend section.
 func (cfg PoolConfig) newProvider(name string, logger *slog.Logger) (Provider, error) {
 	switch {
+	case cfg.Tart != nil && cfg.Mock != nil:
+		return nil, ErrMultipleBackends
 	case cfg.Tart != nil:
 		return newTartProvider(name, *cfg.Tart, logger), nil
+	case cfg.Mock != nil:
+		return newMockProvider(name, *cfg.Mock, logger), nil
 	default:
 		return nil, ErrNoBackend
 	}

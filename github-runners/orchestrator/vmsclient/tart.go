@@ -47,16 +47,17 @@ var _ Provider = (*tartProvider)(nil)
 
 func newTartProvider(name string, cfg TartConfig, logger *slog.Logger) *tartProvider {
 	prefix := vmNamePrefix(name, cfg.Image)
-	construct := func(ctx context.Context) (vms.Instance, error) {
+	constructor := func(ctx context.Context) (vms.Instance, error) {
 		vmName := fmt.Sprintf("%s%s-%04d", prefix, time.Now().Format("20060102-150405"), vmInstID.Add(1))
 		opts := slices.Clone(cfg.Options())
 		opts = append(opts, tartvm.WithLogger(logger), tartvm.WithObtainIPAtStart(false))
 		return tartvm.New(ctx, cfg.Image, vmName, opts...), nil
 	}
 	return &tartProvider{
-		Provider: tartvm.NewProvider(construct,
+		Provider: tartvm.NewProvider(constructor,
 			tartvm.WithNamePrefix(prefix),
-			tartvm.WithPoolName(name)),
+			tartvm.WithPoolName(name),
+			tartvm.WithProviderTartBinary(cfg.TartBinary)),
 		cfg:  cfg,
 		name: name,
 	}

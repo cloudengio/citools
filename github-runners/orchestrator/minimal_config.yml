@@ -1,0 +1,31 @@
+# Minimal, valid orchestrator configuration. This is installed by the app bundle
+# as a starting point; edit it to add your repositories and VM pools, and set the
+# webhook relay URL before running `github-runner-orchestrator run`.
+
+global:
+  tmp_dir: orchestrator
+  completion_queue_size: 100
+  successful_vm_retention_period: 30m
+  failed_vm_retention_period: 1h
+
+web_ui:
+  enabled: true
+  listen_address: 127.0.0.1:8088
+
+webhook:
+  relay_url: ""
+
+# repositories:
+#   - owner: my-org
+#     repo: my-repo
+#     runners:
+#       - name_prefix: macos
+#         labels: [self-hosted, macOS]
+#         vm_pool: macos
+
+# vm_pools:
+#   macos:
+#     size: 2
+#     tart_config:
+#       image: macos-ci
+#       runner_dir: /Users/admin/actions-runner
