@@ -32,9 +32,8 @@ type ServiceCommand struct{}
 
 type ServiceInstallFlags struct {
 	VerboseFlags
-	Executable string `subcmd:"executable,,path to the orchestrator executable; defaults to this binary"`
-	Config     string `subcmd:"config-file,,path to the config file; defaults to the per-user location"`
-
+	Executable      string `subcmd:"executable,,path to the orchestrator executable; defaults to this binary"`
+	Config          string `subcmd:"config-file,,path to the config file; defaults to the per-user location"`
 	LaunchAgentFile string `subcmd:"launch-agent-file,,'path to the launchd service configuration; defaults to the copy in the app bundle, or to built-in defaults'"`
 }
 

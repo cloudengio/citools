@@ -16,6 +16,8 @@ cloudeng.io/logging v0.0.0-20260824023931-9b6c51abac7f h1:L44EXTHwEAca0I69F/LlQs
 cloudeng.io/logging v0.0.0-20260824023931-9b6c51abac7f/go.mod h1:1srNtLRpQsIoLck/p/JmvR/QfwfPbDO/65orqtdh1N0=
 cloudeng.io/macos v0.0.0-20260824192613-2070fa507120 h1:2BVNkxMFlLHYKT+ffNjMDmjYKHDiceiQl6bLMFLePug=
 cloudeng.io/macos v0.0.0-20260824192613-2070fa507120/go.mod h1:scYt6+HDvGaCOf+2trNlEI8F8aVGVSFkqtC6j0a//mQ=
+cloudeng.io/macos v0.0.0-20260824193934-f8f67fb71448 h1:55Ra3v7lTVhx7z4W1TxgusGk/+QQbHSaL4DsOTgfDgw=
+cloudeng.io/macos v0.0.0-20260824193934-f8f67fb71448/go.mod h1:scYt6+HDvGaCOf+2trNlEI8F8aVGVSFkqtC6j0a//mQ=
 cloudeng.io/os v0.0.0-20260824023931-9b6c51abac7f h1:tF6YCXBC+Et3/5apwVCA9OUB/qhYmNSspRPEOKqsVlQ=
 cloudeng.io/os v0.0.0-20260824023931-9b6c51abac7f/go.mod h1:xxFKazMCATKYUzgE3bogyzhmLEEl5zJJr17V1XupCCU=
 cloudeng.io/path v0.0.10-0.20260312171538-61fcde6ce278 h1:REi7wHqzb//83YtX5gkhLdUzlzNuReVHyTpBeuRmJ2A=

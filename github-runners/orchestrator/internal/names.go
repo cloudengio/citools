@@ -33,7 +33,7 @@ const (
 
 	// ConfigDir is the per-user directory, within the directory reported by
 	// os.UserConfigDir, holding the configuration file and the run lock.
-	ConfigDir = OrchestratorBinary
+	ConfigDir = "io.cloudeng." + OrchestratorBinary
 
 	// ConfigFileName is the name of the configuration file, both in ConfigDir
 	// and in the bundle's Resources directory.
