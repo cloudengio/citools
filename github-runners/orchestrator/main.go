@@ -121,10 +121,11 @@ func createCLI() *subcmd.CommandSetYAML {
 
 	// The following commands need the orchestrator configuration,
 	// so they have a pre-hook that loads it and sets up the context.
-	cmdSet.Set("run").SetPreHooks(withConfigPrehook)
-	cmdSet.Set("run-job").SetPreHooks(withConfigPrehook)
-	cmdSet.Set("github").SetPreHooks(withConfigPrehook)
-	cmdSet.Set("vms").SetPreHooks(withConfigPrehook)
+	cmdSet.Set("run").SetPreHooks(configPrehook, withKeysPrehook)
+	cmdSet.Set("run-job").SetPreHooks(configPrehook, withKeysPrehook)
+	cmdSet.Set("github").SetPreHooks(configPrehook, withKeysPrehook)
+	cmdSet.Set("vms").SetPreHooks(configPrehook, withKeysPrehook)
+	cmdSet.Set("config").SetPreHooks(configPrehook)
 
 	installCmd := InstallCommand{}
 	cmdSet.Set("install").MustRunner(installCmd.Run, &InstallFlags{})
@@ -168,12 +169,9 @@ func (vf VerboseFlags) stepsVerbose() bool {
 	return vf.Verbose || verbose()
 }
 
-func withConfigPrehook(ctx context.Context) (context.Context, string, subcmd.PostHook, error) {
+func configPrehook(ctx context.Context) (context.Context, string, subcmd.PostHook, error) {
 	id := "withConfigPrehook"
 	postHook := func(ctx context.Context) (string, error) { return id, nil }
-
-	ks := keys.NewInMemoryKeyStore()
-	ctx = keys.ContextWithKeyStore(ctx, ks)
 	fs := subcmd.GlobalFlagSetFromContext(ctx)
 	if fs == nil {
 		return ctx, id, postHook, fmt.Errorf("global flagset not in context")
@@ -203,8 +201,22 @@ func withConfigPrehook(ctx context.Context) (context.Context, string, subcmd.Pos
 		}
 		return id, nil
 	}
+	return ctx, id, postHook, nil
+}
+
+func withKeysPrehook(ctx context.Context) (context.Context, string, subcmd.PostHook, error) {
+	id := "withConfigPrehook"
+	postHook := func(ctx context.Context) (string, error) { return id, nil }
+
+	ks := keys.NewInMemoryKeyStore()
+	ctx = keys.ContextWithKeyStore(ctx, ks)
+	cfg, ok := ConfigFromContext(ctx)
+	if !ok {
+		return ctx, id, postHook, fmt.Errorf("no config in context")
+	}
 
 	if len(cfg.ICloudKeychain.Items) > 0 {
+		var err error
 		ctx, err = loadKeychain(ctx, cfg.ICloudKeychain)
 		if err != nil {
 			return ctx, id, postHook, fmt.Errorf("error loading keychain: %v", err)

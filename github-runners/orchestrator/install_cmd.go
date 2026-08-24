@@ -79,11 +79,14 @@ func installMinimalConfigIfMissing() (path string, created bool, err error) {
 	if err != nil {
 		return "", false, err
 	}
-	if _, err := os.Stat(out); os.IsNotExist(err) {
-		if err := writeMinimalConfig(out); err != nil {
-			return "", false, err
+	if _, err := os.Stat(out); err != nil {
+		if os.IsNotExist(err) {
+			if err := writeMinimalConfig(out); err != nil {
+				return "", false, err
+			}
+			return out, true, nil
 		}
-		return out, true, nil
+		return "", false, err
 	}
 	return out, false, nil
 }

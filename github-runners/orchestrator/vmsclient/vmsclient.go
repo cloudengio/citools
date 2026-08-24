@@ -21,29 +21,41 @@ import (
 type PoolConfig struct {
 	vmspool.Config `yaml:",inline"`
 	Tart           *TartConfig `yaml:"tart_config" doc:"configure and select the tart VM backend for this pool"`
+	Mock           *MockConfig `yaml:"mock_config" doc:"configure and select the mock VM backend for this pool, for exercising the orchestrator without any VM technology installed"`
 }
 
 // RunnerDir returns the guest directory in which the GitHub runner is installed
 // for this pool's backend, or "" if no backend is configured.
 func (cfg PoolConfig) RunnerDir() string {
-	if cfg.Tart != nil {
+	switch {
+	case cfg.Tart != nil:
 		return cfg.Tart.RunnerDir
+	case cfg.Mock != nil:
+		return cfg.Mock.RunnerDir
 	}
 	return ""
 }
 
-// Validate ensures a VM backend is configured for the pool.
+// Validate ensures that exactly one VM backend is configured for the pool and
+// that its required settings are present.
 func (cfg PoolConfig) Validate() error {
-	if cfg.Tart == nil {
-		return ErrNoBackend
+	switch {
+	case cfg.Tart != nil && cfg.Mock != nil:
+		return ErrMultipleBackends
+	case cfg.Tart != nil:
+		if cfg.Tart.Image == "" {
+			return fmt.Errorf("tart_config.image is required")
+		}
+		if cfg.Tart.RunnerDir == "" {
+			return fmt.Errorf("tart_config.runner_dir is required")
+		}
+		return nil
+	case cfg.Mock != nil:
+		// A mock pool needs nothing: its image and runner directory are
+		// reported but never used.
+		return nil
 	}
-	if cfg.Tart.Image == "" {
-		return fmt.Errorf("tart_config.image is required")
-	}
-	if cfg.Tart.RunnerDir == "" {
-		return fmt.Errorf("tart_config.runner_dir is required")
-	}
-	return nil
+	return ErrNoBackend
 }
 
 type Pool struct {

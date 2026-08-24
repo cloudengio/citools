@@ -157,8 +157,12 @@ func (q *CompletionQueue[T]) closeCQ(ctx context.Context, msg string, cq *patter
 			q.releaseVM(ctx, msg, e, &errs)
 			// Deleting a VM takes time, so the timeout bounds the wait for each
 			// event rather than the drain as a whole.
+			// Safely drain timer channel if it already fired to avoid blocking on reset.
 			if !timer.Stop() {
-				<-timer.C
+				select {
+				case <-timer.C:
+				default:
+				}
 			}
 			timer.Reset(drainTimeout)
 		case <-q.ctx.Done():

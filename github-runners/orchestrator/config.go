@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,7 +96,10 @@ func (lc LaunchAgentConfig) EnvironmentOrDefault() map[string]string {
 // expanding a leading ~. Neither the config parser nor launchd expands it, and a
 // hand-edited config will naturally use one.
 func (lc LaunchAgentConfig) LogDirOrDefault() string {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = os.TempDir()
+	}
 	switch {
 	case lc.LogDir == "":
 		return filepath.Join(home, "Library", "Logs")
@@ -132,6 +136,11 @@ type GlobalConfig struct {
 }
 
 func (cfg Config) Validate() error {
+	if cfg.WebUI.Enabled && cfg.WebUI.ListenAddress != "" {
+		if err := validateListenAddress(cfg.WebUI.ListenAddress); err != nil {
+			return err
+		}
+	}
 	for _, repo := range cfg.Repositories {
 		if err := repo.Validate(); err != nil {
 			return err
@@ -144,6 +153,42 @@ func (cfg Config) Validate() error {
 		if err := pool.Validate(); err != nil {
 			return fmt.Errorf("vm_pool %s: %w", k, err)
 		}
+	}
+	return nil
+}
+
+// validateListenAddress ensures that the address or DNS name resolves to 127.0.0.1.
+func validateListenAddress(addr string) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	if host == "" {
+		return fmt.Errorf("web UI listen address %q must specify a host that resolves to 127.0.0.1", addr)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if !ip.Equal(net.IPv4(127, 0, 0, 1)) {
+			return fmt.Errorf("web UI listen address %q must resolve to 127.0.0.1, got %v", addr, ip)
+		}
+		return nil
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("resolving web UI listen address %q: %w", addr, err)
+	}
+	if len(ips) == 0 {
+		return fmt.Errorf("web UI listen address %q resolved to no IP addresses", addr)
+	}
+	has127 := false
+	for _, ip := range ips {
+		if ip.Equal(net.IPv4(127, 0, 0, 1)) || (ip.To4() != nil && ip.To4().Equal(net.IPv4(127, 0, 0, 1))) {
+			has127 = true
+		} else if !ip.IsLoopback() {
+			return fmt.Errorf("web UI listen address %q resolves to non-loopback IP %v", addr, ip)
+		}
+	}
+	if !has127 {
+		return fmt.Errorf("web UI listen address %q does not resolve to 127.0.0.1 (resolved to %v)", addr, ips)
 	}
 	return nil
 }

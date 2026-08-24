@@ -19,11 +19,13 @@ require (
 	github.com/getkin/kin-openapi v0.146.0
 	github.com/google/go-github/v89 v89.0.0
 	github.com/oapi-codegen/runtime v1.7.0
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1
 	howett.net/plist v1.0.1
 )
 
 require (
+	cloudeng.io/cicd v0.0.0-20260806150854-f21c21e021b8 // indirect
 	cloudeng.io/io v0.0.0-20260817221234-f34e7b6f24cd // indirect
 	cloudeng.io/path v0.0.10-0.20260312171538-61fcde6ce278 // indirect
 	cloudeng.io/security v0.0.0-20260817221234-f34e7b6f24cd // indirect
@@ -50,7 +52,6 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/tools v0.49.0 // indirect
-	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 )
 
 tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
