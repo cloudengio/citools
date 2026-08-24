@@ -101,6 +101,11 @@ func (r RunCommand) Run(ctx context.Context, fl any, _ []string) error {
 		return fmt.Errorf("no config in context")
 	}
 
+	repoClients, ok := RepoClientsFromContext(ctx)
+	if !ok {
+		return fmt.Errorf("no repo clients in context")
+	}
+
 	// Ensure only one orchestrator runs at a time, so re-opening the app or a
 	// stray/orphaned process can't stack multiple instances. The lock is held for
 	// the lifetime of this run and released automatically when the process exits.
@@ -175,6 +180,10 @@ func (r RunCommand) RunJob(ctx context.Context, flags any, _ []string) error {
 	cfg, ok := ConfigFromContext(ctx)
 	if !ok {
 		return fmt.Errorf("no config in context")
+	}
+	repoClients, ok := RepoClientsFromContext(ctx)
+	if !ok {
+		return fmt.Errorf("no repo clients in context")
 	}
 	if cmdutil.IsExplicitlySet(subcmd.FlagSetFromContext(ctx).FlagSet(), "delete-acquired-on-close") {
 		cfg = reconfigureVMPools(cfg, fv.DeleteAcquiredOnClose)

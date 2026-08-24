@@ -13,7 +13,6 @@ import (
 
 	"cloudeng.io/cmdutil"
 	"cloudeng.io/cmdutil/cmdyaml"
-	"cloudeng.io/cmdutil/keys"
 	"cloudeng.io/cmdutil/subcmd"
 	"cloudeng.io/logging/ctxlog"
 	"cloudeng.io/webapi/clients/github/githubcmd"
@@ -121,9 +120,9 @@ func createCLI() *subcmd.CommandSetYAML {
 
 	// The following commands need the orchestrator configuration,
 	// so they have a pre-hook that loads it and sets up the context.
-	cmdSet.Set("run").MustSetPreHooks(configPrehook, withKeysPrehook)
-	cmdSet.Set("run-job").MustSetPreHooks(configPrehook, withKeysPrehook)
-	cmdSet.Set("github").MustSetPreHooks(configPrehook, withKeysPrehook)
+	cmdSet.Set("run").MustSetPreHooks(configPrehook, withKeysPrehook, repoClientsPrehook)
+	cmdSet.Set("run-job").MustSetPreHooks(configPrehook, withKeysPrehook, repoClientsPrehook)
+	cmdSet.Set("github").MustSetPreHooks(configPrehook, withKeysPrehook, repoClientsPrehook)
 	cmdSet.Set("vms").MustSetPreHooks(configPrehook, withKeysPrehook)
 	cmdSet.Set("config").MustSetPreHooks(configPrehook)
 
@@ -150,7 +149,6 @@ func createCLI() *subcmd.CommandSetYAML {
 }
 
 var globalFlags GlobalFlags
-var repoClients *githubclient.RepoClients
 
 func verbose() bool {
 	return globalFlags.Verbose
@@ -204,29 +202,18 @@ func configPrehook(ctx context.Context) (context.Context, string, subcmd.PostHoo
 	return ctx, id, postHook, nil
 }
 
-func withKeysPrehook(ctx context.Context) (context.Context, string, subcmd.PostHook, error) {
-	id := "withConfigPrehook"
+func repoClientsPrehook(ctx context.Context) (context.Context, string, subcmd.PostHook, error) {
+	id := "withRepoClientsPrehook"
 	postHook := func(ctx context.Context) (string, error) { return id, nil }
-
-	ks := keys.NewInMemoryKeyStore()
-	ctx = keys.ContextWithKeyStore(ctx, ks)
 	cfg, ok := ConfigFromContext(ctx)
 	if !ok {
 		return ctx, id, postHook, fmt.Errorf("no config in context")
-	}
-
-	if len(cfg.ICloudKeychain.Items) > 0 {
-		var err error
-		ctx, err = loadKeychain(ctx, cfg.ICloudKeychain)
-		if err != nil {
-			return ctx, id, postHook, fmt.Errorf("error loading keychain: %v", err)
-		}
 	}
 	rc, err := createRepoClients(cfg)
 	if err != nil {
 		return ctx, id, postHook, fmt.Errorf("error creating GitHub clients: %v", err)
 	}
-	repoClients = rc
+	ctx = ContextWithRepoClients(ctx, rc)
 	return ctx, id, postHook, nil
 }
 
@@ -247,31 +234,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-}
-
-func loadKeychain(ctx context.Context, cfg ICloudKeychainConfig) (context.Context, error) {
-	ims, ok := keys.KeyStoreFromContext(ctx)
-	if !ok {
-		return ctx, fmt.Errorf("no keystore in context")
-	}
-	fs, err := cfg.FS(false)
-	if err != nil {
-		return ctx, fmt.Errorf("error creating keychain filesystem: %v", err)
-	}
-	for _, item := range cfg.Items {
-		if err := ims.ReadYAML(ctx, fs, item); err != nil {
-			return ctx, fmt.Errorf("error reading keychain item %q: %v", item, err)
-		}
-		if verbose() {
-			ctxlog.Info(ctx, "loaded keychain item", "item", item, "total items", ims.Len())
-		}
-	}
-	if verbose() {
-		for _, key := range ims.KeySpecs() {
-			ctxlog.Info(ctx, "keychain item", "user", key.User, "id", key.ID)
-		}
-	}
-	return ctx, nil
 }
 
 func createRepoClients(cfg Config) (*githubclient.RepoClients, error) {

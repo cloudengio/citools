@@ -12,7 +12,6 @@ import (
 	"cloudeng.io/cmdutil"
 	"cloudeng.io/cmdutil/cmdyaml"
 	"cloudeng.io/file/crawl/crawlcmd"
-	macoskeychain "cloudeng.io/macos/keychain/plugin"
 	"cloudeng.io/webapi/operations"
 	"cloudeng.io/webapp/webassets"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/githubclient"
@@ -205,11 +204,6 @@ func (cfg Config) validateVMPoolNames() error {
 	return nil
 }
 
-type ICloudKeychainConfig struct {
-	macoskeychain.Config `yaml:",inline"`
-	Items                []string `yaml:"items" doc:"list of keychain item names to use for API keys (the value of the keychain items should be in cloudeng.io/cmdutil/keys.Info format)"`
-}
-
 type contextConfigKey struct{}
 
 func ContextWithConfig(ctx context.Context, cfg Config) context.Context {
@@ -234,4 +228,15 @@ func (wc WebhookConfig) Options() ([]operations.Option, error) {
 	}
 	opts = append(opts, operations.WithRateController(rc, wc.RateControl.ExponentialBackoff.StatusCodes...))
 	return opts, nil
+}
+
+type repoClientsKey struct{}
+
+func ContextWithRepoClients(ctx context.Context, rc *githubclient.RepoClients) context.Context {
+	return context.WithValue(ctx, repoClientsKey{}, rc)
+}
+
+func RepoClientsFromContext(ctx context.Context) (*githubclient.RepoClients, bool) {
+	rc, ok := ctx.Value(repoClientsKey{}).(*githubclient.RepoClients)
+	return rc, ok
 }
