@@ -121,11 +121,11 @@ func createCLI() *subcmd.CommandSetYAML {
 
 	// The following commands need the orchestrator configuration,
 	// so they have a pre-hook that loads it and sets up the context.
-	cmdSet.Set("run").SetPreHooks(configPrehook, withKeysPrehook)
-	cmdSet.Set("run-job").SetPreHooks(configPrehook, withKeysPrehook)
-	cmdSet.Set("github").SetPreHooks(configPrehook, withKeysPrehook)
-	cmdSet.Set("vms").SetPreHooks(configPrehook, withKeysPrehook)
-	cmdSet.Set("config").SetPreHooks(configPrehook)
+	cmdSet.Set("run").MustSetPreHooks(configPrehook, withKeysPrehook)
+	cmdSet.Set("run-job").MustSetPreHooks(configPrehook, withKeysPrehook)
+	cmdSet.Set("github").MustSetPreHooks(configPrehook, withKeysPrehook)
+	cmdSet.Set("vms").MustSetPreHooks(configPrehook, withKeysPrehook)
+	cmdSet.Set("config").MustSetPreHooks(configPrehook)
 
 	installCmd := InstallCommand{}
 	cmdSet.Set("install").MustRunner(installCmd.Run, &InstallFlags{})

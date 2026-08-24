@@ -28,6 +28,14 @@ func newManager(t *testing.T) *internal.LogFileManager {
 	return lm
 }
 
+// closeFile closes f, reporting a failure that would otherwise go unnoticed.
+func closeFile(t *testing.T, f *os.File) {
+	t.Helper()
+	if err := f.Close(); err != nil {
+		t.Errorf("closing %v: %v", f.Name(), err)
+	}
+}
+
 func TestLogFileManager(t *testing.T) {
 	lm := newManager(t)
 
@@ -67,8 +75,8 @@ func TestCreateTempFilesForJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTempFilesForJob: %v", err)
 	}
-	defer logFile.Close()
-	defer diagFile.Close()
+	defer closeFile(t, logFile)
+	defer closeFile(t, diagFile)
 
 	if logFile.Name() == diagFile.Name() {
 		t.Fatal("the job and diagnostic logs are the same file")
@@ -104,8 +112,8 @@ func TestCreateTempFilesForJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTempFilesForJob: %v", err)
 	}
-	defer logFile2.Close()
-	defer diagFile2.Close()
+	defer closeFile(t, logFile2)
+	defer closeFile(t, diagFile2)
 	if logFile2.Name() == logFile.Name() || diagFile2.Name() == diagFile.Name() {
 		t.Error("a second job reused the first job's files")
 	}
@@ -116,7 +124,7 @@ func TestCreateTempFilesForJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTempFilesForJob: %v", err)
 	}
-	defer again.Close()
+	defer closeFile(t, again)
 	if again.Name() == logFile.Name() {
 		t.Error("re-using a runner name reused its log file")
 	}
@@ -129,7 +137,7 @@ func TestCreateTemp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTemp: %v", err)
 	}
-	defer f.Close()
+	defer closeFile(t, f)
 	base := filepath.Base(f.Name())
 	if !strings.HasPrefix(base, "runner-step-") || !strings.HasSuffix(base, ".log") {
 		t.Errorf("CreateTemp produced %q, want runner-step-*.log", base)
