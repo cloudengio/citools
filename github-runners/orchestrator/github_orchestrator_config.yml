@@ -11,6 +11,9 @@ web_ui:
 
 global:
   tmp_dir: "github-orchestrator-*"
+  search_paths:
+    - /opt/homebrew/bin
+    - /usr/local/bin
   completion_queue_size: 1000
   failed_vm_retention_period: 1h
   successful_vm_retention_period: 15m
@@ -23,6 +26,7 @@ vm_pools:
       os: macos
       runner_dir: /Users/admin/actions-runner
       image: macos-ci
+      binary: /opt/homebrew/bin/tart
 
   linux:
     size: 2
@@ -31,7 +35,8 @@ vm_pools:
       os: linux
       runner_dir: "/home/admin/actions-runner"
       image: linux-ci
-      run_options: ["--no-graphics", "--no-audio", "--nested"] # for docker.
+      run_options: ["--no-graphics", "--no-audio", "--nested"]
+      binary: /opt/homebrew/bin/tart
 
 icloud_keychain:
   keychain_type: all
@@ -73,6 +78,8 @@ repositories:
   - repo: "go.webapi"
     <<: *cloudeng_repos
   - repo: "go.macos"
+    <<: *cloudeng_repos
+  - repo: "citools"
     <<: *cloudeng_repos
   - owner: "onyourbehalf"
     repo: "core"

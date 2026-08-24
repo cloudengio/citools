@@ -15,3 +15,20 @@
 # vendor/
 
 .gograph/
+
+govulnchecker/.govulnchecker.yaml
+govulnchecker/govulnchecker
+multimod/multimod
+waitforfiles/waitforfiles
+citools.code-workspace
+code_review.md
+go.work
+go.work.sum
+github-runners/orchestrator/cmd/orchestrator-launcher/orchestrator-launcher
+github-runners/orchestrator/orchestrator
+github-runners/orchestrator/orchestrator-launcher
+astest/astest
+chrome-for-testing/chrome-for-testing
+github-runners/linux/runner-env
+github-runners/macos/runner-env
+github-runners/orchestrator/build/

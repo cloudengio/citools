@@ -267,8 +267,15 @@ type RerunJobFlags struct {
 // here as requested rather than as started.
 func (g GitHubCommand) RerunJob(ctx context.Context, flags any, jobIDArgs []string) error {
 	fv := flags.(*RerunJobFlags)
+	rc, ok := RepoClientsFromContext(ctx)
+	if !ok {
+		return fmt.Errorf("no repo clients in context")
+	}
+	if len(jobIDArgs) == 0 {
+		return fmt.Errorf("at least one job ID is required")
+	}
 	return requestForEachID(ctx, fv.GitHubFlags, "job", "rerun", jobIDArgs,
-		repoClients.RerunWorkflowJobFullName)
+		rc.RerunWorkflowJobFullName)
 }
 
 type CancelRunFlags struct {
@@ -281,8 +288,12 @@ type CancelRunFlags struct {
 // with 409 Conflict if the run has already completed.
 func (g GitHubCommand) CancelRun(ctx context.Context, flags any, runIDArgs []string) error {
 	fv := flags.(*CancelRunFlags)
+	rc, ok := RepoClientsFromContext(ctx)
+	if !ok {
+		return fmt.Errorf("no repo clients in context")
+	}
 	return requestForEachID(ctx, fv.GitHubFlags, "run", "cancel", runIDArgs,
-		repoClients.CancelWorkflowRunFullName)
+		rc.CancelWorkflowRunFullName)
 }
 
 type CreateRegistrationTokenFlags struct {
@@ -291,7 +302,11 @@ type CreateRegistrationTokenFlags struct {
 
 func (g GitHubCommand) CreateRegistrationToken(ctx context.Context, flags any, _ []string) error {
 	fv := flags.(*CreateRegistrationTokenFlags)
-	gc, ok := repoClients.GetClient(fv.Owner, fv.Repo)
+	rc, ok := RepoClientsFromContext(ctx)
+	if !ok {
+		return fmt.Errorf("no repo clients in context")
+	}
+	gc, ok := rc.GetClient(fv.Owner, fv.Repo)
 	if !ok {
 		return fmt.Errorf("no GitHub client found for %s/%s", fv.Owner, fv.Repo)
 	}

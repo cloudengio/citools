@@ -3,25 +3,119 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"cloudeng.io/cmdutil"
+	"cloudeng.io/cmdutil/cmdyaml"
 	"cloudeng.io/file/crawl/crawlcmd"
-	macoskeychain "cloudeng.io/macos/keychain/plugin"
 	"cloudeng.io/webapi/operations"
 	"cloudeng.io/webapp/webassets"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/githubclient"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/vmsclient"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+type LoggingConfig struct {
+	cmdutil.LoggingConfig `yaml:",inline"`
+	MaxSize               cmdyaml.ByteSize `yaml:"max_size" doc:"maximum size of a log file before it is rotated; defaults to 10MB"`
+	MaxBackups            int              `yaml:"max_backups" doc:"maximum number of rotated log files to retain; defaults to 5"`
+}
+
+func (lc LoggingConfig) Options() []cmdutil.LoggingOption {
+	if lc.File == "" || lc.File == "-" {
+		return nil
+	}
+	if lc.MaxSize == 0 {
+		lc.MaxSize = 10 * cmdyaml.MB
+	}
+	if lc.MaxBackups == 0 {
+		lc.MaxBackups = 5
+	}
+	logger := lumberjack.Logger{
+		Filename:   lc.File,
+		MaxSize:    int(lc.MaxSize / cmdyaml.MB),
+		MaxBackups: lc.MaxBackups,
+		LocalTime:  true,
+	}
+	return []cmdutil.LoggingOption{cmdutil.WithWriteCloser(&logger)}
+}
+
 type Config struct {
-	Logging        cmdutil.LoggingConfig           `yaml:"logging" doc:"logging configuration options"`
+	Logging        LoggingConfig                   `yaml:"logging" doc:"logging configuration"`
 	Global         GlobalConfig                    `yaml:"global" doc:"global configuration options"`
 	Repositories   []githubclient.RepositoryConfig `yaml:"repositories" doc:"list of GitHub repositories to manage runners for"`
 	ICloudKeychain ICloudKeychainConfig            `yaml:"icloud_keychain" doc:"icloud keychain configuration for loading API keys"`
 	VMPools        map[string]vmsclient.PoolConfig `yaml:"vm_pools" doc:"configuration for VM pools to use for runner provisioning"`
 	Webhook        WebhookConfig                   `yaml:"webhook" doc:"configuration for the GitHub webhook relay service"`
 	WebUI          WebUIConfig                     `yaml:"web_ui" doc:"configuration for the management web UI and JSON API"`
+}
+
+// LaunchAgentConfig configures the launchd job that the service install command
+// writes to run the orchestrator at login. It is read from its own file, which
+// ships in the app bundle's Resources directory, rather than from the
+// orchestrator configuration, so that the service can be installed before any
+// orchestrator configuration exists. Every field is optional; the accessors
+// below supply the defaults for those left unset.
+type LaunchAgentConfig struct {
+	RunAtLoad            *bool             `yaml:"run_at_load" doc:"start the orchestrator as soon as the service is loaded, ie. at login. Defaults to true."`
+	KeepAlive            *bool             `yaml:"keep_alive" doc:"have launchd restart the orchestrator whenever it exits. Defaults to true."`
+	EnvironmentVariables map[string]string `yaml:"environment_variables" doc:"environment variables for the orchestrator. Defaults to a PATH that includes the Homebrew locations, since launchd provides only a minimal one and the orchestrator invokes tart, go and docker."`
+	LogDir               string            `yaml:"log_dir" doc:"directory for the service's stdout and stderr log files. Defaults to ~/Library/Logs."`
+	RunArgs              []string          `yaml:"run_args" doc:"arguments the service runs the orchestrator with. Defaults to run --delete-orphaned-vms."`
+}
+
+// DefaultServicePath is the PATH given to the orchestrator when it is run by
+// launchd, which otherwise provides too minimal a one to find Homebrew tools.
+const DefaultServicePath = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+// RunAtLoadOrDefault reports whether the service should start at login.
+func (lc LaunchAgentConfig) RunAtLoadOrDefault() bool {
+	return lc.RunAtLoad == nil || *lc.RunAtLoad
+}
+
+// KeepAliveOrDefault reports whether launchd should restart the orchestrator
+// when it exits.
+func (lc LaunchAgentConfig) KeepAliveOrDefault() bool {
+	return lc.KeepAlive == nil || *lc.KeepAlive
+}
+
+// EnvironmentOrDefault returns the environment for the service.
+func (lc LaunchAgentConfig) EnvironmentOrDefault() map[string]string {
+	if len(lc.EnvironmentVariables) > 0 {
+		return lc.EnvironmentVariables
+	}
+	return map[string]string{"PATH": DefaultServicePath}
+}
+
+// LogDirOrDefault returns the directory the service's log files are written to,
+// expanding a leading ~. Neither the config parser nor launchd expands it, and a
+// hand-edited config will naturally use one.
+func (lc LaunchAgentConfig) LogDirOrDefault() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = os.TempDir()
+	}
+	switch {
+	case lc.LogDir == "":
+		return filepath.Join(home, "Library", "Logs")
+	case lc.LogDir == "~":
+		return home
+	case strings.HasPrefix(lc.LogDir, "~/"):
+		return filepath.Join(home, lc.LogDir[2:])
+	}
+	return lc.LogDir
+}
+
+// RunArgsOrDefault returns the arguments the service runs the orchestrator with.
+func (lc LaunchAgentConfig) RunArgsOrDefault() []string {
+	if len(lc.RunArgs) > 0 {
+		return lc.RunArgs
+	}
+	return []string{"run", "--delete-orphaned-vms"}
 }
 
 // WebUIConfig configures the management web UI and its OpenAPI-specified JSON
@@ -34,12 +128,18 @@ type WebUIConfig struct {
 
 type GlobalConfig struct {
 	TmpDir                      string        `yaml:"tmp_dir" doc:"directory in which to create temporary files and directories"`
+	SearchPaths                 []string      `yaml:"search_paths" doc:"list of paths to search for required tools (e.g. tart etc.)"`
 	CompletionQueueSize         int           `yaml:"completion_queue_size" doc:"maximum number of completion events to retain in memory"`
 	FailedVMRetentionPeriod     time.Duration `yaml:"failed_vm_retention_period" doc:"duration for which failed VMs should be retained before being deleted"`
 	SuccessfulVMRetentionPeriod time.Duration `yaml:"successful_vm_retention_period" doc:"duration for which successful VMs should be retained before being deleted"`
 }
 
 func (cfg Config) Validate() error {
+	if cfg.WebUI.Enabled && cfg.WebUI.ListenAddress != "" {
+		if err := validateListenAddress(cfg.WebUI.ListenAddress); err != nil {
+			return err
+		}
+	}
 	for _, repo := range cfg.Repositories {
 		if err := repo.Validate(); err != nil {
 			return err
@@ -56,6 +156,42 @@ func (cfg Config) Validate() error {
 	return nil
 }
 
+// validateListenAddress ensures that the address or DNS name resolves to 127.0.0.1.
+func validateListenAddress(addr string) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	if host == "" {
+		return fmt.Errorf("web UI listen address %q must specify a host that resolves to 127.0.0.1", addr)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if !ip.Equal(net.IPv4(127, 0, 0, 1)) {
+			return fmt.Errorf("web UI listen address %q must resolve to 127.0.0.1, got %v", addr, ip)
+		}
+		return nil
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("resolving web UI listen address %q: %w", addr, err)
+	}
+	if len(ips) == 0 {
+		return fmt.Errorf("web UI listen address %q resolved to no IP addresses", addr)
+	}
+	has127 := false
+	for _, ip := range ips {
+		if ip.Equal(net.IPv4(127, 0, 0, 1)) || (ip.To4() != nil && ip.To4().Equal(net.IPv4(127, 0, 0, 1))) {
+			has127 = true
+		} else if !ip.IsLoopback() {
+			return fmt.Errorf("web UI listen address %q resolves to non-loopback IP %v", addr, ip)
+		}
+	}
+	if !has127 {
+		return fmt.Errorf("web UI listen address %q does not resolve to 127.0.0.1 (resolved to %v)", addr, ips)
+	}
+	return nil
+}
+
 func (cfg Config) validateVMPoolNames() error {
 	for _, repo := range cfg.Repositories {
 		for _, runner := range repo.Runners {
@@ -66,11 +202,6 @@ func (cfg Config) validateVMPoolNames() error {
 		}
 	}
 	return nil
-}
-
-type ICloudKeychainConfig struct {
-	macoskeychain.Config `yaml:",inline"`
-	Items                []string `yaml:"items" doc:"list of keychain item names to use for API keys (the value of the keychain items should be in cloudeng.io/cmdutil/keys.Info format)"`
 }
 
 type contextConfigKey struct{}
@@ -97,4 +228,15 @@ func (wc WebhookConfig) Options() ([]operations.Option, error) {
 	}
 	opts = append(opts, operations.WithRateController(rc, wc.RateControl.ExponentialBackoff.StatusCodes...))
 	return opts, nil
+}
+
+type repoClientsKey struct{}
+
+func ContextWithRepoClients(ctx context.Context, rc *githubclient.RepoClients) context.Context {
+	return context.WithValue(ctx, repoClientsKey{}, rc)
+}
+
+func RepoClientsFromContext(ctx context.Context) (*githubclient.RepoClients, bool) {
+	rc, ok := ctx.Value(repoClientsKey{}).(*githubclient.RepoClients)
+	return rc, ok
 }

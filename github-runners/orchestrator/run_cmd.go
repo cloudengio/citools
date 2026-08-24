@@ -100,12 +100,27 @@ func (r RunCommand) Run(ctx context.Context, fl any, _ []string) error {
 	if !ok {
 		return fmt.Errorf("no config in context")
 	}
+
+	repoClients, ok := RepoClientsFromContext(ctx)
+	if !ok {
+		return fmt.Errorf("no repo clients in context")
+	}
+
+	// Ensure only one orchestrator runs at a time, so re-opening the app or a
+	// stray/orphaned process can't stack multiple instances. The lock is held for
+	// the lifetime of this run and released automatically when the process exits.
+	unlockRun, err := acquireRunLock()
+	if err != nil {
+		return err
+	}
+	defer unlockRun()
+
 	if cmdutil.IsExplicitlySet(subcmd.FlagSetFromContext(ctx).FlagSet(), "delete-acquired-on-close") {
 		cfg = reconfigureVMPools(cfg, fv.DeleteAcquiredOnClose)
 	}
 
 	if cfg.Webhook.RelayURL == "" {
-		return fmt.Errorf("no relay URL configured")
+		return fmt.Errorf("no webhook relay URL is configured: set webhook.relay_url in the configuration file %q", globalFlags.ConfigFile)
 	}
 
 	opts, err := cfg.Webhook.Options()
@@ -165,6 +180,10 @@ func (r RunCommand) RunJob(ctx context.Context, flags any, _ []string) error {
 	cfg, ok := ConfigFromContext(ctx)
 	if !ok {
 		return fmt.Errorf("no config in context")
+	}
+	repoClients, ok := RepoClientsFromContext(ctx)
+	if !ok {
+		return fmt.Errorf("no repo clients in context")
 	}
 	if cmdutil.IsExplicitlySet(subcmd.FlagSetFromContext(ctx).FlagSet(), "delete-acquired-on-close") {
 		cfg = reconfigureVMPools(cfg, fv.DeleteAcquiredOnClose)

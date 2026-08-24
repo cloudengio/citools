@@ -1,0 +1,82 @@
+# installer.yaml — configuration for `orchestrator bundle`, which builds a macOS
+# .app bundle that installs the orchestrator.
+#
+# This file holds the external / developer-supplied values (bundle identity,
+# signing, provisioning) and points at the default orchestrator config to embed.
+
+bundle: build/github-runner-orchestrator.app
+
+# info_plist applies to the OUTER launcher app. Its identifier must differ from
+# the nested orchestrator bundle's (io.cloudeng.github-runner-orchestrator); the
+# outer app carries no entitlements and needs no provisioning profile.
+info_plist:
+  CFBundleIdentifier: io.cloudeng.github-runner-orchestrator.app
+  CFBundleName: github-runner-orchestrator
+  CFBundleDisplayName: GitHub Runner Orchestrator
+
+# Code signing. Set the two environment variables below before running
+# `orchestrator bundle`; they are expanded here so the identity/team ID need not
+# be committed:
+#
+#   export ORCHESTRATOR_SIGNING_IDENTITY="Developer ID Application: You (TEAMID)"
+#   export ORCHESTRATOR_DEVID=TEAMID
+#
+# If ORCHESTRATOR_SIGNING_IDENTITY is empty the bundle is left unsigned (fine for
+# local testing, not for distribution).
+signing:
+  identity: ${ORCHESTRATOR_SIGNING_IDENTITY}
+  # These entitlements are applied to the NESTED orchestrator bundle (the outer
+  # launcher app is signed with no entitlements). They grant access to the
+  # (data-protection / iCloud) keychain items the orchestrator manages.
+  #
+  # IMPORTANT: keychain-access-groups is a *provisioning-profile-restricted*
+  # entitlement. AMFI only authorizes it for a bundle's own main executable, and
+  # only when an embedded provisioning profile is present — hence the orchestrator
+  # is shipped as a nested bundle with the provisioning_profile below. Without it
+  # the process is SIGKILLed on launch ("load code signature error / Unsatisfied
+  # Entitlements").
+  entitlements:
+    keychain-access-groups:
+      # The orchestrator's own group; its default for items it writes.
+      - ${ORCHESTRATOR_DEVID}.io.cloudeng.github-runner-orchestrator
+      # The team-wide group used by the macos-keychain-plugin, so the orchestrator
+      # can read items written by the plugin. Authorized by the provisioning
+      # profile's keychain-access-groups (${ORCHESTRATOR_DEVID}.*).
+      - ${ORCHESTRATOR_DEVID}.*
+
+# REQUIRED by the keychain-access-groups entitlement above. Embedded into the
+# NESTED orchestrator bundle (Contents/Library/github-runner-orchestrator.app/
+# Contents/embedded.provisionprofile). It is a "Developer ID" provisioning
+# profile for App ID io.cloudeng.github-runner-orchestrator with the Keychain
+# Sharing capability, signed by the same Developer ID cert used above.
+provisioning_profile: ${ORCHESTRATOR_PROFILE}
+
+# Notarization. Only used when `orchestrator bundle --notarize` is passed. A
+# signed Developer ID bundle must be notarized by Apple before other Macs will
+# open it. Create a stored credentials profile once, then reference it by name
+# here (preferred: keeps credentials out of this file and out of the process
+# environment).
+#
+# Using an App Store Connect API key (recommended for build machines; not tied
+# to a person's Apple ID). Generate the key under App Store Connect > Users and
+# Access > Integrations, download the .p8 once, and note the Key ID + Issuer ID:
+#
+#   xcrun notarytool store-credentials orchestrator-notary \
+#     --key ~/private_keys/AuthKey_XXXXXXXXXX.p8 \
+#     --key-id XXXXXXXXXX --issuer <issuer-uuid>
+#
+# Or using an Apple ID app-specific password:
+#
+#   xcrun notarytool store-credentials orchestrator-notary \
+#     --apple-id you@example.com --team-id TEAMID --password <app-specific-password>
+notary:
+  keychain_profile: ${ORCHESTRATOR_NOTARY}
+  # Alternatively supply Apple ID credentials directly (expanded from the
+  # environment). API keys must go through store-credentials above, not here.
+  # apple_id: ${ORCHESTRATOR_APPLE_ID}
+  # team_id: ${ORCHESTRATOR_TEAM_ID}
+  # password: ${ORCHESTRATOR_APP_SPECIFIC_PASSWORD}
+
+# The minimal, valid orchestrator config embedded into the bundle and installed
+# as a starting point.
+orchestrator_config: minimal_config.yml
