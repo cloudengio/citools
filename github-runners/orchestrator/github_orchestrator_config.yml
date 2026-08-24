@@ -26,6 +26,7 @@ vm_pools:
       os: macos
       runner_dir: /Users/admin/actions-runner
       image: macos-ci
+      binary: /opt/homebrew/bin/tart
 
   linux:
     size: 2
@@ -34,7 +35,8 @@ vm_pools:
       os: linux
       runner_dir: "/home/admin/actions-runner"
       image: linux-ci
-      run_options: ["--no-graphics", "--no-audio", "--nested"] # for docker.
+      run_options: ["--no-graphics", "--no-audio", "--nested"]
+      binary: /opt/homebrew/bin/tart
 
 icloud_keychain:
   keychain_type: all

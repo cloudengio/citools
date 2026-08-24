@@ -10,18 +10,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 
 	"cloudeng.io/logging/ctxlog"
 )
-
-// isWebappBuildInvocation reports whether the process was invoked to run the
-// webapp-build subcommand. "webapp-build" is a distinctive literal that never
-// appears as a global flag value, so a plain argument scan is reliable and lets
-// main skip config/keychain loading for this tooling-only command.
-func isWebappBuildInvocation() bool {
-	return slices.Contains(os.Args[1:], "webapp-build")
-}
 
 // WebappBuildCommand builds the embedded web UI frontend by running the npm
 // pipeline (install, regenerate the typed API client, and build the bundle) that

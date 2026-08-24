@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 
 	"cloudeng.io/cmdutil/cmdyaml"
 	"cloudeng.io/macos/buildtools"
@@ -31,13 +30,8 @@ const serviceLabel = internal.BundleID
 // start the orchestrator at boot.
 type ServiceCommand struct{}
 
-// isServiceInvocation reports whether the process was invoked to run a service
-// subcommand, which manages launchd and needs no orchestrator config or keychain.
-func isServiceInvocation() bool {
-	return slices.Contains(os.Args[1:], "service")
-}
-
 type ServiceInstallFlags struct {
+	VerboseFlags
 	Executable string `subcmd:"executable,,path to the orchestrator executable; defaults to this binary"`
 	Config     string `subcmd:"config-file,,path to the config file; defaults to the per-user location"`
 
@@ -125,7 +119,7 @@ func (ServiceCommand) Install(ctx context.Context, fl any, _ []string) error {
 	if err := os.MkdirAll(lc.LogDirOrDefault(), 0o755); err != nil {
 		return fmt.Errorf("creating log directory: %w", err)
 	}
-	if err := runSteps(ctx, agent.Install()...); err != nil {
+	if err := runSteps(ctx, fv.stepsVerbose(), agent.Install()...); err != nil {
 		return err
 	}
 	path, _ := agent.PlistPath()
@@ -134,15 +128,23 @@ func (ServiceCommand) Install(ctx context.Context, fl any, _ []string) error {
 	return nil
 }
 
-func (ServiceCommand) Uninstall(ctx context.Context, _ any, _ []string) error {
-	if err := runSteps(ctx, serviceAgent().Uninstall()...); err != nil {
+// ServiceFlags are the flags common to the service subcommands that act on an
+// already-installed service.
+type ServiceFlags struct {
+	VerboseFlags
+}
+
+func (ServiceCommand) Uninstall(ctx context.Context, fl any, _ []string) error {
+	fv := fl.(*ServiceFlags)
+	if err := runSteps(ctx, fv.stepsVerbose(), serviceAgent().Uninstall()...); err != nil {
 		return err
 	}
 	fmt.Printf("removed login service %s\n", serviceLabel)
 	return nil
 }
 
-func (ServiceCommand) Status(ctx context.Context, _ any, _ []string) error {
+func (ServiceCommand) Status(ctx context.Context, fl any, _ []string) error {
+	fv := fl.(*ServiceFlags)
 	agent := serviceAgent()
 	if !agent.IsInstalled() {
 		fmt.Println("login service is not installed")
@@ -150,11 +152,12 @@ func (ServiceCommand) Status(ctx context.Context, _ any, _ []string) error {
 	}
 	// Status succeeds whether or not launchd has the job loaded; its output,
 	// which is the point of the command, goes to stdout via the CommandRunner.
-	return runSteps(ctx, agent.Status())
+	return runSteps(ctx, fv.stepsVerbose(), agent.Status())
 }
 
-func (ServiceCommand) Restart(ctx context.Context, _ any, _ []string) error {
-	if err := runSteps(ctx, serviceAgent().Restart()); err != nil {
+func (ServiceCommand) Restart(ctx context.Context, fl any, _ []string) error {
+	fv := fl.(*ServiceFlags)
+	if err := runSteps(ctx, fv.stepsVerbose(), serviceAgent().Restart()); err != nil {
 		return err
 	}
 	fmt.Printf("restarted login service %s\n", serviceLabel)
@@ -190,9 +193,13 @@ func serviceAgent() buildtools.LaunchAgent {
 
 // runSteps executes steps, passing their output through to this process so
 // that launchctl's diagnostics reach the user.
-func runSteps(ctx context.Context, steps ...buildtools.Step) error {
+func runSteps(ctx context.Context, verbose bool, steps ...buildtools.Step) error {
 	cmdRunner := buildtools.NewCommandRunner(
 		buildtools.WithStdout(os.Stdout),
 		buildtools.WithStderr(os.Stderr))
-	return buildtools.NewRunner().AddSteps(steps...).Run(ctx, cmdRunner).Error()
+	var opts []buildtools.StepRunnerOption
+	if verbose {
+		opts = append(opts, buildtools.WithStepVerbose(true))
+	}
+	return buildtools.NewRunner(opts...).AddSteps(steps...).Run(ctx, cmdRunner).Error()
 }

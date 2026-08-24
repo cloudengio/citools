@@ -16,7 +16,6 @@ import (
 	"cloudeng.io/cmdutil/keys"
 	"cloudeng.io/cmdutil/subcmd"
 	"cloudeng.io/logging/ctxlog"
-	"cloudeng.io/os/executil"
 	"cloudeng.io/webapi/clients/github/githubcmd"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/githubclient"
 )
@@ -106,25 +105,6 @@ func createCLI() *subcmd.CommandSetYAML {
 	cmdSet.Set("run").MustRunner(runCmd.Run, &RunFlags{})
 	cmdSet.Set("run-job").MustRunner(runCmd.RunJob, &RunJobFlags{})
 
-	installCmd := InstallCommand{}
-	cmdSet.Set("install").MustRunner(installCmd.Run, &InstallFlags{})
-
-	bundleCmd := BundleCommand{}
-	cmdSet.Set("bundle").MustRunner(bundleCmd.Run, &BundleFlags{})
-
-	serviceCmd := ServiceCommand{}
-	cmdSet.Set("service", "install").MustRunner(serviceCmd.Install, &ServiceInstallFlags{})
-	cmdSet.Set("service", "uninstall").MustRunner(serviceCmd.Uninstall, &struct{}{})
-	cmdSet.Set("service", "status").MustRunner(serviceCmd.Status, &struct{}{})
-	cmdSet.Set("service", "restart").MustRunner(serviceCmd.Restart, &struct{}{})
-
-	webappCmd := WebappBuildCommand{}
-	cmdSet.Set("webapp-build").MustRunner(webappCmd.Run, &WebappBuildFlags{})
-
-	cfgCmd := ConfigCommand{}
-	cmdSet.Set("config", "show").MustRunner(cfgCmd.Show, &struct{}{})
-	cmdSet.Set("config", "describe").MustRunner(cfgCmd.Describe, &struct{}{})
-
 	vmCmd := VMCommand{}
 	cmdSet.Set("vms", "list").MustRunner(vmCmd.List, &VMListFlags{})
 	cmdSet.Set("vms", "delete").MustRunner(vmCmd.Delete, &VMDeleteFlags{})
@@ -133,12 +113,37 @@ func createCLI() *subcmd.CommandSetYAML {
 	cmdSet.Set("github", "list-runners").MustRunner(ghCmd.ListRunners, &ListRunnersFlags{})
 	cmdSet.Set("github", "list-runs").MustRunner(ghCmd.ListRuns, &ListRunsFlags{})
 	cmdSet.Set("github", "get-runs").MustRunner(ghCmd.GetRuns, &GetRunsFlags{})
-	//cmdSet.Set("github", "queued-runs").MustRunner(ghCmd.QueuedRuns, &QueuedRunsFlags{})
 	cmdSet.Set("github", "create-webhook").MustRunner(ghCmd.CreateWebhook, &CreateWebhookFlags{})
 	cmdSet.Set("github", "create-registration-token").MustRunner(ghCmd.CreateRegistrationToken, &CreateRegistrationTokenFlags{})
 	cmdSet.Set("github", "runner-job-conclusion").MustRunner(ghCmd.GetJobConclusion, &GetJobConclusionFlags{})
 	cmdSet.Set("github", "rerun-job").MustRunner(ghCmd.RerunJob, &RerunJobFlags{})
 	cmdSet.Set("github", "cancel-run").MustRunner(ghCmd.CancelRun, &CancelRunFlags{})
+
+	// The following commands need the orchestrator configuration,
+	// so they have a pre-hook that loads it and sets up the context.
+	cmdSet.Set("run").SetPreHooks(withConfigPrehook)
+	cmdSet.Set("run-job").SetPreHooks(withConfigPrehook)
+	cmdSet.Set("github").SetPreHooks(withConfigPrehook)
+	cmdSet.Set("vms").SetPreHooks(withConfigPrehook)
+
+	installCmd := InstallCommand{}
+	cmdSet.Set("install").MustRunner(installCmd.Run, &InstallFlags{})
+
+	bundleCmd := BundleCommand{}
+	cmdSet.Set("bundle").MustRunner(bundleCmd.Run, &BundleFlags{})
+
+	serviceCmd := ServiceCommand{}
+	cmdSet.Set("service", "install").MustRunner(serviceCmd.Install, &ServiceInstallFlags{})
+	cmdSet.Set("service", "uninstall").MustRunner(serviceCmd.Uninstall, &ServiceFlags{})
+	cmdSet.Set("service", "status").MustRunner(serviceCmd.Status, &ServiceFlags{})
+	cmdSet.Set("service", "restart").MustRunner(serviceCmd.Restart, &ServiceFlags{})
+
+	webappCmd := WebappBuildCommand{}
+	cmdSet.Set("webapp-build").MustRunner(webappCmd.Run, &WebappBuildFlags{})
+
+	cfgCmd := ConfigCommand{}
+	cmdSet.Set("config", "show").MustRunner(cfgCmd.Show, &struct{}{})
+	cmdSet.Set("config", "describe").MustRunner(cfgCmd.Describe, &struct{}{})
 
 	return cmdSet
 }
@@ -150,26 +155,67 @@ func verbose() bool {
 	return globalFlags.Verbose
 }
 
-// ensureToolPath prepends the standard Homebrew bin directories to PATH (if they
-// exist and are not already present), so tools the orchestrator invokes — tart,
-// go, docker — are found even when it is launched from a .app or by launchd,
-// which provide only a minimal PATH.
-func ensureToolPath() {
+// VerboseFlags is embedded by commands that run a sequence of steps, so that
+// --verbose can be given either globally, before the subcommand, or on the
+// subcommand itself.
+type VerboseFlags struct {
+	Verbose bool `subcmd:"verbose,false,print each step as it is run"`
+}
 
-	/*path := os.Getenv("PATH")
-	var prepend []string
-	for _, d := range []string{"/opt/homebrew/bin", "/usr/local/bin"} {
-		if strings.Contains(":"+path+":", ":"+d+":") {
-			continue
+// stepsVerbose reports whether steps should be printed, honouring the global
+// --verbose as well as the subcommand's own.
+func (vf VerboseFlags) stepsVerbose() bool {
+	return vf.Verbose || verbose()
+}
+
+func withConfigPrehook(ctx context.Context) (context.Context, string, subcmd.PostHook, error) {
+	id := "withConfigPrehook"
+	postHook := func(ctx context.Context) (string, error) { return id, nil }
+
+	ks := keys.NewInMemoryKeyStore()
+	ctx = keys.ContextWithKeyStore(ctx, ks)
+	fs := subcmd.GlobalFlagSetFromContext(ctx)
+	if fs == nil {
+		return ctx, id, postHook, fmt.Errorf("global flagset not in context")
+	}
+
+	var cfg Config
+	if err := cmdyaml.ParseConfigFilesStrict(ctx, &cfg, globalFlags.ConfigFile); err != nil {
+		return ctx, id, postHook, fmt.Errorf("failed to read the configuration file %q: %v\nedit that file to correct it", globalFlags.ConfigFile, err)
+
+	}
+	if err := cfg.Validate(); err != nil {
+		return ctx, id, postHook, fmt.Errorf("the configuration file %q is invalid: %v\nedit that file to correct it", globalFlags.ConfigFile, err)
+	}
+
+	loggerConfig := cfg.Logging.WithFlagOverrides(
+		fs.FlagSet(), globalFlags.LoggingFlags)
+	logger, err := loggerConfig.NewLoggerOpts(loggerConfig.Options(), cfg.Logging.Options()...)
+	if err != nil {
+		return ctx, id, postHook, fmt.Errorf("error setting up logger: %v", err)
+	}
+
+	ctx = ctxlog.WithLogger(ctx, logger.Logger)
+	ctx = ContextWithConfig(ctx, cfg)
+	postHook = func(ctx context.Context) (string, error) {
+		if err := logger.Close(); err != nil {
+			return id, fmt.Errorf("error closing logger: %v", err)
 		}
-		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
-			prepend = append(prepend, d)
+		return id, nil
+	}
+
+	if len(cfg.ICloudKeychain.Items) > 0 {
+		ctx, err = loadKeychain(ctx, cfg.ICloudKeychain)
+		if err != nil {
+			return ctx, id, postHook, fmt.Errorf("error loading keychain: %v", err)
 		}
 	}
-	if len(prepend) > 0 {
-		_ = os.Setenv("PATH", strings.Join(prepend, string(os.PathListSeparator))+string(os.PathListSeparator)+path)
-	}*/
-
+	rc, err := createRepoClients(cfg)
+	if err != nil {
+		return ctx, id, postHook, fmt.Errorf("error creating GitHub clients: %v", err)
+	}
+	repoClients = rc
+	return ctx, id, postHook, nil
 }
 
 func main() {
@@ -178,58 +224,7 @@ func main() {
 	cli := createCLI()
 	fs := subcmd.NewFlagSet().MustRegisterFlagStruct(&globalFlags, nil, nil)
 	cli.WithGlobalFlags(fs)
-	var logCloser func() error
-	defer func() {
-		if logCloser != nil {
-			if err := logCloser(); err != nil {
-				fmt.Fprintln(os.Stderr, "error closing logger:", err)
-			}
-		}
-	}()
-	ks := keys.NewInMemoryKeyStore()
-	ctx = keys.ContextWithKeyStore(ctx, ks)
-	cli.WithMain(func(ctx context.Context, cmdRunner func(ctx context.Context) error) error {
-		// Bootstrap/tooling commands need no orchestrator configuration, keychain
-		// access or GitHub clients: webapp-build and bundle are build tools, and
-		// install generates the config file itself. Skip that setup for them.
-		if isWebappBuildInvocation() || isInstallInvocation() || isBundleInvocation() || isServiceInvocation() {
-			return cmdRunner(ctx)
-		}
-		var cfg Config
-		if err := cmdyaml.ParseConfigFilesStrict(ctx, &cfg, globalFlags.ConfigFile); err != nil {
-			return fmt.Errorf("failed to read the configuration file %q: %v\nedit that file to correct it", globalFlags.ConfigFile, err)
-		}
-		if err := cfg.Validate(); err != nil {
-			return fmt.Errorf("the configuration file %q is invalid: %v\nedit that file to correct it", globalFlags.ConfigFile, err)
-		}
 
-		// Make sure the orchestrator can find the tools it needs to invoke, even when
-		// launched from a .app or by launchd, which provide only a minimal PATH.
-		os.Setenv("PATH", executil.AppendMissingPathComponents(os.Getenv("PATH"),
-			cfg.Global.SearchPaths...))
-
-		loggerConfig := cfg.Logging.WithFlagOverrides(
-			fs.FlagSet(), globalFlags.LoggingFlags)
-		logger, err := loggerConfig.NewLoggerOpts(loggerConfig.Options(), cfg.Logging.Options()...)
-		if err != nil {
-			return fmt.Errorf("error setting up logger: %v", err)
-		}
-		ctx = ctxlog.WithLogger(ctx, logger.Logger)
-		ctx = ContextWithConfig(ctx, cfg)
-		logCloser = logger.Close
-		if len(cfg.ICloudKeychain.Items) > 0 {
-			ctx, err = loadKeychain(ctx, cfg.ICloudKeychain)
-			if err != nil {
-				return fmt.Errorf("error loading keychain: %v", err)
-			}
-		}
-		rc, err := createRepoClients(cfg)
-		if err != nil {
-			return fmt.Errorf("error creating GitHub clients: %v", err)
-		}
-		repoClients = rc
-		return cmdRunner(ctx)
-	})
 	// Handle SIGTERM as well as SIGINT so the orchestrator shuts down cleanly
 	// (draining/deleting VMs) when launchd stops the login service.
 	cmdutil.HandleSignals(func() { cancel(cmdutil.ErrInterrupt) }, os.Interrupt, syscall.SIGTERM)
@@ -238,12 +233,6 @@ func main() {
 			return
 		}
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		// Exit non-zero so callers (the launcher, shells, CI) can detect the
-		// failure. os.Exit skips deferred cleanup, so flush the logger first.
-		if logCloser != nil {
-			_ = logCloser()
-			logCloser = nil
-		}
 		os.Exit(1)
 	}
 }

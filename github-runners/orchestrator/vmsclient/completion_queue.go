@@ -114,6 +114,24 @@ func (q *CompletionQueue[T]) releaseVM(ctx context.Context, msg string, e Comple
 	errs.Append(vm.Delete(ctx))
 }
 
+// drainNonBlocking drains whatever events are already buffered in the FIFO's
+// output channel without waiting for further delivery.
+func (q *CompletionQueue[T]) drainNonBlocking(ctx context.Context, msg string, cq *patterns.FIFO[CompletionEvent[T]], errs *errors.M) error {
+	for {
+		select {
+		case e, ok := <-cq.Out():
+			if !ok {
+				cq.Stop(ctx)
+				return errs.Err()
+			}
+			q.releaseVM(ctx, msg, e, errs)
+		default:
+			cq.Stop(ctx)
+			return errs.Err()
+		}
+	}
+}
+
 func (q *CompletionQueue[T]) closeCQ(ctx context.Context, msg string, cq *patterns.FIFO[CompletionEvent[T]]) error {
 	var errs errors.M
 	close(cq.In())
@@ -122,19 +140,7 @@ func (q *CompletionQueue[T]) closeCQ(ctx context.Context, msg string, cq *patter
 		// FIFO's goroutine has already returned without closing Out. Only what
 		// it delivered before exiting can be drained; a blocking receive would
 		// never return, which is what used to hang shutdown.
-		for {
-			select {
-			case e, ok := <-cq.Out():
-				if !ok {
-					cq.Stop(ctx)
-					return errs.Err()
-				}
-				q.releaseVM(ctx, msg, e, &errs)
-			default:
-				cq.Stop(ctx)
-				return errs.Err()
-			}
-		}
+		return q.drainNonBlocking(ctx, msg, cq, &errs)
 	}
 	// The queue is live, so closing In makes the FIFO flush its buffer and then
 	// close Out. Wait for that, bounded so that a wedged FIFO cannot stall
@@ -155,6 +161,10 @@ func (q *CompletionQueue[T]) closeCQ(ctx context.Context, msg string, cq *patter
 				<-timer.C
 			}
 			timer.Reset(drainTimeout)
+		case <-q.ctx.Done():
+			// The queue's context was cancelled mid-drain; drain whatever was
+			// delivered before the FIFO exited and return.
+			return q.drainNonBlocking(ctx, msg, cq, &errs)
 		case <-ctx.Done():
 			cq.Stop(ctx)
 			return errs.Err()

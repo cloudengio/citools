@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 
 	"cloudeng.io/os/executil"
 
@@ -33,13 +32,6 @@ type InstallCommand struct{}
 type InstallFlags struct {
 	Out   string `subcmd:"out,,path to write the config file; defaults to a per-user application-support location"`
 	Force bool   `subcmd:"force,false,overwrite the config file if it already exists"`
-}
-
-// isInstallInvocation reports whether the process was invoked to run the install
-// subcommand. Like bundle, install bootstraps configuration and so must not
-// require an existing config file or keychain access; main skips that setup.
-func isInstallInvocation() bool {
-	return slices.Contains(os.Args[1:], "install")
 }
 
 func (InstallCommand) Run(_ context.Context, fl any, _ []string) error {

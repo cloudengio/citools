@@ -10,7 +10,6 @@ import (
 	"maps"
 	"os"
 	"os/exec"
-	"slices"
 
 	"cloudeng.io/macos/buildtools"
 	"gopkg.in/yaml.v3"
@@ -92,17 +91,12 @@ const bundledConfigName = internal.ConfigFileName
 type BundleCommand struct{}
 
 type BundleFlags struct {
+	VerboseFlags
 	Config   string `subcmd:"config,installer.yaml,path to the installer bundle configuration file"`
 	Binary   string `subcmd:"binary,,path to a prebuilt orchestrator binary; if empty the current package (.) is built"`
 	Timing   bool   `subcmd:"timing,false,print timing information for each build step"`
 	DryRun   bool   `subcmd:"dry-run,false,print the build steps without executing them"`
 	Notarize bool   `subcmd:"notarize,false,submit the signed bundle to Apple for notarization and staple the ticket"`
-}
-
-// isBundleInvocation reports whether the process was invoked to run the bundle
-// subcommand, which is a build tool needing no orchestrator config or keychain.
-func isBundleInvocation() bool {
-	return slices.Contains(os.Args[1:], "bundle")
 }
 
 func (BundleCommand) Run(ctx context.Context, fl any, _ []string) error {
@@ -141,7 +135,7 @@ func (BundleCommand) Run(ctx context.Context, fl any, _ []string) error {
 
 	fmt.Printf("building app bundle %s with orchestrator binary %s (dry run: %v)\n", cfg.Bundle, orchestrator, fv.DryRun)
 
-	return buildAppBundle(ctx, cfg, outerInfo, innerInfo, launcher, orchestrator, fv.Timing, fv.DryRun, fv.Notarize)
+	return buildAppBundle(ctx, cfg, outerInfo, innerInfo, launcher, orchestrator, fv.Timing, fv.stepsVerbose(), fv.DryRun, fv.Notarize)
 }
 
 func loadBundleConfig(path string) (BundleConfig, error) {
@@ -245,9 +239,14 @@ func buildBinary(ctx context.Context, pkg string) (string, func(), error) {
 
 // buildAppBundle assembles and (if an identity is configured) signs the outer
 // launcher app and its nested orchestrator bundle using cloudeng.io/macos/buildtools.
-func buildAppBundle(ctx context.Context, cfg BundleConfig, outerInfo, innerInfo buildtools.InfoPlist, launcher, orchestrator string, timing, dryRun, notarize bool) error {
+func buildAppBundle(ctx context.Context, cfg BundleConfig, outerInfo, innerInfo buildtools.InfoPlist, launcher, orchestrator string, timing, verbose, dryRun, notarize bool) error {
 	if notarize && cfg.Signing.Identity == "" {
 		return fmt.Errorf("--notarize requires a signing identity: set signing.identity in the bundle config")
+	}
+	if cfg.Signing.Identity != "" && cfg.Signing.Entitlements != nil {
+		if cfg.ProvisioningProfile == "" {
+			return fmt.Errorf("signing with entitlements requires a provisioning profile: set provisioning_profile in the bundle config")
+		}
 	}
 	outer := buildtools.AppBundle{Path: cfg.Bundle, Info: outerInfo}
 	inner := buildtools.AppBundle{
@@ -259,6 +258,9 @@ func buildAppBundle(ctx context.Context, cfg BundleConfig, outerInfo, innerInfo 
 	if timing {
 		stepOpts = append(stepOpts, buildtools.WithStepTiming(true))
 	}
+	if verbose {
+		stepOpts = append(stepOpts, buildtools.WithStepVerbose(true))
+	}
 	runner := buildtools.NewRunner(stepOpts...)
 
 	runner.AddSteps(outer.Clean())
@@ -269,7 +271,11 @@ func buildAppBundle(ctx context.Context, cfg BundleConfig, outerInfo, innerInfo 
 	runner.AddSteps(inner.Create()...)
 	runner.AddSteps(inner.WriteInfoPlist(), inner.CopyExecutable(orchestrator))
 	if cfg.ProvisioningProfile != "" {
-		runner.AddSteps(inner.InstallProvisioningProfile(os.ExpandEnv(cfg.ProvisioningProfile)))
+		profilePath := os.ExpandEnv(cfg.ProvisioningProfile)
+		if _, err := os.Stat(profilePath); err != nil {
+			return fmt.Errorf("provisioning profile %q is not accessible: %w", profilePath, err)
+		}
+		runner.AddSteps(inner.InstallProvisioningProfile(profilePath))
 	}
 
 	// Outer launcher app.
