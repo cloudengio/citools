@@ -30,6 +30,8 @@ cloudeng.io/macos v0.0.0-20260824193934-f8f67fb71448 h1:55Ra3v7lTVhx7z4W1TxgusGk
 cloudeng.io/macos v0.0.0-20260824193934-f8f67fb71448/go.mod h1:scYt6+HDvGaCOf+2trNlEI8F8aVGVSFkqtC6j0a//mQ=
 cloudeng.io/macos v0.0.0-20260825153122-a79fe3470fc2 h1:6465B75NpP+d8OVUpQ9WW7CVwFSN0iq4/dXa1s+Edr0=
 cloudeng.io/macos v0.0.0-20260825153122-a79fe3470fc2/go.mod h1:BJLmhax/VWKtIZJylkqkKg0pbCk+zSn0PZHVgwdT6yM=
+cloudeng.io/macos v0.0.0-20260825164407-4a681dfe2e95 h1:kqY54196a2g6miGYzBSXdbuvT32NUk3H2DuWp9FmAa8=
+cloudeng.io/macos v0.0.0-20260825164407-4a681dfe2e95/go.mod h1:BJLmhax/VWKtIZJylkqkKg0pbCk+zSn0PZHVgwdT6yM=
 cloudeng.io/os v0.0.0-20260824023931-9b6c51abac7f h1:tF6YCXBC+Et3/5apwVCA9OUB/qhYmNSspRPEOKqsVlQ=
 cloudeng.io/os v0.0.0-20260824023931-9b6c51abac7f/go.mod h1:xxFKazMCATKYUzgE3bogyzhmLEEl5zJJr17V1XupCCU=
 cloudeng.io/os v0.0.0-20260825050644-3d0fba22c536 h1:t1SL/dHZuaBXlWpAUSeYM3+FP3KYkHxiRlSVx4U7u+Q=
