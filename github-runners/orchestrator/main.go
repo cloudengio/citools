@@ -58,6 +58,8 @@ commands:
         args:
           - <run_id> (one or more run IDs to cancel)
           - ...
+  - name: version
+    summary: print the version and git revision of this binary
   - name: install
     summary: write the bundled minimal orchestrator config file to a standard location
   - name: bundle
@@ -125,6 +127,9 @@ func createCLI() *subcmd.CommandSetYAML {
 	cmdSet.Set("github").MustSetPreHooks(configPrehook, withKeysPrehook, repoClientsPrehook)
 	cmdSet.Set("vms").MustSetPreHooks(configPrehook, withKeysPrehook)
 	cmdSet.Set("config").MustSetPreHooks(configPrehook)
+
+	// version needs no configuration, so it has no pre-hook.
+	cmdSet.Set("version").MustRunner(VersionCommand{}.Run, &struct{}{})
 
 	installCmd := InstallCommand{}
 	cmdSet.Set("install").MustRunner(installCmd.Run, &InstallFlags{})

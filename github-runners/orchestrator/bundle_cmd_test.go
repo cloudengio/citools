@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"howett.net/plist"
 )
@@ -55,7 +56,8 @@ func TestExpandEnv(t *testing.T) {
 // TestBuildInfoPlist covers the defaults every bundle needs and the caller's
 // ability to override them, since a missing key makes an unlaunchable bundle.
 func TestBuildInfoPlist(t *testing.T) {
-	info, err := buildInfoPlist(nil, "my-exe", "io.cloudeng.example")
+	version := versionInfo{Short: "1.0.0", Build: "1.0.0+abcdef12", Commit: "abcdef12345", BuildTime: time.Now()}
+	info, err := buildInfoPlist(nil, "my-exe", "io.cloudeng.example", version)
 	if err != nil {
 		t.Fatalf("buildInfoPlist: %v", err)
 	}
@@ -68,13 +70,26 @@ func TestBuildInfoPlist(t *testing.T) {
 	if info.CFBundlePackageType == "" || info.LSMinimumSystemVersion == "" || info.CFBundleVersion == "" {
 		t.Errorf("a required key was left unset: %+v", info)
 	}
+	// The version is stamped from the build rather than hard-coded.
+	if got, want := info.CFBundleShortVersionString, version.Short; got != want {
+		t.Errorf("CFBundleShortVersionString: got %q, want %q", got, want)
+	}
+	if got, want := info.CFBundleVersion, version.Build; got != want {
+		t.Errorf("CFBundleVersion: got %q, want %q", got, want)
+	}
+	if got, want := info.Extra["CGCommit"], version.Commit; got != want {
+		t.Errorf("CGCommit: got %v, want %v", got, want)
+	}
+	if _, ok := info.Extra["CGBuildTime"]; !ok {
+		t.Errorf("CGBuildTime was not recorded: %+v", info.Extra)
+	}
 
 	// User keys override the defaults and unknown keys are preserved, so that
 	// a bundle can carry keys this package knows nothing about.
 	info, err = buildInfoPlist(map[string]any{
 		"CFBundleVersion":         "1.2.3",
 		"NSHighResolutionCapable": true,
-	}, "my-exe", "io.cloudeng.example")
+	}, "my-exe", "io.cloudeng.example", version)
 	if err != nil {
 		t.Fatalf("buildInfoPlist: %v", err)
 	}
@@ -91,7 +106,7 @@ func TestBuildInfoPlist(t *testing.T) {
 
 	// Blanking a required key is rejected rather than producing a bundle that
 	// will not launch.
-	if _, err := buildInfoPlist(map[string]any{"CFBundleName": nil}, "my-exe", "id"); err == nil {
+	if _, err := buildInfoPlist(map[string]any{"CFBundleName": nil}, "my-exe", "id", version); err == nil {
 		t.Error("a nil CFBundleName was accepted")
 	}
 }
@@ -133,10 +148,11 @@ func TestShippedInstallerConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadBundleConfig: %v", err)
 	}
-	if _, err := buildInfoPlist(cfg.Info, launcherExecutable, outerBundleID); err != nil {
+	version := versionInfo{Short: cfg.Version, Build: cfg.Version + "+abcdef12", Commit: "abcdef12", BuildTime: time.Now()}
+	if _, err := buildInfoPlist(cfg.Info, launcherExecutable, outerBundleID, version); err != nil {
 		t.Errorf("the shipped installer.yaml yields an invalid outer Info.plist: %v", err)
 	}
-	if _, err := buildInfoPlist(nil, defaultExecutable, orchestratorBundleID); err != nil {
+	if _, err := buildInfoPlist(nil, defaultExecutable, orchestratorBundleID, version); err != nil {
 		t.Errorf("the nested Info.plist is invalid: %v", err)
 	}
 }

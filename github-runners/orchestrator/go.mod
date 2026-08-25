@@ -3,16 +3,16 @@ module github.com/cloudengio/citools/runners/macos/orchestrator
 go 1.26.4
 
 require (
-	cloudeng.io/algo v0.0.0-20260824023931-9b6c51abac7f
-	cloudeng.io/cmdutil v0.0.0-20260824023931-9b6c51abac7f
+	cloudeng.io/algo v0.0.0-20260825050644-3d0fba22c536
+	cloudeng.io/cmdutil v0.0.0-20260825050644-3d0fba22c536
 	cloudeng.io/errors v0.0.14-0.20260312171538-61fcde6ce278
-	cloudeng.io/file v0.0.0-20260824023931-9b6c51abac7f
-	cloudeng.io/logging v0.0.0-20260824023931-9b6c51abac7f
-	cloudeng.io/macos v0.0.0-20260824193934-f8f67fb71448
-	cloudeng.io/os v0.0.0-20260824023931-9b6c51abac7f
+	cloudeng.io/file v0.0.0-20260825050644-3d0fba22c536
+	cloudeng.io/logging v0.0.0-20260825050644-3d0fba22c536
+	cloudeng.io/macos v0.0.0-20260825164407-4a681dfe2e95
+	cloudeng.io/os v0.0.0-20260825050644-3d0fba22c536
 	cloudeng.io/sync v0.0.12-0.20260804222138-e9281ed260ba
 	cloudeng.io/text v0.0.16-0.20260624171915-da98fe9dec2b
-	cloudeng.io/vms v0.0.0-20260824023931-9b6c51abac7f
+	cloudeng.io/vms v0.0.0-20260825050644-3d0fba22c536
 	cloudeng.io/webapi/clients/github v0.0.0-20260808001644-2694e12e1341
 	cloudeng.io/webapi/operations v0.0.0-20260808001644-2694e12e1341
 	cloudeng.io/webapp v0.0.0-20260824174511-022cf4bff87e
@@ -25,11 +25,11 @@ require (
 )
 
 require (
-	cloudeng.io/cicd v0.0.0-20260824023931-9b6c51abac7f // indirect
-	cloudeng.io/io v0.0.0-20260824023931-9b6c51abac7f // indirect
+	cloudeng.io/cicd v0.0.0-20260825050644-3d0fba22c536 // indirect
+	cloudeng.io/io v0.0.0-20260825050644-3d0fba22c536 // indirect
 	cloudeng.io/path v0.0.10-0.20260312171538-61fcde6ce278 // indirect
-	cloudeng.io/security v0.0.0-20260824023931-9b6c51abac7f // indirect
-	cloudeng.io/sys v0.0.0-20260824023931-9b6c51abac7f // indirect
+	cloudeng.io/security v0.0.0-20260825050644-3d0fba22c536 // indirect
+	cloudeng.io/sys v0.0.0-20260825050644-3d0fba22c536 // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/cloudengio/go-keychain v0.0.0-20251120230617-c4053f60cda7 // indirect
 	github.com/dprotaso/go-yit v0.0.0-20220510233725-9ba8df137936 // indirect

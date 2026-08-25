@@ -39,6 +39,9 @@ type BundleConfig struct {
 	// OrchestratorConfig is the minimal orchestrator config file embedded into
 	// the bundle as the installed default. Defaults to minimal_config.yml.
 	OrchestratorConfig string `yaml:"orchestrator_config"`
+	// Version is the human-readable release version stamped into both bundles
+	// as CFBundleShortVersionString. Defaults to DefaultVersion.
+	Version string `yaml:"version"`
 	// LaunchAgentConfig is the launchd login service configuration embedded
 	// into the bundle, which `service install` reads from there. Defaults to
 	// launch_agent.yml.
@@ -92,11 +95,12 @@ type BundleCommand struct{}
 
 type BundleFlags struct {
 	VerboseFlags
-	Config   string `subcmd:"config,installer.yaml,path to the installer bundle configuration file"`
-	Binary   string `subcmd:"binary,,path to a prebuilt orchestrator binary; if empty the current package (.) is built"`
-	Timing   bool   `subcmd:"timing,false,print timing information for each build step"`
-	DryRun   bool   `subcmd:"dry-run,false,print the build steps without executing them"`
-	Notarize bool   `subcmd:"notarize,false,submit the signed bundle to Apple for notarization and staple the ticket"`
+	Config     string `subcmd:"config,installer.yaml,path to the installer bundle configuration file"`
+	Binary     string `subcmd:"binary,,path to a prebuilt orchestrator binary; if empty the current package (.) is built"`
+	Timing     bool   `subcmd:"timing,false,print timing information for each build step"`
+	DryRun     bool   `subcmd:"dry-run,false,print the build steps without executing them"`
+	Notarize   bool   `subcmd:"notarize,false,submit the signed bundle to Apple for notarization and staple the ticket"`
+	AllowDirty bool   `subcmd:"allow-dirty,false,'build even though the tree has uncommitted changes; the bundle is then stamped -dirty'"`
 }
 
 func (BundleCommand) Run(ctx context.Context, fl any, _ []string) error {
@@ -107,12 +111,22 @@ func (BundleCommand) Run(ctx context.Context, fl any, _ []string) error {
 		return err
 	}
 
-	// The outer app runs the launcher; the nested bundle runs the orchestrator.
-	outerInfo, err := buildInfoPlist(cfg.Info, launcherExecutable, outerBundleID)
+	// Both bundles are built from this tree, so both carry the same version.
+	version, err := gitVersion(ctx, ".", cfg.Version)
 	if err != nil {
 		return err
 	}
-	innerInfo, err := buildInfoPlist(nil, defaultExecutable, orchestratorBundleID)
+	if version.Dirty && !fv.AllowDirty {
+		return fmt.Errorf("the tree has uncommitted changes, so the bundle would claim commit %s without matching it; commit them or pass --allow-dirty", version.Commit)
+	}
+	fmt.Printf("version %s (commit %s)\n", version.Build, version.Commit)
+
+	// The outer app runs the launcher; the nested bundle runs the orchestrator.
+	outerInfo, err := buildInfoPlist(cfg.Info, launcherExecutable, outerBundleID, version)
+	if err != nil {
+		return err
+	}
+	innerInfo, err := buildInfoPlist(nil, defaultExecutable, orchestratorBundleID, version)
 	if err != nil {
 		return err
 	}
@@ -168,6 +182,9 @@ func loadBundleConfig(path string) (BundleConfig, error) {
 	if cfg.LaunchAgentConfig == "" {
 		cfg.LaunchAgentConfig = internal.LaunchAgentFileName
 	}
+	if cfg.Version == "" {
+		cfg.Version = DefaultVersion
+	}
 	return cfg, nil
 }
 
@@ -192,16 +209,18 @@ func expandEnv(v any) any {
 // buildInfoPlist merges the caller-supplied Info.plist keys over the standard
 // defaults required for a launchable bundle with the given main executable and
 // bundle identifier, and produces a buildtools.InfoPlist.
-func buildInfoPlist(user map[string]any, executable, bundleID string) (buildtools.InfoPlist, error) {
+func buildInfoPlist(user map[string]any, executable, bundleID string, version versionInfo) (buildtools.InfoPlist, error) {
 	raw := map[string]any{
 		"CFBundleExecutable":     executable,
 		"CFBundleName":           defaultExecutable,
 		"CFBundleDisplayName":    "GitHub Runner Orchestrator",
 		"CFBundleIdentifier":     bundleID,
 		"CFBundlePackageType":    "APPL",
-		"CFBundleVersion":        "0.0.0",
 		"LSMinimumSystemVersion": "15.0", // macOS Sequoia
 	}
+	maps.Copy(raw, version.keys())
+	// The version keys are applied before the caller's, so that installer.yaml
+	// can still override them; everything else it sets wins over the defaults.
 	maps.Copy(raw, user)
 	merged, err := yaml.Marshal(raw)
 	if err != nil {

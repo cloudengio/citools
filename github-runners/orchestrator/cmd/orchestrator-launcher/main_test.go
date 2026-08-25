@@ -129,7 +129,7 @@ func TestPaths(t *testing.T) {
 	}
 
 	lp := logPath()
-	if want := filepath.Join(home, "Library", "Logs", serviceLabel+".out.log"); lp != want {
+	if want := filepath.Join(home, "Library", "Logs", serviceLabel, internal.OrchestratorBinary+".log"); lp != want {
 		t.Errorf("logPath = %q, want %q", lp, want)
 	}
 }
