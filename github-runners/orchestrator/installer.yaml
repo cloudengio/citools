@@ -6,6 +6,10 @@
 
 bundle: build/github-runner-orchestrator.app
 
+# version is the human-readable release version, stamped into both bundles as
+# CFBundleShortVersionString; CFBundleVersion appends the git commit.
+version: 0.1.0
+
 # info_plist applies to the OUTER launcher app. Its identifier must differ from
 # the nested orchestrator bundle's (io.cloudeng.github-runner-orchestrator); the
 # outer app carries no entitlements and needs no provisioning profile.
