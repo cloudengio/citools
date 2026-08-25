@@ -8,7 +8,7 @@ require (
 	cloudeng.io/errors v0.0.14-0.20260312171538-61fcde6ce278
 	cloudeng.io/file v0.0.0-20260825050644-3d0fba22c536
 	cloudeng.io/logging v0.0.0-20260825050644-3d0fba22c536
-	cloudeng.io/macos v0.0.0-20260824193934-f8f67fb71448
+	cloudeng.io/macos v0.0.0-20260825153122-a79fe3470fc2
 	cloudeng.io/os v0.0.0-20260825050644-3d0fba22c536
 	cloudeng.io/sync v0.0.12-0.20260804222138-e9281ed260ba
 	cloudeng.io/text v0.0.16-0.20260624171915-da98fe9dec2b
