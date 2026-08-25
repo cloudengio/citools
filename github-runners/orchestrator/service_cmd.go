@@ -164,8 +164,8 @@ func launchAgent(lc LaunchAgentConfig, exe, configFile string) buildtools.Launch
 			RunAtLoad:            lc.RunAtLoadOrDefault(),
 			KeepAlive:            lc.KeepAliveOrDefault(),
 			EnvironmentVariables: lc.EnvironmentOrDefault(),
-			StandardOutPath:      filepath.Join(logDir, serviceLabel+".out.log"),
-			StandardErrorPath:    filepath.Join(logDir, serviceLabel+".err.log"),
+			StandardOutPath:      filepath.Join(logDir, serviceLabel, internal.OrchestratorBinary+".service.out.log"),
+			StandardErrorPath:    filepath.Join(logDir, serviceLabel, internal.OrchestratorBinary+".service.err.log"),
 		},
 	}
 }

@@ -122,7 +122,7 @@ func configPath() (string, error) {
 // logPath returns the file the orchestrator's output is streamed to.
 func logPath() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "Library", "Logs", serviceLabel+".out.log")
+	return filepath.Join(home, "Library", "Logs", serviceLabel, internal.OrchestratorBinary+".log")
 }
 
 // run executes the orchestrator with args and returns its combined output. It is
