@@ -14,7 +14,8 @@ import (
 	"cloudeng.io/cmdutil/cmdyaml"
 )
 
-func boolPtr(v bool) *bool { return &v }
+//go:fix inline
+func boolPtr(v bool) *bool { return new(v) }
 
 // TestLaunchAgentConfigDefaults verifies that an unset section reproduces the
 // service the orchestrator has always installed: the accessors, not the YAML,
@@ -48,8 +49,8 @@ func TestLaunchAgentConfigDefaults(t *testing.T) {
 // including setting the booleans to false, which a plain bool could not express.
 func TestLaunchAgentConfigOverrides(t *testing.T) {
 	lc := LaunchAgentConfig{
-		RunAtLoad:            boolPtr(false),
-		KeepAlive:            boolPtr(false),
+		RunAtLoad:            new(false),
+		KeepAlive:            new(false),
 		EnvironmentVariables: map[string]string{"PATH": "/custom/bin", "FOO": "bar"},
 		LogDir:               "/var/log/orch",
 		RunArgs:              []string{"run"},
@@ -71,7 +72,7 @@ func TestLaunchAgentConfigOverrides(t *testing.T) {
 	}
 
 	// An explicit true is distinguishable from unset.
-	set := LaunchAgentConfig{RunAtLoad: boolPtr(true), KeepAlive: boolPtr(true)}
+	set := LaunchAgentConfig{RunAtLoad: new(true), KeepAlive: new(true)}
 	if !set.RunAtLoadOrDefault() || !set.KeepAliveOrDefault() {
 		t.Error("explicitly true booleans were not honoured")
 	}

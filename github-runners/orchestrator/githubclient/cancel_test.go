@@ -37,9 +37,9 @@ func newCancelHarness(t *testing.T) *cancelHarness {
 	ctx := context.Background()
 	t.Setenv("TMPDIR", t.TempDir())
 
-	poolCfg := vmsclient.PoolConfig{Mock: &vmsclient.MockConfig{Image: "mock-ci"}}
-	poolCfg.Size = 2
-	poolCfg.StagingBehaviour = vmspool.StagingBehaviourRunning
+	poolCfg := vmsclient.PoolConfig{Mock: &vmsclient.MockConfig{Image: "mock-ci"},
+		Size:             2,
+		StagingBehaviour: vmspool.StagingBehaviourRunning}
 	poolCfg.CreateBackoff.InitialDelay = time.Millisecond
 	poolCfg.CreateBackoff.Steps = 5
 	pools, err := vmsclient.NewPools(ctx, map[string]vmsclient.PoolConfig{testPoolName: poolCfg},
@@ -98,17 +98,17 @@ func newCancelHarness(t *testing.T) *cancelHarness {
 // jobEvent builds a workflow_job webhook payload.
 func jobEvent(action string, jobID int64, runnerName string) *gogithub.WorkflowJobEvent {
 	return &gogithub.WorkflowJobEvent{
-		Action: gogithub.Ptr(action),
-		WorkflowJob: gogithub.Ptr(gogithub.WorkflowJob{
-			ID:         gogithub.Ptr(jobID),
-			RunID:      gogithub.Ptr(int64(9999)),
-			RunnerName: gogithub.Ptr(runnerName),
+		Action: new(action),
+		WorkflowJob: new(gogithub.WorkflowJob{
+			ID:         new(jobID),
+			RunID:      new(int64(9999)),
+			RunnerName: new(runnerName),
 			Labels:     []string{"self-hosted", "mock"},
 		}),
-		Repo: gogithub.Ptr(gogithub.Repository{
-			Name:     gogithub.Ptr(testRepoName),
-			Owner:    &gogithub.User{Login: gogithub.Ptr(testOwner)},
-			FullName: gogithub.Ptr(testFullName),
+		Repo: new(gogithub.Repository{
+			Name:     new(testRepoName),
+			Owner:    &gogithub.User{Login: new(testOwner)},
+			FullName: new(testFullName),
 		}),
 	}
 }
@@ -118,7 +118,7 @@ func jobEvent(action string, jobID int64, runnerName string) *gogithub.WorkflowJ
 // conclusion.
 func cancelEvent(jobID int64, runnerName string) *gogithub.WorkflowJobEvent {
 	e := jobEvent("completed", jobID, runnerName)
-	e.WorkflowJob.Conclusion = gogithub.Ptr("cancelled")
+	e.WorkflowJob.Conclusion = new("cancelled")
 	return e
 }
 
@@ -214,7 +214,7 @@ func TestCompletedWebhookAfterJobFinished(t *testing.T) {
 	})
 
 	e := jobEvent("completed", 1234, name)
-	e.WorkflowJob.Conclusion = gogithub.Ptr("success")
+	e.WorkflowJob.Conclusion = new("success")
 	h.handler.handleCompleted(ctx, e)
 
 	snap := snapshotFor(t, h.handler, name)

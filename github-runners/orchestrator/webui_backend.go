@@ -82,7 +82,8 @@ func (b *webuiBackend) handler() *githubclient.WorkflowEventHandler {
 	return b.wh
 }
 
-func ptr[T any](v T) *T { return &v }
+//go:fix inline
+func ptr[T any](v T) *T { return new(v) }
 
 func strPtr(s string) *string {
 	if s == "" {
@@ -120,7 +121,7 @@ func (b *webuiBackend) ConfigSummary(_ context.Context) (webui.ConfigSummary, er
 		ConfigFile: b.configPath,
 		Global: webui.GlobalConfigSummary{
 			TmpDir:                      strPtr(g.TmpDir),
-			CompletionQueueSize:         ptr(g.CompletionQueueSize),
+			CompletionQueueSize:         new(g.CompletionQueueSize),
 			FailedVmRetentionPeriod:     strPtr(g.FailedVMRetentionPeriod.String()),
 			SuccessfulVmRetentionPeriod: strPtr(g.SuccessfulVMRetentionPeriod.String()),
 		},
@@ -135,7 +136,7 @@ func (b *webuiBackend) ConfigSummary(_ context.Context) (webui.ConfigSummary, er
 		for _, r := range repo.Runners {
 			runners = append(runners, webui.RunnerSummary{
 				NamePrefix: strPtr(r.NamePrefix),
-				Labels:     ptr(append([]string(nil), r.Labels...)),
+				Labels:     new(append([]string(nil), r.Labels...)),
 				VmPool:     strPtr(r.VMPoolName),
 			})
 		}
@@ -152,7 +153,7 @@ func (b *webuiBackend) ConfigSummary(_ context.Context) (webui.ConfigSummary, er
 		summary.Pools = append(summary.Pools, webui.PoolConfigSummary{
 			Name:      strPtr(name),
 			Image:     strPtr(image),
-			Size:      ptr(pool.Size),
+			Size:      new(pool.Size),
 			RunnerDir: strPtr(pool.RunnerDir()),
 		})
 	}
@@ -291,10 +292,10 @@ func workflowStatusFromSnapshot(s githubclient.WorkflowSnapshot) webui.WorkflowS
 		CompletedAt:   timePtr(s.CompletedAt),
 	}
 	if s.JobID != 0 {
-		ws.JobId = ptr(s.JobID)
+		ws.JobId = new(s.JobID)
 	}
 	if len(s.Labels) > 0 {
-		ws.Labels = ptr(append([]string(nil), s.Labels...))
+		ws.Labels = new(append([]string(nil), s.Labels...))
 	}
 	var logs []webui.LogArtifact
 	if art, ok := logArtifact(s.Name, "job", s.JobLogPath); ok {
@@ -322,7 +323,7 @@ func logArtifact(wfName, id, path string) (webui.LogArtifact, bool) {
 		Href:        fmt.Sprintf("%s/workflows/%s/logs/%s", webui.BasePath, url.PathEscape(wfName), id),
 	}
 	if fi, err := os.Stat(path); err == nil {
-		art.SizeBytes = ptr(fi.Size())
+		art.SizeBytes = new(fi.Size())
 	}
 	return art, true
 }

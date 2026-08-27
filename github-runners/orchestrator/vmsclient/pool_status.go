@@ -6,6 +6,7 @@ package vmsclient
 
 import (
 	"context"
+	"maps"
 	"sort"
 	"sync"
 	"time"
@@ -64,9 +65,7 @@ func (t *PoolStatusTracker) countersFor(pool string) (map[string]int, time.Time)
 	defer t.mu.Unlock()
 	src := t.counters[pool]
 	out := make(map[string]int, len(src))
-	for k, v := range src {
-		out[k] = v
-	}
+	maps.Copy(out, src)
 	return out, t.updated[pool]
 }
 
