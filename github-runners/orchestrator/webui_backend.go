@@ -82,9 +82,6 @@ func (b *webuiBackend) handler() *githubclient.WorkflowEventHandler {
 	return b.wh
 }
 
-//go:fix inline
-func ptr[T any](v T) *T { return new(v) }
-
 func strPtr(s string) *string {
 	if s == "" {
 		return nil

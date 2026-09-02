@@ -6,8 +6,8 @@ require (
 	cloudeng.io/algo v0.0.0-20260902201442-bb723e109d00
 	cloudeng.io/cmdutil v0.0.0-20260902173116-c569651359a0
 	cloudeng.io/errors v0.0.14-0.20260312171538-61fcde6ce278
-	cloudeng.io/file v0.0.0-20260902173116-c569651359a0
-	cloudeng.io/logging v0.0.0-20260902173116-c569651359a0
+	cloudeng.io/file v0.0.0-20260902201442-bb723e109d00
+	cloudeng.io/logging v0.0.0-20260902201442-bb723e109d00
 	cloudeng.io/macos v0.0.0-20260827163602-685c20ea1765
 	cloudeng.io/os v0.0.0-20260902173116-c569651359a0
 	cloudeng.io/sync v0.0.12-0.20260804222138-e9281ed260ba
@@ -29,7 +29,7 @@ require (
 	cloudeng.io/io v0.0.0-20260902201442-bb723e109d00 // indirect
 	cloudeng.io/path v0.0.10-0.20260312171538-61fcde6ce278 // indirect
 	cloudeng.io/security v0.0.0-20260902201442-bb723e109d00 // indirect
-	cloudeng.io/sys v0.0.0-20260902173116-c569651359a0 // indirect
+	cloudeng.io/sys v0.0.0-20260902201442-bb723e109d00 // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/cloudengio/go-keychain v0.0.0-20251120230617-c4053f60cda7 // indirect
 	github.com/dprotaso/go-yit v0.0.0-20220510233725-9ba8df137936 // indirect
