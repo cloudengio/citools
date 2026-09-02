@@ -37,10 +37,8 @@ func (fakeBackend) Pools(context.Context) ([]PoolStatus, error) {
 
 func workflowWithLogs() WorkflowStatus {
 	logs := []LogArtifact{{Id: "job", Filename: "job.txt", Href: BasePath + "/workflows/w1/logs/job"}}
-	return WorkflowStatus{Name: "w1", State: WorkflowStateRunning, VmId: strp("vm1"), Logs: &logs}
+	return WorkflowStatus{Name: "w1", State: WorkflowStateRunning, VmId: new("vm1"), Logs: &logs}
 }
-
-func strp(s string) *string { return &s }
 
 func (fakeBackend) Workflows(context.Context) ([]WorkflowStatus, error) {
 	return []WorkflowStatus{workflowWithLogs()}, nil

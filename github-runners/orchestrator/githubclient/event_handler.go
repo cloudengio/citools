@@ -406,17 +406,17 @@ func (r *WorkflowEventHandler) RunJob(ctx context.Context, owner, repo string, l
 	}
 
 	event := &gogithub.WorkflowJobEvent{
-		Action: gogithub.Ptr("queued"),
-		WorkflowJob: gogithub.Ptr(gogithub.WorkflowJob{
-			Name:         gogithub.Ptr(runner.NamePrefix + "-manual-run"),
+		Action: new("queued"),
+		WorkflowJob: new(gogithub.WorkflowJob{
+			Name:         new(runner.NamePrefix + "-manual-run"),
 			Labels:       labels,
-			WorkflowName: gogithub.Ptr("manual-run"),
+			WorkflowName: new("manual-run"),
 		}),
-		Repo: gogithub.Ptr(gogithub.Repository{
-			Name:     gogithub.Ptr(repo),
-			Owner:    &gogithub.User{Login: gogithub.Ptr(owner)},
-			FullName: gogithub.Ptr(wkflowRepoName),
-			HTMLURL:  gogithub.Ptr(fmt.Sprintf("https://github.com/%s", wkflowRepoName)),
+		Repo: new(gogithub.Repository{
+			Name:     new(repo),
+			Owner:    &gogithub.User{Login: new(owner)},
+			FullName: new(wkflowRepoName),
+			HTMLURL:  new(fmt.Sprintf("https://github.com/%s", wkflowRepoName)),
 		}),
 	}
 

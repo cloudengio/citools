@@ -86,8 +86,8 @@ func (f *fakeRelay) deliverStatus(status int) {
 func workflowJobBody(t *testing.T, action string, id int64) []byte {
 	t.Helper()
 	job := github.MockJob("owner", "repo")
-	job.ID = gogithub.Ptr(id)
-	body, err := json.Marshal(gogithub.WorkflowJobEvent{Action: gogithub.Ptr(action), WorkflowJob: job})
+	job.ID = new(id)
+	body, err := json.Marshal(gogithub.WorkflowJobEvent{Action: new(action), WorkflowJob: job})
 	if err != nil {
 		t.Fatalf("marshal workflow_job event: %v", err)
 	}

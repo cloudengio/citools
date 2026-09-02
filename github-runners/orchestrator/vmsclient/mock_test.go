@@ -18,8 +18,8 @@ import (
 )
 
 func mockPool(size int, cfg MockConfig) PoolConfig {
-	pc := PoolConfig{Mock: &cfg}
-	pc.Size = size
+	pc := PoolConfig{Mock: &cfg,
+		Size: size}
 	return pc
 }
 
