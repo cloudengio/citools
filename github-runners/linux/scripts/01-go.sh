@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Go minor versions to install. The script resolves the latest patch release
 # for each minor version at build time. Mirrors the macOS 03-go.sh.
-GO_VERSIONS=(1.24 1.25 1.26)
+GO_VERSIONS=(1.26 1.27)
 
 INSTALL_ROOT=/usr/local
 OS=linux
