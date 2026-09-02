@@ -1,22 +1,22 @@
 module github.com/cloudengio/citools/runners/macos/orchestrator
 
-go 1.27
+go 1.27.0
 
 require (
-	cloudeng.io/algo v0.0.0-20260826182854-c9ad2d9d1c94
-	cloudeng.io/cmdutil v0.0.0-20260826182854-c9ad2d9d1c94
+	cloudeng.io/algo v0.0.0-20260902201442-bb723e109d00
+	cloudeng.io/cmdutil v0.0.0-20260902173116-c569651359a0
 	cloudeng.io/errors v0.0.14-0.20260312171538-61fcde6ce278
-	cloudeng.io/file v0.0.0-20260826182854-c9ad2d9d1c94
-	cloudeng.io/logging v0.0.0-20260826182854-c9ad2d9d1c94
-	cloudeng.io/macos v0.0.0-20260825174313-369e703adb21
-	cloudeng.io/os v0.0.0-20260826182854-c9ad2d9d1c94
+	cloudeng.io/file v0.0.0-20260902173116-c569651359a0
+	cloudeng.io/logging v0.0.0-20260902173116-c569651359a0
+	cloudeng.io/macos v0.0.0-20260827163602-685c20ea1765
+	cloudeng.io/os v0.0.0-20260902173116-c569651359a0
 	cloudeng.io/sync v0.0.12-0.20260804222138-e9281ed260ba
 	cloudeng.io/text v0.0.16-0.20260624171915-da98fe9dec2b
-	cloudeng.io/vms v0.0.0-20260826182854-c9ad2d9d1c94
+	cloudeng.io/vms v0.0.0-20260830235329-972b6e92cf13
 	cloudeng.io/webapi/clients/github v0.0.0-20260826235630-e76ef9cbd50a
 	cloudeng.io/webapi/operations v0.0.0-20260826235630-e76ef9cbd50a
 	cloudeng.io/webapp v0.0.0-20260826233740-e26e6a57b7b4
-	github.com/getkin/kin-openapi v0.148.0
+	github.com/getkin/kin-openapi v0.149.0
 	github.com/google/go-github/v89 v89.0.0
 	github.com/oapi-codegen/runtime v1.7.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
@@ -25,11 +25,11 @@ require (
 )
 
 require (
-	cloudeng.io/cicd v0.0.0-20260826182854-c9ad2d9d1c94 // indirect
-	cloudeng.io/io v0.0.0-20260826182854-c9ad2d9d1c94 // indirect
+	cloudeng.io/cicd v0.0.0-20260902201442-bb723e109d00 // indirect
+	cloudeng.io/io v0.0.0-20260902201442-bb723e109d00 // indirect
 	cloudeng.io/path v0.0.10-0.20260312171538-61fcde6ce278 // indirect
-	cloudeng.io/security v0.0.0-20260826182854-c9ad2d9d1c94 // indirect
-	cloudeng.io/sys v0.0.0-20260826182854-c9ad2d9d1c94 // indirect
+	cloudeng.io/security v0.0.0-20260902201442-bb723e109d00 // indirect
+	cloudeng.io/sys v0.0.0-20260902173116-c569651359a0 // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/cloudengio/go-keychain v0.0.0-20251120230617-c4053f60cda7 // indirect
 	github.com/dprotaso/go-yit v0.0.0-20220510233725-9ba8df137936 // indirect
