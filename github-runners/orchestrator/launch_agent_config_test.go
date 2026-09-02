@@ -14,9 +14,6 @@ import (
 	"cloudeng.io/cmdutil/cmdyaml"
 )
 
-//go:fix inline
-func boolPtr(v bool) *bool { return new(v) }
-
 // TestLaunchAgentConfigDefaults verifies that an unset section reproduces the
 // service the orchestrator has always installed: the accessors, not the YAML,
 // are what supply the defaults.

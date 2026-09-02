@@ -40,9 +40,6 @@ func workflowWithLogs() WorkflowStatus {
 	return WorkflowStatus{Name: "w1", State: WorkflowStateRunning, VmId: new("vm1"), Logs: &logs}
 }
 
-//go:fix inline
-func strp(s string) *string { return new(s) }
-
 func (fakeBackend) Workflows(context.Context) ([]WorkflowStatus, error) {
 	return []WorkflowStatus{workflowWithLogs()}, nil
 }
