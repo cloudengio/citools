@@ -42,13 +42,47 @@ function LogLinks({ wf }: { wf: WorkflowStatus }) {
   const logs = wf.logs ?? []
   if (logs.length === 0) return <span className="muted">—</span>
   return (
-    <>
-      {logs.map((l) => (
-        <a key={l.id} className="loglink" href={logURL(wf.name, l.id)} download>
-          {l.id}
-        </a>
-      ))}
-    </>
+    <div className="log-links">
+      {logs.map((l) => {
+        const canView = l.id === 'job' || (l.content_type?.startsWith('text/') ?? false)
+        return (
+          <div key={l.id} className="log-item">
+            <span className="mono">{l.id}:</span>{' '}
+            {canView ? (
+              <>
+                <a
+                  className="loglink"
+                  href={logURL(wf.name, l.id, true)}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={`View ${l.filename ?? l.id}`}
+                >
+                  view
+                </a>
+                <span className="muted">·</span>{' '}
+                <a
+                  className="loglink"
+                  href={logURL(wf.name, l.id)}
+                  download
+                  title={`Download ${l.filename ?? l.id}`}
+                >
+                  download
+                </a>
+              </>
+            ) : (
+              <a
+                className="loglink"
+                href={logURL(wf.name, l.id)}
+                download
+                title={`Download ${l.filename ?? l.id}`}
+              >
+                download
+              </a>
+            )}
+          </div>
+        )
+      })}
+    </div>
   )
 }
 

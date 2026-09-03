@@ -380,13 +380,16 @@ func (r *WorkflowEventHandler) handleQueuedEvent(ctx context.Context, event *gog
 		}
 	})
 
-	runErr := inst.RunJob(ctx, r.completeQueue)
+	runErr := inst.RunJob(ctx, r.completeQueue, r.clients, r.status)
 	// The VM has finished running the job locally at this point; record the
 	// vm_completed state. GitHub's "completed" webhook (handleCompleted) will
 	// later advance this to the completed state.
 	r.status.upsert(inst.Name, func(rec *WorkflowSnapshot) {
 		rec.State = WorkflowVMCompleted
 		rec.VMCompletedAt = time.Now()
+		if inst.JobStarted != nil {
+			rec.JobStarted = inst.JobStarted
+		}
 		if runErr != nil {
 			rec.Result = "Failed"
 			rec.Err = runErr.Error()

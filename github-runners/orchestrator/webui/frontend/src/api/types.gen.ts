@@ -486,7 +486,10 @@ export interface operations {
     };
     downloadWorkflowLog: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description When true, display the log inline as a web page instead of downloading as an attachment. */
+                view?: boolean;
+            };
             header?: never;
             path: {
                 name: string;

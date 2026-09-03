@@ -61,7 +61,10 @@ h4 { margin: 16px 0 6px; font-size: 13px; color: var(--muted); }
 .badge-failed, .badge-canceled { background: #46201d; color: #e07b70; }
 .badge-stopped, .badge-deleted, .badge-unknown { background: #2a2f38; color: var(--muted); }
 
-.loglink { display: inline-block; margin-right: 8px; color: var(--accent); text-decoration: none; }
+.log-links { display: flex; flex-direction: column; gap: 3px; }
+.log-item { white-space: nowrap; font-size: 12px; }
+.log-item .mono { color: var(--muted); margin-right: 3px; }
+.loglink { color: var(--accent); text-decoration: none; }
 .loglink:hover { text-decoration: underline; }
 
 .err-text { color: #e07b70; font-size: 12px; }

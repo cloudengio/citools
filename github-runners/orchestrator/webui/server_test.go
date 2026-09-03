@@ -144,6 +144,47 @@ func TestConfigFileDownloadHeaders(t *testing.T) {
 	}
 }
 
+func TestWorkflowLogDownload(t *testing.T) {
+	ts := newTestServer(t)
+	resp, err := http.Get(ts.URL + BasePath + "/workflows/w1/logs/job") //nolint:noctx
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d, want 200", resp.StatusCode)
+	}
+	if cd := resp.Header.Get("Content-Disposition"); !strings.Contains(cd, "attachment") || !strings.Contains(cd, "job.txt") {
+		t.Errorf("Content-Disposition = %q, want attachment with filename job.txt", cd)
+	}
+}
+
+func TestWorkflowLogView(t *testing.T) {
+	ts := newTestServer(t)
+	resp, err := http.Get(ts.URL + BasePath + "/workflows/w1/logs/job?view=true") //nolint:noctx
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want text/html", ct)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(body)
+	if !strings.Contains(s, "hello log") {
+		t.Errorf("expected body to contain log content 'hello log', got %s", s)
+	}
+	if !strings.Contains(s, "Workflow: <strong>w1</strong>") {
+		t.Errorf("expected body to contain workflow title, got %s", s)
+	}
+}
+
 func TestListWorkflowsStateFilter(t *testing.T) {
 	ts := newTestServer(t)
 	code, body := get(t, ts.URL+BasePath+"/workflows?state=completed")

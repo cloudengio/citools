@@ -7,6 +7,7 @@ package githubclient
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -99,17 +100,60 @@ func (shr *selfHostedRunner) extractLogs(ctx context.Context, vm *vmspool.VM, st
 	return nil
 }
 
+func (shr *selfHostedRunner) createReadJobStartedCommand() execCommand {
+	var args strings.Builder
+	fmt.Fprintf(&args, "cd %s && cat job-started.json", shr.runnerDir)
+	return execCommand{
+		step:     "read-job-started",
+		cmd:      "bash",
+		args:     []string{"-lc", args.String()},
+		redacted: fmt.Sprintf("bash -lc %s", args.String()),
+	}
+}
+
+func (shr *selfHostedRunner) readJobStarted(ctx context.Context, vm *vmspool.VM) (*JobStartedInfo, []byte, error) {
+	cmd := shr.createReadJobStartedCommand()
+	runCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	var stdout, stderr bytes.Buffer
+	if err := vm.Exec(runCtx, &stdout, &stderr, cmd.cmd, cmd.args...); err != nil {
+		return nil, nil, fmt.Errorf("failed to read job-started.json: %w (stderr: %s)", err, stderr.String())
+	}
+	data := stdout.Bytes()
+	var info JobStartedInfo
+	if err := json.Unmarshal(data, &info); err != nil {
+		return nil, data, fmt.Errorf("failed to parse job-started.json: %w", err)
+	}
+	return &info, data, nil
+}
+
 // runQueuedJob configures and runs the job on the VM, extracts diagnostics and
 // stops the VM, then pushes the outcome onto the completion queue. It returns
 // the local outcome (nil on success) so the caller can record that the VM has
 // finished running independently of GitHub's completion webhook.
-func (shr *selfHostedRunner) runQueuedJob(ctx context.Context, inst *WorkflowInstance) error {
+func (shr *selfHostedRunner) runQueuedJob(ctx context.Context, inst *WorkflowInstance) (*JobStartedInfo, error) {
 	vm := inst.GetVM()
 	var errs errors.M
 	err := shr.runCmds(ctx, vm, inst.RunStdoutStderr, inst.RunStdoutStderr,
 		shr.createConfigCommand(),
 		shr.createRunCommand())
 	errs.Append(err)
+
+	jobStarted, rawData, jsErr := shr.readJobStarted(ctx, vm)
+	if jsErr != nil {
+		ctxlog.Warn(ctx, "failed to read job-started info from VM", "vm", vm.ID(), "error", jsErr)
+	} else {
+		ctxlog.Info(ctx, "read job-started info from VM",
+			"vm", vm.ID(),
+			"run_id", jobStarted.RunID,
+			"job", jobStarted.Job,
+			"workflow", jobStarted.Workflow,
+			"repo", jobStarted.Repository,
+		)
+		inst.JobStarted = jobStarted
+		inst.JobStartedRaw = rawData
+	}
+
 	stderr := bytes.NewBuffer(make([]byte, 0, 1024))
 	err = shr.extractLogs(ctx, vm, inst.DiagStdout, stderr)
 	if err != nil {
@@ -133,10 +177,10 @@ func (shr *selfHostedRunner) runQueuedJob(ctx context.Context, inst *WorkflowIns
 	ce := vmsclient.CompletionEvent[WorkflowInstance]{Payload: *inst}
 	if err := errs.Err(); err != nil {
 		shr.completionQueue.PushFailure(ce, err)
-		return err
+		return jobStarted, err
 	}
 	shr.completionQueue.PushSuccess(ce)
-	return nil
+	return jobStarted, nil
 }
 
 func (shr *selfHostedRunner) runCmds(ctx context.Context, vm *vmspool.VM, stdout, stderr io.Writer, cmds ...execCommand) error {

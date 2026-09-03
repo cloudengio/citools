@@ -169,6 +169,12 @@ paths:
           description: The artifact id, e.g. "job" or "diag".
           schema:
             type: string
+        - name: view
+          in: query
+          required: false
+          description: When true, display the log inline as a web page instead of downloading as an attachment.
+          schema:
+            type: boolean
       responses:
         "200":
           description: The log artifact content.

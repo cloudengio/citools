@@ -56,6 +56,7 @@ type WorkflowSnapshot struct {
 	CompletedAt   time.Time
 	JobLogPath    string
 	DiagLogPath   string
+	JobStarted    *JobStartedInfo
 }
 
 // statusTracker records the lifecycle of every workflow job the orchestrator
@@ -160,6 +161,9 @@ func snapshotFromInstance(wi *WorkflowInstance) func(*WorkflowSnapshot) {
 		rec.RepoURL = wi.RepoURL
 		rec.JobLogPath = wi.LogName
 		rec.DiagLogPath = wi.DiagName
+		if wi.JobStarted != nil {
+			rec.JobStarted = wi.JobStarted
+		}
 		if ev := wi.Event; ev != nil {
 			rec.RepoFullName = ev.GetRepo().GetFullName()
 			if rec.RepoURL == "" {

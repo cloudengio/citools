@@ -28,8 +28,10 @@ export const getWorkflows = () => getJSON<WorkflowStatus[]>('/workflows')
 export const configFileURL = `${BASE}/config/file`
 export const eventsURL = `${BASE}/events`
 
-export const logURL = (workflow: string, artifactId: string) =>
-  `${BASE}/workflows/${encodeURIComponent(workflow)}/logs/${encodeURIComponent(artifactId)}`
+export const logURL = (workflow: string, artifactId: string, view?: boolean) => {
+  const u = `${BASE}/workflows/${encodeURIComponent(workflow)}/logs/${encodeURIComponent(artifactId)}`
+  return view ? `${u}?view=true` : u
+}
 
 // cancelWorkflow requests cancellation of a running workflow job, which cancels
 // its GitHub run and tears down its VM. Rejects with the server's error message.

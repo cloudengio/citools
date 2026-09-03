@@ -10,10 +10,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"io/fs"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -180,6 +182,14 @@ func (s *Server) DownloadWorkflowLog(ctx context.Context, request DownloadWorkfl
 	if meta.ContentType != nil && *meta.ContentType != "" {
 		contentType = *meta.ContentType
 	}
+	if request.Params.View != nil && *request.Params.View && (strings.HasPrefix(contentType, "text/") || request.Artifact == "job") {
+		return workflowLogHTMLResponse{
+			workflowName: request.Name,
+			artifact:     request.Artifact,
+			filename:     meta.Filename,
+			body:         rc,
+		}, nil
+	}
 	return fileDownloadResponse{
 		filename:    meta.Filename,
 		contentType: contentType,
@@ -294,3 +304,123 @@ func (r fileDownloadResponse) VisitDownloadConfigFileResponse(w http.ResponseWri
 func (r fileDownloadResponse) VisitDownloadWorkflowLogResponse(w http.ResponseWriter) error {
 	return r.write(w)
 }
+
+type workflowLogHTMLResponse struct {
+	workflowName string
+	artifact     string
+	filename     string
+	body         io.Reader
+}
+
+func (r workflowLogHTMLResponse) VisitDownloadWorkflowLogResponse(w http.ResponseWriter) error {
+	if c, ok := r.body.(io.Closer); ok {
+		defer c.Close() //nolint:errcheck
+	}
+	data, err := io.ReadAll(r.body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return err
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	return logPageTemplate.Execute(w, struct {
+		Name     string
+		Artifact string
+		Filename string
+		Content  string
+	}{
+		Name:     r.workflowName,
+		Artifact: r.artifact,
+		Filename: r.filename,
+		Content:  string(data),
+	})
+}
+
+var logPageTemplate = template.Must(template.New("logPage").Parse(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Workflow Log: {{.Name}} ({{.Artifact}})</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #181b21;
+      --panel2: #1f232b;
+      --fg: #e6e8eb;
+      --muted: #8b93a1;
+      --border: #2a2f38;
+      --accent: #4f8cff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 20px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .title {
+      font-size: 14px;
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .title strong {
+      color: var(--fg);
+    }
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .btn {
+      background: var(--panel2);
+      border: 1px solid var(--border);
+      color: var(--fg);
+      border-radius: 6px;
+      padding: 4px 12px;
+      font-size: 12px;
+      cursor: pointer;
+      text-decoration: none;
+      font-family: inherit;
+    }
+    .btn:hover {
+      border-color: var(--accent);
+    }
+    .log-content {
+      padding: 16px 20px;
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="title">
+      Workflow: <strong>{{.Name}}</strong> &middot; Artifact: <strong>{{.Filename}}</strong>
+    </div>
+    <div class="actions">
+      <button class="btn" onclick="location.reload()">Refresh</button>
+      <a class="btn" href="?view=false" download>Download</a>
+    </div>
+  </div>
+  <pre class="log-content">{{.Content}}</pre>
+</body>
+</html>
+`))
