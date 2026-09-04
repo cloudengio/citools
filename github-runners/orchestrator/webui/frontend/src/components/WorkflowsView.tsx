@@ -41,6 +41,9 @@ function CancelButton({ wf }: { wf: WorkflowStatus }) {
 function LogLinks({ wf }: { wf: WorkflowStatus }) {
   const logs = wf.logs ?? []
   if (logs.length === 0) return <span className="muted">—</span>
+  const jobUrl = wf.job_url || (wf.repo_full_name && wf.run_id && wf.job_id
+    ? `https://github.com/${wf.repo_full_name}/actions/runs/${wf.run_id}/job/${wf.job_id}`
+    : null)
   return (
     <div className="log-links">
       {logs.map((l) => {
@@ -52,9 +55,9 @@ function LogLinks({ wf }: { wf: WorkflowStatus }) {
               <>
                 <a
                   className="loglink"
-                  href={logURL(wf.name, l.id, true)}
+                  href={logURL(wf.name, l.id, true, jobUrl)}
                   target="_blank"
-                  rel="noreferrer"
+                  rel="noopener noreferrer"
                   title={`View ${l.filename ?? l.id}`}
                 >
                   view

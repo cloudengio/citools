@@ -31,9 +31,13 @@ export const getBuildInfo = () => getJSON<BuildInfo>('/buildinfo')
 export const configFileURL = `${BASE}/config/file`
 export const eventsURL = `${BASE}/events`
 
-export const logURL = (workflow: string, artifactId: string, view?: boolean) => {
+export const logURL = (workflow: string, artifactId: string, view?: boolean, jobUrl?: string | null) => {
   const u = `${BASE}/workflows/${encodeURIComponent(workflow)}/logs/${encodeURIComponent(artifactId)}`
-  return view ? `${u}?view=true` : u
+  const params = new URLSearchParams()
+  if (view) params.set('view', 'true')
+  if (jobUrl) params.set('job_url', jobUrl)
+  const qs = params.toString()
+  return qs ? `${u}?${qs}` : u
 }
 
 // cancelWorkflow requests cancellation of a running workflow job, which cancels

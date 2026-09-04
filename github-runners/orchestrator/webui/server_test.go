@@ -233,6 +233,15 @@ func TestWorkflowLogView(t *testing.T) {
 	if !strings.Contains(s, "Workflow: <strong>w1</strong>") {
 		t.Errorf("expected body to contain workflow title, got %s", s)
 	}
+	if !strings.Contains(s, "https://github.com/cloudengio/go.pkgs/actions/runs/33788991410/job/100760675888") {
+		t.Errorf("expected body to contain GitHub job URL, got %s", s)
+	}
+	if !strings.Contains(s, "color-scheme: light") {
+		t.Errorf("expected body to contain light color-scheme, got %s", s)
+	}
+	if !strings.Contains(s, "background-color: #ffffff") {
+		t.Errorf("expected body to contain white background, got %s", s)
+	}
 }
 
 func TestListWorkflowsStateFilter(t *testing.T) {

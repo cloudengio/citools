@@ -187,6 +187,12 @@ paths:
           description: When true, display the log inline as a web page instead of downloading as an attachment.
           schema:
             type: boolean
+        - name: job_url
+          in: query
+          required: false
+          description: URL to the workflow run job on GitHub.
+          schema:
+            type: string
       responses:
         "200":
           description: The log artifact content.

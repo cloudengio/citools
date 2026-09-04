@@ -199,11 +199,22 @@ func (s *Server) DownloadWorkflowLog(ctx context.Context, request DownloadWorkfl
 		contentType = *meta.ContentType
 	}
 	if request.Params.View != nil && *request.Params.View && (strings.HasPrefix(contentType, "text/") || request.Artifact == "job") {
+		var jobURL string
+		if request.Params.JobUrl != nil && *request.Params.JobUrl != "" {
+			jobURL = *request.Params.JobUrl
+		} else if wf, ok, err := s.backend.Workflow(ctx, request.Name); err == nil && ok {
+			if wf.JobUrl != nil && *wf.JobUrl != "" {
+				jobURL = *wf.JobUrl
+			} else if wf.RepoFullName != nil && wf.RunId != nil && wf.JobId != nil && *wf.RepoFullName != "" && *wf.RunId != 0 && *wf.JobId != 0 {
+				jobURL = fmt.Sprintf("https://github.com/%s/actions/runs/%d/job/%d", *wf.RepoFullName, *wf.RunId, *wf.JobId)
+			}
+		}
 		return workflowLogHTMLResponse{
 			workflowName: request.Name,
 			artifact:     request.Artifact,
 			filename:     meta.Filename,
 			body:         rc,
+			jobURL:       jobURL,
 		}, nil
 	}
 	return fileDownloadResponse{
@@ -348,6 +359,7 @@ type workflowLogHTMLResponse struct {
 	artifact     string
 	filename     string
 	body         io.Reader
+	jobURL       string
 }
 
 func (r workflowLogHTMLResponse) VisitDownloadWorkflowLogResponse(w http.ResponseWriter) error {
@@ -366,36 +378,46 @@ func (r workflowLogHTMLResponse) VisitDownloadWorkflowLogResponse(w http.Respons
 		Artifact string
 		Filename string
 		Content  string
+		JobURL   string
 	}{
 		Name:     r.workflowName,
 		Artifact: r.artifact,
 		Filename: r.filename,
 		Content:  string(data),
+		JobURL:   r.jobURL,
 	})
 }
 
 var logPageTemplate = template.Must(template.New("logPage").Parse(`<!DOCTYPE html>
-<html lang="en">
+<html lang="en" style="background-color: #ffffff; color-scheme: light;">
 <head>
   <meta charset="utf-8">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#ffffff">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Workflow Log: {{.Name}} ({{.Artifact}})</title>
   <style>
     :root {
-      --bg: #0f1115;
-      --panel: #181b21;
-      --panel2: #1f232b;
-      --fg: #e6e8eb;
-      --muted: #8b93a1;
-      --border: #2a2f38;
-      --accent: #4f8cff;
+      color-scheme: light;
+      --bg: #ffffff;
+      --panel: #f6f8fa;
+      --panel2: #ffffff;
+      --fg: #1f2328;
+      --muted: #656d76;
+      --border: #d0d7de;
+      --accent: #0969da;
     }
     * { box-sizing: border-box; }
+    html {
+      background-color: #ffffff;
+      color-scheme: light;
+    }
     body {
       margin: 0;
-      background: var(--bg);
+      background-color: #ffffff;
       color: var(--fg);
       font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      min-height: 100vh;
     }
     .topbar {
       display: flex;
@@ -436,24 +458,47 @@ var logPageTemplate = template.Must(template.New("logPage").Parse(`<!DOCTYPE htm
       cursor: pointer;
       text-decoration: none;
       font-family: inherit;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
     }
     .btn:hover {
       border-color: var(--accent);
+      color: var(--accent);
+      background: #f3f4f6;
+    }
+    .btn.primary {
+      background: #0969da;
+      border-color: #0969da;
+      color: #ffffff;
+    }
+    .btn.primary:hover {
+      background: #085bc4;
+      border-color: #085bc4;
+      color: #ffffff;
     }
     .log-content {
       padding: 16px 20px;
       margin: 0;
       white-space: pre-wrap;
       word-break: break-all;
+      background-color: #ffffff;
+      color: var(--fg);
     }
   </style>
 </head>
-<body>
+<body style="background-color: #ffffff; color: #1f2328;">
   <div class="topbar">
     <div class="title">
       Workflow: <strong>{{.Name}}</strong> &middot; Artifact: <strong>{{.Filename}}</strong>
+      {{if .JobURL}}
+      &middot; <a href="{{.JobURL}}" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-weight: 500;">GitHub workflow log ↗</a>
+      {{end}}
     </div>
     <div class="actions">
+      {{if .JobURL}}
+      <a class="btn primary" href="{{.JobURL}}" target="_blank" rel="noopener noreferrer" title="View workflow log on GitHub">GitHub Log ↗</a>
+      {{end}}
       <button class="btn" onclick="location.reload()">Refresh</button>
       <a class="btn" href="?view=false" download>Download</a>
     </div>

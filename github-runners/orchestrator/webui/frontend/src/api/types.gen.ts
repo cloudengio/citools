@@ -611,6 +611,8 @@ export interface operations {
             query?: {
                 /** @description When true, display the log inline as a web page instead of downloading as an attachment. */
                 view?: boolean;
+                /** @description URL to the workflow run job on GitHub. */
+                job_url?: string;
             };
             header?: never;
             path: {
