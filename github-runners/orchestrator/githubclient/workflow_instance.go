@@ -5,6 +5,7 @@
 package githubclient
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"cloudeng.io/errors"
 	"cloudeng.io/logging/ctxlog"
 	"cloudeng.io/sync/errgroup"
 	"cloudeng.io/vms/vmspool"
@@ -28,6 +30,8 @@ type WorkflowInstance struct {
 	Name                        string
 	RunStdoutStderr, DiagStdout io.Writer
 	LogName, DiagName           string
+	JobStarted                  *JobStartedInfo
+	JobStartedRaw               []byte
 	RunnerConfig                *RunnerConfig
 	PoolConfig                  *vmsclient.PoolConfig
 	Event                       *gogithub.WorkflowJobEvent
@@ -35,6 +39,9 @@ type WorkflowInstance struct {
 	vm                          *vmspool.VM
 	token                       *gogithub.RegistrationToken
 	logFile, diagLogs           *os.File
+	vmMu                        sync.Mutex
+	logsExtracted               bool
+	vmStopped                   bool
 }
 
 var runnerNameId atomic.Int64
@@ -129,18 +136,217 @@ func (wi *WorkflowInstance) Close(ctx context.Context) {
 			ctxlog.Error(ctx, "failed to close diag log file", "file", wi.diagLogs.Name(), "err", err)
 		}
 	}
+}
 
+// ExtractLogs extracts job-started info and diagnostic logs from the VM.
+// It is guaranteed to run at most once, and always before the VM is stopped.
+func (wi *WorkflowInstance) ExtractLogs(ctx context.Context) error {
+	wi.vmMu.Lock()
+	defer wi.vmMu.Unlock()
+	if wi.logsExtracted || wi.vmStopped || wi.vm == nil {
+		return nil
+	}
+	wi.logsExtracted = true
+
+	if wi.PoolConfig == nil || wi.RunnerConfig == nil {
+		return nil
+	}
+	shr := newSelfHostedRunner(wi, nil, wi.RepoURL, "")
+
+	jobStarted, rawData, jsErr := shr.readJobStarted(ctx, wi.vm)
+	if jsErr != nil {
+		ctxlog.Warn(ctx, "failed to read job-started info from VM", "vm", wi.vm.ID(), "error", jsErr)
+	} else {
+		ctxlog.Info(ctx, "read job-started info from VM",
+			"vm", wi.vm.ID(),
+			"run_id", jobStarted.RunID,
+			"job", jobStarted.Job,
+			"workflow", jobStarted.Workflow,
+			"repo", jobStarted.Repository,
+		)
+		wi.JobStarted = jobStarted
+		wi.JobStartedRaw = rawData
+	}
+
+	if wi.DiagStdout != nil {
+		stderr := bytes.NewBuffer(make([]byte, 0, 1024))
+		if err := shr.extractLogs(ctx, wi.vm, wi.DiagStdout, stderr); err != nil {
+			ctxlog.Error(ctx, "failed to extract _diag directory", "vm", wi.vm.ID(), "error", err, "stderr", stderr.String())
+			return err
+		}
+	}
+	return nil
+}
+
+// StopAndReleaseVM ensures diagnostic logs are extracted before the VM is stopped,
+// and then stops and releases the VM. It guarantees StopAndRelease is called at most once,
+// and never concurrently with log extraction.
+func (wi *WorkflowInstance) StopAndReleaseVM(ctx context.Context, timeout time.Duration) (error, error) {
+	_ = wi.ExtractLogs(ctx)
+
+	wi.vmMu.Lock()
+	defer wi.vmMu.Unlock()
+	if wi.vmStopped || wi.vm == nil {
+		return nil, nil
+	}
+	wi.vmStopped = true
+
+	ctxlog.Info(ctx, "stopping vm", "vm", wi.vm.ID())
+	return wi.vm.StopAndRelease(ctx, timeout)
 }
 
 // RunJob runs the job on the instance's VM and returns the local outcome (nil on
-// success). The VM has finished running by the time this returns.
-func (wi *WorkflowInstance) RunJob(ctx context.Context, cq *CompletionQueue) error {
+// success). The VM has finished running by the time this returns. It examines
+// the jobStarted data reported by the VM's start hook, compares it with the
+// workflow instance values (reporting errors to logs and UI if they differ), and
+// ensures that the job status on GitHub is completed or canceled.
+func (wi *WorkflowInstance) RunJob(ctx context.Context, cq *CompletionQueue, clients *RepoClients, status *statusTracker) error {
 	if wi.vm == nil || wi.token == nil {
 		ctxlog.Error(ctx, "VM or token not initialized for workflow instance", "workflow_instance", wi.Name)
 		return fmt.Errorf("VM or token not initialized for workflow instance %s", wi.Name)
 	}
 	shr := newSelfHostedRunner(wi, cq, wi.RepoURL, wi.token.GetToken())
-	return shr.runQueuedJob(ctx, wi)
+	jobStarted, runErr := shr.runQueuedJob(ctx, wi)
+
+	var errs errors.M
+	errs.Append(runErr)
+
+	// a) Compare jobStarted values with values in wi based on guaranteed identical fields:
+	// Run ID, Run Attempt, Repository Name, Repository Owner, Triggering Actor,
+	// and Workflow Name.
+	// Note: Job name is NOT checked as $GITHUB_JOB (YAML ID) can differ from workflow_job.name.
+	// Commit SHA and Git Ref are also NOT checked because on pull_request events GitHub creates
+	// a test merge commit ($GITHUB_SHA / refs/pull/X/merge) which differs from workflow_job.head_sha / head_branch.
+	if jobStarted != nil {
+		var diffs []string
+
+		// 1. Run ID: $GITHUB_RUN_ID vs .workflow_job.run_id
+		expectedRunID := int64(0)
+		if wi.Event != nil && wi.Event.GetWorkflowJob() != nil {
+			expectedRunID = wi.Event.GetWorkflowJob().GetRunID()
+		}
+		if jobStarted.RunID != 0 && expectedRunID != 0 && jobStarted.RunID != expectedRunID {
+			diffs = append(diffs, fmt.Sprintf("run_id mismatch: assigned=%d expected=%d", jobStarted.RunID, expectedRunID))
+		}
+
+		// 2. Run Attempt: $GITHUB_RUN_ATTEMPT vs .workflow_job.run_attempt
+		expectedRunAttempt := int64(0)
+		if wi.Event != nil && wi.Event.GetWorkflowJob() != nil {
+			expectedRunAttempt = wi.Event.GetWorkflowJob().GetRunAttempt()
+		}
+		if jobStarted.RunAttempt != 0 && expectedRunAttempt != 0 && jobStarted.RunAttempt != expectedRunAttempt {
+			diffs = append(diffs, fmt.Sprintf("run_attempt mismatch: assigned=%d expected=%d", jobStarted.RunAttempt, expectedRunAttempt))
+		}
+
+		// 3. Repository Name: $GITHUB_REPOSITORY vs .repository.full_name
+		expectedRepo := ""
+		if wi.Event != nil && wi.Event.GetRepo() != nil {
+			expectedRepo = wi.Event.GetRepo().GetFullName()
+		}
+		if jobStarted.Repository != "" && expectedRepo != "" && !strings.EqualFold(jobStarted.Repository, expectedRepo) {
+			diffs = append(diffs, fmt.Sprintf("repository mismatch: assigned=%q expected=%q", jobStarted.Repository, expectedRepo))
+		}
+
+		// 4. Repository Owner: $GITHUB_REPOSITORY_OWNER vs .repository.owner.login
+		expectedOwner := ""
+		if wi.Event != nil && wi.Event.GetRepo() != nil && wi.Event.GetRepo().GetOwner() != nil {
+			expectedOwner = wi.Event.GetRepo().GetOwner().GetLogin()
+		}
+		if jobStarted.RepositoryOwner != "" && expectedOwner != "" && !strings.EqualFold(jobStarted.RepositoryOwner, expectedOwner) {
+			diffs = append(diffs, fmt.Sprintf("repository_owner mismatch: assigned=%q expected=%q", jobStarted.RepositoryOwner, expectedOwner))
+		}
+
+		// 5. Triggering Actor: $GITHUB_ACTOR vs .sender.login
+		expectedActor := ""
+		if wi.Event != nil && wi.Event.GetSender() != nil {
+			expectedActor = wi.Event.GetSender().GetLogin()
+		}
+		if jobStarted.Actor != "" && expectedActor != "" && !strings.EqualFold(jobStarted.Actor, expectedActor) {
+			diffs = append(diffs, fmt.Sprintf("actor mismatch: assigned=%q expected=%q", jobStarted.Actor, expectedActor))
+		}
+
+		// 6. Workflow Name: $GITHUB_WORKFLOW vs .workflow_job.workflow_name
+		expectedWorkflow := ""
+		if wi.Event != nil && wi.Event.GetWorkflowJob() != nil {
+			expectedWorkflow = wi.Event.GetWorkflowJob().GetWorkflowName()
+		}
+		if jobStarted.Workflow != "" && expectedWorkflow != "" && jobStarted.Workflow != expectedWorkflow {
+			diffs = append(diffs, fmt.Sprintf("workflow mismatch: assigned=%q expected=%q", jobStarted.Workflow, expectedWorkflow))
+		}
+
+		if len(diffs) > 0 {
+			diffMsg := fmt.Sprintf("assigned workflow run differs from queued event: %s", strings.Join(diffs, "; "))
+			ctxlog.Error(ctx, diffMsg, "workflow_instance", wi.Name,
+				"assigned_run_id", jobStarted.RunID, "expected_run_id", expectedRunID,
+				"assigned_repo", jobStarted.Repository, "expected_repo", expectedRepo)
+			if wi.RunStdoutStderr != nil {
+				fmt.Fprintf(wi.RunStdoutStderr, "\nERROR: %s\n", diffMsg)
+			}
+			if status != nil {
+				status.upsert(wi.Name, func(rec *WorkflowSnapshot) {
+					rec.Err = diffMsg
+					rec.Result = "Failed"
+				})
+			}
+			errs.Append(fmt.Errorf("%s", diffMsg))
+		}
+	}
+
+	// b) Regardless of any error from runQueuedJob, ensure record status on GitHub is completed or canceled
+	if clients != nil {
+		targetRepo := ""
+		if jobStarted != nil && jobStarted.Repository != "" {
+			targetRepo = jobStarted.Repository
+		} else if wi.Event != nil && wi.Event.GetRepo() != nil {
+			targetRepo = wi.Event.GetRepo().GetFullName()
+		}
+
+		targetRunID := int64(0)
+		if jobStarted != nil && jobStarted.RunID != 0 {
+			targetRunID = jobStarted.RunID
+		} else if wi.Event != nil && wi.Event.GetWorkflowJob() != nil {
+			targetRunID = wi.Event.GetWorkflowJob().GetRunID()
+		}
+
+		targetJobName := ""
+		if jobStarted != nil && jobStarted.Job != "" {
+			targetJobName = jobStarted.Job
+		} else if wi.Event != nil && wi.Event.GetWorkflowJob() != nil {
+			targetJobName = wi.Event.GetWorkflowJob().GetName()
+		}
+
+		targetJobID := int64(0)
+		if wi.Event != nil && wi.Event.GetWorkflowJob() != nil {
+			if jobStarted == nil || jobStarted.RunID == 0 || jobStarted.RunID == wi.Event.GetWorkflowJob().GetRunID() {
+				targetJobID = wi.Event.GetWorkflowJob().GetID()
+			}
+		}
+
+		if targetRepo != "" && (targetRunID != 0 || targetJobID != 0) {
+			if ghErr := clients.EnsureJobCompletedOrCanceled(ctx, targetRepo, targetRunID, targetJobID, targetJobName); ghErr != nil {
+				ctxlog.Error(ctx, "failed to ensure job completed or canceled on GitHub",
+					"workflow_instance", wi.Name,
+					"repo", targetRepo,
+					"run_id", targetRunID,
+					"job_id", targetJobID,
+					"error", ghErr,
+				)
+				if wi.RunStdoutStderr != nil {
+					fmt.Fprintf(wi.RunStdoutStderr, "\nERROR: failed to ensure job completed/canceled on GitHub: %v\n", ghErr)
+				}
+				if status != nil {
+					status.upsert(wi.Name, func(rec *WorkflowSnapshot) {
+						if rec.Err == "" {
+							rec.Err = ghErr.Error()
+						}
+					})
+				}
+				errs.Append(ghErr)
+			}
+		}
+	}
+
+	return errs.Err()
 }
 
 func newWorkflowInstanceManager(lm *internal.LogFileManager) *workflowInstanceManager {

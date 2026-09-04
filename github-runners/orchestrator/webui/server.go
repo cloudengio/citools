@@ -10,10 +10,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"io/fs"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -46,6 +48,14 @@ type Backend interface {
 	// WorkflowLog opens a log artifact for a workflow job. The caller closes the
 	// returned reader.
 	WorkflowLog(ctx context.Context, name, artifact string) (io.ReadCloser, LogArtifact, error)
+	// ServiceStatus returns the status of the launchd login service.
+	ServiceStatus(ctx context.Context) (ServiceStatus, error)
+	// RestartService requests restarting the orchestrator login service.
+	RestartService(ctx context.Context) error
+	// UninstallService requests uninstalling and stopping the orchestrator login service.
+	UninstallService(ctx context.Context) error
+	// BuildInfo returns the orchestrator binary build and version details.
+	BuildInfo(ctx context.Context) (BuildInfo, error)
 	// Subscribe returns a coalescing change signal and a cancel function. The
 	// subscription is also released when ctx is cancelled.
 	Subscribe(ctx context.Context) (<-chan struct{}, func())
@@ -90,6 +100,14 @@ func (s *Server) GetConfig(ctx context.Context, _ GetConfigRequestObject) (GetCo
 		return nil, err
 	}
 	return GetConfig200JSONResponse(cfg), nil
+}
+
+func (s *Server) GetBuildInfo(ctx context.Context, _ GetBuildInfoRequestObject) (GetBuildInfoResponseObject, error) {
+	bi, err := s.backend.BuildInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return GetBuildInfo200JSONResponse(bi), nil
 }
 
 func (s *Server) DownloadConfigFile(ctx context.Context, _ DownloadConfigFileRequestObject) (DownloadConfigFileResponseObject, error) {
@@ -180,12 +198,53 @@ func (s *Server) DownloadWorkflowLog(ctx context.Context, request DownloadWorkfl
 	if meta.ContentType != nil && *meta.ContentType != "" {
 		contentType = *meta.ContentType
 	}
+	if request.Params.View != nil && *request.Params.View && (strings.HasPrefix(contentType, "text/") || request.Artifact == "job") {
+		var jobURL string
+		if request.Params.JobUrl != nil && *request.Params.JobUrl != "" {
+			jobURL = *request.Params.JobUrl
+		} else if wf, ok, err := s.backend.Workflow(ctx, request.Name); err == nil && ok {
+			if wf.JobUrl != nil && *wf.JobUrl != "" {
+				jobURL = *wf.JobUrl
+			} else if wf.RepoFullName != nil && wf.RunId != nil && wf.JobId != nil && *wf.RepoFullName != "" && *wf.RunId != 0 && *wf.JobId != 0 {
+				jobURL = fmt.Sprintf("https://github.com/%s/actions/runs/%d/job/%d", *wf.RepoFullName, *wf.RunId, *wf.JobId)
+			}
+		}
+		return workflowLogHTMLResponse{
+			workflowName: request.Name,
+			artifact:     request.Artifact,
+			filename:     meta.Filename,
+			body:         rc,
+			jobURL:       jobURL,
+		}, nil
+	}
 	return fileDownloadResponse{
 		filename:    meta.Filename,
 		contentType: contentType,
 		body:        rc,
 		length:      length,
 	}, nil
+}
+
+func (s *Server) GetServiceStatus(ctx context.Context, _ GetServiceStatusRequestObject) (GetServiceStatusResponseObject, error) {
+	status, err := s.backend.ServiceStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return GetServiceStatus200JSONResponse(status), nil
+}
+
+func (s *Server) RestartService(ctx context.Context, _ RestartServiceRequestObject) (RestartServiceResponseObject, error) {
+	if err := s.backend.RestartService(ctx); err != nil {
+		return RestartService400JSONResponse{Error: err.Error()}, nil
+	}
+	return RestartService200Response{}, nil
+}
+
+func (s *Server) UninstallService(ctx context.Context, _ UninstallServiceRequestObject) (UninstallServiceResponseObject, error) {
+	if err := s.backend.UninstallService(ctx); err != nil {
+		return UninstallService400JSONResponse{Error: err.Error()}, nil
+	}
+	return UninstallService200Response{}, nil
 }
 
 func (s *Server) StreamEvents(ctx context.Context, _ StreamEventsRequestObject) (StreamEventsResponseObject, error) {
@@ -294,3 +353,157 @@ func (r fileDownloadResponse) VisitDownloadConfigFileResponse(w http.ResponseWri
 func (r fileDownloadResponse) VisitDownloadWorkflowLogResponse(w http.ResponseWriter) error {
 	return r.write(w)
 }
+
+type workflowLogHTMLResponse struct {
+	workflowName string
+	artifact     string
+	filename     string
+	body         io.Reader
+	jobURL       string
+}
+
+func (r workflowLogHTMLResponse) VisitDownloadWorkflowLogResponse(w http.ResponseWriter) error {
+	if c, ok := r.body.(io.Closer); ok {
+		defer c.Close() //nolint:errcheck
+	}
+	data, err := io.ReadAll(r.body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return err
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	return logPageTemplate.Execute(w, struct {
+		Name     string
+		Artifact string
+		Filename string
+		Content  string
+		JobURL   string
+	}{
+		Name:     r.workflowName,
+		Artifact: r.artifact,
+		Filename: r.filename,
+		Content:  string(data),
+		JobURL:   r.jobURL,
+	})
+}
+
+var logPageTemplate = template.Must(template.New("logPage").Parse(`<!DOCTYPE html>
+<html lang="en" style="background-color: #ffffff; color-scheme: light;">
+<head>
+  <meta charset="utf-8">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Workflow Log: {{.Name}} ({{.Artifact}})</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --panel: #f6f8fa;
+      --panel2: #ffffff;
+      --fg: #1f2328;
+      --muted: #656d76;
+      --border: #d0d7de;
+      --accent: #0969da;
+    }
+    * { box-sizing: border-box; }
+    html {
+      background-color: #ffffff;
+      color-scheme: light;
+    }
+    body {
+      margin: 0;
+      background-color: #ffffff;
+      color: var(--fg);
+      font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      min-height: 100vh;
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 20px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .title {
+      font-size: 14px;
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .title strong {
+      color: var(--fg);
+    }
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .btn {
+      background: var(--panel2);
+      border: 1px solid var(--border);
+      color: var(--fg);
+      border-radius: 6px;
+      padding: 4px 12px;
+      font-size: 12px;
+      cursor: pointer;
+      text-decoration: none;
+      font-family: inherit;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: #f3f4f6;
+    }
+    .btn.primary {
+      background: #0969da;
+      border-color: #0969da;
+      color: #ffffff;
+    }
+    .btn.primary:hover {
+      background: #085bc4;
+      border-color: #085bc4;
+      color: #ffffff;
+    }
+    .log-content {
+      padding: 16px 20px;
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-all;
+      background-color: #ffffff;
+      color: var(--fg);
+    }
+  </style>
+</head>
+<body style="background-color: #ffffff; color: #1f2328;">
+  <div class="topbar">
+    <div class="title">
+      Workflow: <strong>{{.Name}}</strong> &middot; Artifact: <strong>{{.Filename}}</strong>
+      {{if .JobURL}}
+      &middot; <a href="{{.JobURL}}" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none; font-weight: 500;">GitHub workflow log ↗</a>
+      {{end}}
+    </div>
+    <div class="actions">
+      {{if .JobURL}}
+      <a class="btn primary" href="{{.JobURL}}" target="_blank" rel="noopener noreferrer" title="View workflow log on GitHub">GitHub Log ↗</a>
+      {{end}}
+      <button class="btn" onclick="location.reload()">Refresh</button>
+      <a class="btn" href="?view=false" download>Download</a>
+    </div>
+  </div>
+  <pre class="log-content">{{.Content}}</pre>
+</body>
+</html>
+`))

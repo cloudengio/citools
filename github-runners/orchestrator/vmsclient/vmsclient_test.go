@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 )
 
@@ -40,5 +41,57 @@ func TestProviderSelection(t *testing.T) {
 	// A pool with no backend configured is rejected.
 	if _, err := (PoolConfig{}).newProvider("empty", slog.Default()); !errors.Is(err, ErrNoBackend) {
 		t.Errorf("empty pool: got %v, want ErrNoBackend", err)
+	}
+}
+
+// TestBareImageName covers the reduction of an image reference to the name
+// used in VM names, which may not contain the "/" and ":" of a registry
+// reference.
+func TestBareImageName(t *testing.T) {
+	for _, tc := range []struct{ image, want string }{
+		// A local image is used as-is.
+		{"linux-ci", "linux-ci"},
+		{"macos-ci", "macos-ci"},
+		// A tag is stripped.
+		{"linux-ci:latest", "linux-ci"},
+		// A registry host and port are stripped, with and without a tag.
+		{"mm-1:5001/linux-ci:latest", "linux-ci"},
+		{"mm-1:5001/linux-ci", "linux-ci"},
+		{"localhost:5000/macos-ci:1.2.3", "macos-ci"},
+		// Path segments are stripped along with the host.
+		{"ghcr.io/cirruslabs/macos-sequoia-base:latest", "macos-sequoia-base"},
+		{"ghcr.io/cirruslabs/ubuntu", "ubuntu"},
+		// A digest is stripped, alone and with a registry.
+		{"linux-ci@sha256:0123456789abcdef", "linux-ci"},
+		{"mm-1:5001/linux-ci@sha256:0123456789abcdef", "linux-ci"},
+		// Degenerate input is returned rather than rejected; validation of the
+		// image reference belongs to tart.
+		{"", ""},
+	} {
+		if got := bareImageName(tc.image); got != tc.want {
+			t.Errorf("bareImageName(%q) = %q, want %q", tc.image, got, tc.want)
+		}
+	}
+}
+
+// TestVMNamePrefixRemoteImage verifies that a VM created from a remote image
+// is named after the image alone, since "/" and ":" cannot appear in a VM name.
+func TestVMNamePrefixRemoteImage(t *testing.T) {
+	p := newTartProvider("linux", TartConfig{Image: "mm-1:5001/linux-ci:latest"}, slog.Default())
+	inst, err := p.New(context.Background())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	name := inst.ID()
+	if want := vmNamePrefix("linux", "linux-ci"); !strings.HasPrefix(name, want) {
+		t.Errorf("VM name %q does not start with %q", name, want)
+	}
+	if strings.ContainsAny(name, "/:") {
+		t.Errorf("VM name %q contains a character not valid in a VM name", name)
+	}
+	// The provider still reports the configured image, which tart needs in full
+	// to clone from the registry.
+	if got, want := p.Image(), "mm-1:5001/linux-ci:latest"; got != want {
+		t.Errorf("Image(): got %q, want %q", got, want)
 	}
 }

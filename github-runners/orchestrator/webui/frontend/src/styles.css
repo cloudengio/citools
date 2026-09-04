@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   --bg: #0f1115;
   --panel: #181b21;
   --panel2: #1f232b;
@@ -10,9 +11,15 @@
 
 * { box-sizing: border-box; }
 
+html {
+  background-color: var(--bg);
+  color-scheme: dark;
+}
+
 body {
   margin: 0;
-  background: var(--bg);
+  background-color: var(--bg);
+  color-scheme: dark;
   color: var(--fg);
   font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
@@ -25,6 +32,7 @@ body {
   position: sticky; top: 0; background: var(--bg); z-index: 5;
 }
 .topbar h1 { font-size: 18px; margin: 0; }
+.build-info-bar { display: flex; align-items: center; gap: 8px; margin-top: 3px; font-size: 11px; }
 .spacer { flex: 1; }
 
 .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
@@ -61,8 +69,12 @@ h4 { margin: 16px 0 6px; font-size: 13px; color: var(--muted); }
 .badge-failed, .badge-canceled { background: #46201d; color: #e07b70; }
 .badge-stopped, .badge-deleted, .badge-unknown { background: #2a2f38; color: var(--muted); }
 
-.loglink { display: inline-block; margin-right: 8px; color: var(--accent); text-decoration: none; }
+.log-links { display: flex; flex-direction: column; gap: 3px; }
+.log-item { white-space: nowrap; font-size: 12px; }
+.log-item .mono { color: var(--muted); margin-right: 3px; }
+.loglink { color: var(--accent); text-decoration: none; -webkit-tap-highlight-color: transparent; }
 .loglink:hover { text-decoration: underline; }
+.loglink:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 
 .err-text { color: #e07b70; font-size: 12px; }
 .hint { font-size: 11px; color: var(--muted); margin-top: 2px; }
@@ -78,3 +90,24 @@ a { color: var(--accent); }
 .link { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 0; }
 
 .error { background: #46201d; color: #e07b70; border: 1px solid #6b2b26; border-radius: 6px; padding: 8px 12px; margin: 12px 0; }
+
+.service-controls { display: flex; align-items: center; gap: 8px; margin-right: 8px; }
+.service-alert { font-size: 12px; color: #d9c05a; display: flex; align-items: center; gap: 6px; margin-right: 8px; }
+
+.btn-primary { background: var(--accent); color: #fff; border: 1px solid var(--accent); }
+.btn-primary:hover { background: #3b74e6; }
+
+.modal-backdrop {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100;
+}
+.modal {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 8px; padding: 20px; max-width: 440px; width: 90%;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.modal h3 { margin-top: 0; margin-bottom: 12px; font-size: 16px; }
+.modal p { color: var(--muted); font-size: 13px; margin: 0 0 20px; line-height: 1.5; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; }

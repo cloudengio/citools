@@ -41,18 +41,59 @@ function CancelButton({ wf }: { wf: WorkflowStatus }) {
 function LogLinks({ wf }: { wf: WorkflowStatus }) {
   const logs = wf.logs ?? []
   if (logs.length === 0) return <span className="muted">—</span>
+  const jobUrl = wf.job_url || (wf.repo_full_name && wf.run_id && wf.job_id
+    ? `https://github.com/${wf.repo_full_name}/actions/runs/${wf.run_id}/job/${wf.job_id}`
+    : null)
   return (
-    <>
-      {logs.map((l) => (
-        <a key={l.id} className="loglink" href={logURL(wf.name, l.id)} download>
-          {l.id}
-        </a>
-      ))}
-    </>
+    <div className="log-links">
+      {logs.map((l) => {
+        const canView = l.id === 'job' || (l.content_type?.startsWith('text/') ?? false)
+        return (
+          <div key={l.id} className="log-item">
+            <span className="mono">{l.id}:</span>{' '}
+            {canView ? (
+              <>
+                <a
+                  className="loglink"
+                  href={logURL(wf.name, l.id, true, jobUrl)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={`View ${l.filename ?? l.id}`}
+                >
+                  view
+                </a>
+                <span className="muted">·</span>{' '}
+                <a
+                  className="loglink"
+                  href={logURL(wf.name, l.id)}
+                  download
+                  title={`Download ${l.filename ?? l.id}`}
+                >
+                  download
+                </a>
+              </>
+            ) : (
+              <a
+                className="loglink"
+                href={logURL(wf.name, l.id)}
+                download
+                title={`Download ${l.filename ?? l.id}`}
+              >
+                download
+              </a>
+            )}
+          </div>
+        )
+      })}
+    </div>
   )
 }
 
 function WorkflowRow({ wf }: { wf: WorkflowStatus }) {
+  const jobUrl = wf.job_url || (wf.repo_full_name && wf.run_id && wf.job_id
+    ? `https://github.com/${wf.repo_full_name}/actions/runs/${wf.run_id}/job/${wf.job_id}`
+    : null)
+
   return (
     <tr>
       <td>
@@ -70,7 +111,21 @@ function WorkflowRow({ wf }: { wf: WorkflowStatus }) {
         ) : (
           wf.repo_full_name ?? '—'
         )}
-        <div className="muted">{wf.workflow_name}{wf.job_name ? ` / ${wf.job_name}` : ''}</div>
+        <div className="muted">
+          {jobUrl ? (
+            <a
+              className="loglink"
+              href={jobUrl}
+              target="_blank"
+              rel="noreferrer"
+              title={`Open job run on GitHub: ${jobUrl}`}
+            >
+              {wf.workflow_name ?? 'workflow'}{wf.job_name ? ` / ${wf.job_name}` : ''} ↗
+            </a>
+          ) : (
+            `${wf.workflow_name ?? ''}${wf.job_name ? ` / ${wf.job_name}` : ''}`
+          )}
+        </div>
       </td>
       <td>
         {(wf.labels ?? []).map((l) => <span key={l} className="chip sm">{l}</span>)}
@@ -80,7 +135,23 @@ function WorkflowRow({ wf }: { wf: WorkflowStatus }) {
       <td>{fmtTime(wf.queued_at)}</td>
       <td><LiveDuration from={wf.started_at} to={wf.completed_at} /></td>
       <td><LogLinks wf={wf} /></td>
-      <td><CancelButton wf={wf} /></td>
+      <td>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <CancelButton wf={wf} />
+          {jobUrl && (
+            <a
+              className="loglink"
+              href={jobUrl}
+              target="_blank"
+              rel="noreferrer"
+              title={`Open run on GitHub: ${jobUrl}`}
+              style={{ fontSize: 11 }}
+            >
+              GitHub run ↗
+            </a>
+          )}
+        </div>
+      </td>
     </tr>
   )
 }
