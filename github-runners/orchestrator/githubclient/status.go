@@ -6,6 +6,7 @@ package githubclient
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -43,6 +44,8 @@ type WorkflowSnapshot struct {
 	WorkflowName string
 	JobName      string
 	JobID        int64
+	RunID        int64
+	JobURL       string
 	Labels       []string
 	Pool         string
 	VMID         string
@@ -173,6 +176,11 @@ func snapshotFromInstance(wi *WorkflowInstance) func(*WorkflowSnapshot) {
 				rec.WorkflowName = job.GetWorkflowName()
 				rec.JobName = job.GetName()
 				rec.JobID = job.GetID()
+				rec.RunID = job.GetRunID()
+				rec.JobURL = job.GetHTMLURL()
+				if rec.JobURL == "" && rec.RepoFullName != "" && rec.RunID != 0 && rec.JobID != 0 {
+					rec.JobURL = fmt.Sprintf("https://github.com/%s/actions/runs/%d/job/%d", rec.RepoFullName, rec.RunID, rec.JobID)
+				}
 				if len(job.Labels) > 0 {
 					rec.Labels = append([]string(nil), job.Labels...)
 				}

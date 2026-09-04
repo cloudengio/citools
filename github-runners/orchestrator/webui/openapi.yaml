@@ -22,6 +22,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ConfigSummary"
+  /buildinfo:
+    get:
+      operationId: getBuildInfo
+      summary: Get orchestrator build and version information
+      tags: [system]
+      responses:
+        "200":
+          description: Build and version details for the running orchestrator binary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BuildInfo"
   /config/file:
     get:
       operationId: downloadConfigFile
@@ -205,8 +217,61 @@ paths:
             text/event-stream:
               schema:
                 $ref: "#/components/schemas/Event"
+  /service:
+    get:
+      operationId: getServiceStatus
+      summary: Status of the launchd login service
+      tags: [service]
+      responses:
+        "200":
+          description: Service status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceStatus"
+  /service/restart:
+    post:
+      operationId: restartService
+      summary: Restart the orchestrator login service
+      tags: [service]
+      responses:
+        "200":
+          description: Service restart initiated.
+        "400":
+          description: Service is not installed or restart failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /service/uninstall:
+    post:
+      operationId: uninstallService
+      summary: Uninstall and stop the orchestrator login service
+      tags: [service]
+      responses:
+        "200":
+          description: Service uninstalled successfully.
+        "400":
+          description: Service is not installed or uninstall failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 components:
   schemas:
+    ServiceStatus:
+      type: object
+      required: [installed, running]
+      properties:
+        installed:
+          type: boolean
+          description: Whether the launchd login service is installed.
+        running:
+          type: boolean
+          description: Whether the orchestrator is currently running as a service.
+        label:
+          type: string
+          description: The service label / bundle ID.
     Error:
       type: object
       required: [error]
@@ -367,6 +432,12 @@ components:
         job_id:
           type: integer
           format: int64
+        run_id:
+          type: integer
+          format: int64
+        job_url:
+          type: string
+          description: URL to the workflow run job on GitHub (e.g. https://github.com/<owner>/<repo>/actions/runs/<run_id>/job/<job_id>).
         labels:
           type: array
           items:
@@ -430,3 +501,40 @@ components:
           $ref: "#/components/schemas/PoolStatus"
         workflow:
           $ref: "#/components/schemas/WorkflowStatus"
+    BuildInfo:
+      type: object
+      required:
+        - go_version
+        - os
+        - arch
+      properties:
+        go_version:
+          type: string
+          example: "go1.24.0"
+        path:
+          type: string
+          example: "github.com/cloudengio/citools/runners/macos/orchestrator"
+        version:
+          type: string
+          example: "v0.1.0"
+        revision:
+          type: string
+          example: "e005e3a0b1c2..."
+        revision_short:
+          type: string
+          example: "e005e3a0"
+        revision_time:
+          type: string
+          example: "2026-09-03T17:15:00Z"
+        build_time:
+          type: string
+          example: "2026-09-03T18:00:00Z"
+        modified:
+          type: boolean
+          example: false
+        os:
+          type: string
+          example: "darwin"
+        arch:
+          type: string
+          example: "arm64"

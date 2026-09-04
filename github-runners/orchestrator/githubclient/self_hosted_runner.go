@@ -81,7 +81,7 @@ func (shr *selfHostedRunner) createRunCommand() execCommand {
 
 func (shr *selfHostedRunner) createExtractLogsCommand() execCommand {
 	var args strings.Builder
-	fmt.Fprintf(&args, "cd %s && tar czf - _diag", shr.runnerDir)
+	fmt.Fprintf(&args, "cd %s && tar czf - _diag $([ -f job-started.json ] && echo job-started.json)", shr.runnerDir)
 	return execCommand{
 		step:     "extract-logs",
 		cmd:      "bash",
@@ -139,31 +139,13 @@ func (shr *selfHostedRunner) runQueuedJob(ctx context.Context, inst *WorkflowIns
 		shr.createRunCommand())
 	errs.Append(err)
 
-	jobStarted, rawData, jsErr := shr.readJobStarted(ctx, vm)
-	if jsErr != nil {
-		ctxlog.Warn(ctx, "failed to read job-started info from VM", "vm", vm.ID(), "error", jsErr)
-	} else {
-		ctxlog.Info(ctx, "read job-started info from VM",
-			"vm", vm.ID(),
-			"run_id", jobStarted.RunID,
-			"job", jobStarted.Job,
-			"workflow", jobStarted.Workflow,
-			"repo", jobStarted.Repository,
-		)
-		inst.JobStarted = jobStarted
-		inst.JobStartedRaw = rawData
+	// Ensure logs are extracted before the VM is stopped.
+	if extractErr := inst.ExtractLogs(ctx); extractErr != nil {
+		errs.Append(extractErr)
 	}
 
-	stderr := bytes.NewBuffer(make([]byte, 0, 1024))
-	err = shr.extractLogs(ctx, vm, inst.DiagStdout, stderr)
-	if err != nil {
-		ctxlog.Error(ctx, "failed to extract _diag directory", "vm", vm.ID(), "error", err, "stderr", stderr.String())
-		errs.Append(err)
-	}
-
-	// Stop the VM
-	ctxlog.Info(ctx, "stopping vm", "vm", vm.ID())
-	runErr, stopErr := vm.StopAndRelease(ctx, 30*time.Second)
+	// Stop and release the VM.
+	runErr, stopErr := inst.StopAndReleaseVM(ctx, 30*time.Second)
 	if stopErr != nil || runErr != nil {
 		if stopErr != nil {
 			ctxlog.Error(ctx, "failed to stop VM after run error", "vm", vm.ID(), "stop_err", stopErr, "run_err", runErr)
@@ -177,10 +159,10 @@ func (shr *selfHostedRunner) runQueuedJob(ctx context.Context, inst *WorkflowIns
 	ce := vmsclient.CompletionEvent[WorkflowInstance]{Payload: *inst}
 	if err := errs.Err(); err != nil {
 		shr.completionQueue.PushFailure(ce, err)
-		return jobStarted, err
+		return inst.JobStarted, err
 	}
 	shr.completionQueue.PushSuccess(ce)
-	return jobStarted, nil
+	return inst.JobStarted, nil
 }
 
 func (shr *selfHostedRunner) runCmds(ctx context.Context, vm *vmspool.VM, stdout, stderr io.Writer, cmds ...execCommand) error {

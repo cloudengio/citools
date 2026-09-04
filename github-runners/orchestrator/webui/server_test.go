@@ -37,7 +37,16 @@ func (fakeBackend) Pools(context.Context) ([]PoolStatus, error) {
 
 func workflowWithLogs() WorkflowStatus {
 	logs := []LogArtifact{{Id: "job", Filename: "job.txt", Href: BasePath + "/workflows/w1/logs/job"}}
-	return WorkflowStatus{Name: "w1", State: WorkflowStateRunning, VmId: new("vm1"), Logs: &logs}
+	jobURL := "https://github.com/cloudengio/go.pkgs/actions/runs/33788991410/job/100760675888"
+	return WorkflowStatus{
+		Name:   "w1",
+		State:  WorkflowStateRunning,
+		VmId:   new("vm1"),
+		Logs:   &logs,
+		JobUrl: &jobURL,
+		RunId:  new(int64(33788991410)),
+		JobId:  new(int64(100760675888)),
+	}
 }
 
 func (fakeBackend) Workflows(context.Context) ([]WorkflowStatus, error) {
@@ -60,6 +69,27 @@ func (fakeBackend) CancelWorkflow(_ context.Context, name string) error {
 
 func (fakeBackend) WorkflowLog(_ context.Context, _, artifact string) (io.ReadCloser, LogArtifact, error) {
 	return io.NopCloser(strings.NewReader("hello log")), LogArtifact{Id: artifact, Filename: "job.txt"}, nil
+}
+
+func (fakeBackend) ServiceStatus(context.Context) (ServiceStatus, error) {
+	lbl := "io.cloudeng.citools.runners.macos.orchestrator"
+	return ServiceStatus{
+		Installed: true,
+		Running:   true,
+		Label:     &lbl,
+	}, nil
+}
+
+func (fakeBackend) RestartService(context.Context) error {
+	return nil
+}
+
+func (fakeBackend) UninstallService(context.Context) error {
+	return nil
+}
+
+func (fakeBackend) BuildInfo(context.Context) (BuildInfo, error) {
+	return CurrentBuildInfo(), nil
 }
 
 func (f *fakeBackend) Subscribe(context.Context) (<-chan struct{}, func()) {
@@ -91,9 +121,11 @@ func TestEndpoints(t *testing.T) {
 		{BasePath + "/config/file", "global:"},
 		{BasePath + "/pools", `"name":"macos"`},
 		{BasePath + "/workflows", `"name":"w1"`},
-		{BasePath + "/workflows/w1", `"state":"running"`},
+		{BasePath + "/workflows/w1", `"job_url":"https://github.com/cloudengio/go.pkgs/actions/runs/33788991410/job/100760675888"`},
 		{BasePath + "/workflows/w1/logs", `"id":"job"`},
 		{BasePath + "/workflows/w1/logs/job", "hello log"},
+		{BasePath + "/service", `"installed":true`},
+		{BasePath + "/buildinfo", `"go_version"`},
 		{"/", "Runner Orchestrator"},
 	}
 	for _, tc := range cases {
@@ -104,6 +136,24 @@ func TestEndpoints(t *testing.T) {
 		if !strings.Contains(body, tc.want) {
 			t.Errorf("%s: body %q missing %q", tc.path, body, tc.want)
 		}
+	}
+}
+
+func TestServiceEndpoints(t *testing.T) {
+	ts := newTestServer(t)
+	post := func(path string) int {
+		resp, err := http.Post(ts.URL+path, "", nil) //nolint:noctx
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	if code := post(BasePath + "/service/restart"); code != http.StatusOK {
+		t.Errorf("POST /service/restart: got %d want %d", code, http.StatusOK)
+	}
+	if code := post(BasePath + "/service/uninstall"); code != http.StatusOK {
+		t.Errorf("POST /service/uninstall: got %d want %d", code, http.StatusOK)
 	}
 }
 

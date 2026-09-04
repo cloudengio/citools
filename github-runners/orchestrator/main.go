@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"syscall"
 
 	"cloudeng.io/cmdutil"
@@ -223,6 +224,7 @@ func repoClientsPrehook(ctx context.Context) (context.Context, string, subcmd.Po
 }
 
 func main() {
+	runtime.LockOSThread() // Required for AppKit / Cocoa UI on macOS
 	ctx := context.Background()
 	ctx, cancel := context.WithCancelCause(ctx)
 	cli := createCLI()

@@ -176,22 +176,10 @@ func TestJobStartedMismatchDetection(t *testing.T) {
 	if jobStarted.Workflow != "" && expectedWorkflow != "" && jobStarted.Workflow != expectedWorkflow {
 		diffs = append(diffs, "workflow mismatch")
 	}
-	expectedSHA := wi.Event.GetWorkflowJob().GetHeadSHA()
-	if jobStarted.SHA != "" && expectedSHA != "" && !strings.EqualFold(jobStarted.SHA, expectedSHA) {
-		diffs = append(diffs, "sha mismatch")
-	}
-	expectedBranch := wi.Event.GetWorkflowJob().GetHeadBranch()
-	if jobStarted.Ref != "" && expectedBranch != "" {
-		refClean := strings.TrimPrefix(strings.TrimPrefix(jobStarted.Ref, "refs/heads/"), "refs/tags/")
-		branchClean := strings.TrimPrefix(strings.TrimPrefix(expectedBranch, "refs/heads/"), "refs/tags/")
-		if refClean != branchClean && jobStarted.Ref != expectedBranch {
-			diffs = append(diffs, "ref mismatch")
-		}
-	}
 
-	// 8 guaranteed fields mismatched; Job was NOT checked.
-	if len(diffs) != 8 {
-		t.Fatalf("expected 8 mismatches, got %d: %v", len(diffs), diffs)
+	// 6 guaranteed fields mismatched; Job, SHA, and Ref are NOT checked.
+	if len(diffs) != 6 {
+		t.Fatalf("expected 6 mismatches, got %d: %v", len(diffs), diffs)
 	}
 
 	diffMsg := "assigned workflow run differs from queued event: " + strings.Join(diffs, "; ")

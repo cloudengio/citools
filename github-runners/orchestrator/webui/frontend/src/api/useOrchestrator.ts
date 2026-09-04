@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   eventsURL,
+  getBuildInfo,
   getConfig,
   getPools,
   getWorkflows,
+  type BuildInfo,
   type ConfigSummary,
   type PoolStatus,
   type WorkflowStatus,
@@ -16,6 +18,7 @@ import {
 // additions, updates AND deletions correct with minimal client logic.
 export function useOrchestrator() {
   const [config, setConfig] = useState<ConfigSummary | null>(null)
+  const [buildInfo, setBuildInfo] = useState<BuildInfo | null>(null)
   const [pools, setPools] = useState<PoolStatus[]>([])
   const [workflows, setWorkflows] = useState<WorkflowStatus[]>([])
   const [connected, setConnected] = useState(false)
@@ -36,6 +39,9 @@ export function useOrchestrator() {
     getConfig()
       .then(setConfig)
       .catch((e) => setError(String(e)))
+    getBuildInfo()
+      .then(setBuildInfo)
+      .catch(() => {})
     void refresh()
 
     const es = new EventSource(eventsURL)
@@ -59,5 +65,5 @@ export function useOrchestrator() {
     }
   }, [refresh])
 
-  return { config, pools, workflows, connected, error, refresh }
+  return { config, buildInfo, pools, workflows, connected, error, refresh }
 }

@@ -48,6 +48,14 @@ type Backend interface {
 	// WorkflowLog opens a log artifact for a workflow job. The caller closes the
 	// returned reader.
 	WorkflowLog(ctx context.Context, name, artifact string) (io.ReadCloser, LogArtifact, error)
+	// ServiceStatus returns the status of the launchd login service.
+	ServiceStatus(ctx context.Context) (ServiceStatus, error)
+	// RestartService requests restarting the orchestrator login service.
+	RestartService(ctx context.Context) error
+	// UninstallService requests uninstalling and stopping the orchestrator login service.
+	UninstallService(ctx context.Context) error
+	// BuildInfo returns the orchestrator binary build and version details.
+	BuildInfo(ctx context.Context) (BuildInfo, error)
 	// Subscribe returns a coalescing change signal and a cancel function. The
 	// subscription is also released when ctx is cancelled.
 	Subscribe(ctx context.Context) (<-chan struct{}, func())
@@ -92,6 +100,14 @@ func (s *Server) GetConfig(ctx context.Context, _ GetConfigRequestObject) (GetCo
 		return nil, err
 	}
 	return GetConfig200JSONResponse(cfg), nil
+}
+
+func (s *Server) GetBuildInfo(ctx context.Context, _ GetBuildInfoRequestObject) (GetBuildInfoResponseObject, error) {
+	bi, err := s.backend.BuildInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return GetBuildInfo200JSONResponse(bi), nil
 }
 
 func (s *Server) DownloadConfigFile(ctx context.Context, _ DownloadConfigFileRequestObject) (DownloadConfigFileResponseObject, error) {
@@ -196,6 +212,28 @@ func (s *Server) DownloadWorkflowLog(ctx context.Context, request DownloadWorkfl
 		body:        rc,
 		length:      length,
 	}, nil
+}
+
+func (s *Server) GetServiceStatus(ctx context.Context, _ GetServiceStatusRequestObject) (GetServiceStatusResponseObject, error) {
+	status, err := s.backend.ServiceStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return GetServiceStatus200JSONResponse(status), nil
+}
+
+func (s *Server) RestartService(ctx context.Context, _ RestartServiceRequestObject) (RestartServiceResponseObject, error) {
+	if err := s.backend.RestartService(ctx); err != nil {
+		return RestartService400JSONResponse{Error: err.Error()}, nil
+	}
+	return RestartService200Response{}, nil
+}
+
+func (s *Server) UninstallService(ctx context.Context, _ UninstallServiceRequestObject) (UninstallServiceResponseObject, error) {
+	if err := s.backend.UninstallService(ctx); err != nil {
+		return UninstallService400JSONResponse{Error: err.Error()}, nil
+	}
+	return UninstallService200Response{}, nil
 }
 
 func (s *Server) StreamEvents(ctx context.Context, _ StreamEventsRequestObject) (StreamEventsResponseObject, error) {

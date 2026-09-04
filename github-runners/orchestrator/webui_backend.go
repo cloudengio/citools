@@ -291,6 +291,16 @@ func workflowStatusFromSnapshot(s githubclient.WorkflowSnapshot) webui.WorkflowS
 	if s.JobID != 0 {
 		ws.JobId = new(s.JobID)
 	}
+	if s.RunID != 0 {
+		ws.RunId = new(s.RunID)
+	}
+	jobURL := s.JobURL
+	if jobURL == "" && s.RepoFullName != "" && s.RunID != 0 && s.JobID != 0 {
+		jobURL = fmt.Sprintf("https://github.com/%s/actions/runs/%d/job/%d", s.RepoFullName, s.RunID, s.JobID)
+	}
+	if jobURL != "" {
+		ws.JobUrl = &jobURL
+	}
 	if len(s.Labels) > 0 {
 		ws.Labels = new(append([]string(nil), s.Labels...))
 	}
@@ -361,4 +371,43 @@ func (b *webuiBackend) WorkflowLog(_ context.Context, name, artifact string) (io
 	}
 	art, _ := logArtifact(name, artifact, path)
 	return f, art, nil
+}
+
+func (b *webuiBackend) ServiceStatus(_ context.Context) (webui.ServiceStatus, error) {
+	installed := serviceAgent().IsInstalled()
+	lbl := serviceLabel
+	return webui.ServiceStatus{
+		Installed: installed,
+		Running:   installed,
+		Label:     &lbl,
+	}, nil
+}
+
+func (b *webuiBackend) RestartService(_ context.Context) error {
+	agent := serviceAgent()
+	if !agent.IsInstalled() {
+		return errors.New("login service is not installed")
+	}
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		_ = runSteps(context.Background(), false, agent.Restart())
+	}()
+	return nil
+}
+
+func (b *webuiBackend) UninstallService(_ context.Context) error {
+	agent := serviceAgent()
+	if !agent.IsInstalled() {
+		return errors.New("login service is not installed")
+	}
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		_ = runSteps(context.Background(), false, agent.Uninstall()...)
+		os.Exit(0)
+	}()
+	return nil
+}
+
+func (b *webuiBackend) BuildInfo(_ context.Context) (webui.BuildInfo, error) {
+	return webui.CurrentBuildInfo(), nil
 }

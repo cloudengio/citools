@@ -239,3 +239,34 @@ func TestHandleWebhooksIgnoresUnknownAction(t *testing.T) {
 		t.Errorf("VM state: got %q, want %q", got, want)
 	}
 }
+
+// TestCompletedWebhookWhileJobStillRunningLocallyDoesNotTearDownVM verifies that
+// a completed event with a normal conclusion (e.g. success) arriving while the job
+// is still running locally does NOT tear down the VM or mark the job as canceled;
+// the local runner is allowed to extract diagnostics and stop the VM cleanly.
+func TestCompletedWebhookWhileJobStillRunningLocallyDoesNotTearDownVM(t *testing.T) {
+	h := newCancelHarness(t)
+	ctx := context.Background()
+
+	// Sanity: VM is running.
+	if got, want := vmState(t, h.pools, h.vm.ID()), "Running"; got != want {
+		t.Fatalf("VM state before event: got %q, want %q", got, want)
+	}
+
+	e := jobEvent("completed", 1234, h.instance.Name)
+	e.WorkflowJob.Conclusion = new("success")
+	h.handler.handleCompleted(ctx, e)
+
+	// The VM is NOT stopped: local execution is still in progress.
+	if got, want := vmState(t, h.pools, h.vm.ID()), "Running"; got != want {
+		t.Errorf("VM state after event: got %q, want %q", got, want)
+	}
+
+	snap := snapshotFor(t, h.handler, h.instance.Name)
+	if got, want := snap.State, WorkflowRunning; got != want {
+		t.Errorf("state: got %v, want %v", got, want)
+	}
+	if got, want := snap.Result, "success"; got != want {
+		t.Errorf("result: got %q, want %q", got, want)
+	}
+}

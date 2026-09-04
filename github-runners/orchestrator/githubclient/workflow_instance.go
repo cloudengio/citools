@@ -5,6 +5,7 @@
 package githubclient
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -38,6 +39,9 @@ type WorkflowInstance struct {
 	vm                          *vmspool.VM
 	token                       *gogithub.RegistrationToken
 	logFile, diagLogs           *os.File
+	vmMu                        sync.Mutex
+	logsExtracted               bool
+	vmStopped                   bool
 }
 
 var runnerNameId atomic.Int64
@@ -132,7 +136,63 @@ func (wi *WorkflowInstance) Close(ctx context.Context) {
 			ctxlog.Error(ctx, "failed to close diag log file", "file", wi.diagLogs.Name(), "err", err)
 		}
 	}
+}
 
+// ExtractLogs extracts job-started info and diagnostic logs from the VM.
+// It is guaranteed to run at most once, and always before the VM is stopped.
+func (wi *WorkflowInstance) ExtractLogs(ctx context.Context) error {
+	wi.vmMu.Lock()
+	defer wi.vmMu.Unlock()
+	if wi.logsExtracted || wi.vmStopped || wi.vm == nil {
+		return nil
+	}
+	wi.logsExtracted = true
+
+	if wi.PoolConfig == nil || wi.RunnerConfig == nil {
+		return nil
+	}
+	shr := newSelfHostedRunner(wi, nil, wi.RepoURL, "")
+
+	jobStarted, rawData, jsErr := shr.readJobStarted(ctx, wi.vm)
+	if jsErr != nil {
+		ctxlog.Warn(ctx, "failed to read job-started info from VM", "vm", wi.vm.ID(), "error", jsErr)
+	} else {
+		ctxlog.Info(ctx, "read job-started info from VM",
+			"vm", wi.vm.ID(),
+			"run_id", jobStarted.RunID,
+			"job", jobStarted.Job,
+			"workflow", jobStarted.Workflow,
+			"repo", jobStarted.Repository,
+		)
+		wi.JobStarted = jobStarted
+		wi.JobStartedRaw = rawData
+	}
+
+	if wi.DiagStdout != nil {
+		stderr := bytes.NewBuffer(make([]byte, 0, 1024))
+		if err := shr.extractLogs(ctx, wi.vm, wi.DiagStdout, stderr); err != nil {
+			ctxlog.Error(ctx, "failed to extract _diag directory", "vm", wi.vm.ID(), "error", err, "stderr", stderr.String())
+			return err
+		}
+	}
+	return nil
+}
+
+// StopAndReleaseVM ensures diagnostic logs are extracted before the VM is stopped,
+// and then stops and releases the VM. It guarantees StopAndRelease is called at most once,
+// and never concurrently with log extraction.
+func (wi *WorkflowInstance) StopAndReleaseVM(ctx context.Context, timeout time.Duration) (error, error) {
+	_ = wi.ExtractLogs(ctx)
+
+	wi.vmMu.Lock()
+	defer wi.vmMu.Unlock()
+	if wi.vmStopped || wi.vm == nil {
+		return nil, nil
+	}
+	wi.vmStopped = true
+
+	ctxlog.Info(ctx, "stopping vm", "vm", wi.vm.ID())
+	return wi.vm.StopAndRelease(ctx, timeout)
 }
 
 // RunJob runs the job on the instance's VM and returns the local outcome (nil on
@@ -153,8 +213,10 @@ func (wi *WorkflowInstance) RunJob(ctx context.Context, cq *CompletionQueue, cli
 
 	// a) Compare jobStarted values with values in wi based on guaranteed identical fields:
 	// Run ID, Run Attempt, Repository Name, Repository Owner, Triggering Actor,
-	// Workflow Name, Commit SHA, and Git Ref.
+	// and Workflow Name.
 	// Note: Job name is NOT checked as $GITHUB_JOB (YAML ID) can differ from workflow_job.name.
+	// Commit SHA and Git Ref are also NOT checked because on pull_request events GitHub creates
+	// a test merge commit ($GITHUB_SHA / refs/pull/X/merge) which differs from workflow_job.head_sha / head_branch.
 	if jobStarted != nil {
 		var diffs []string
 
@@ -210,28 +272,6 @@ func (wi *WorkflowInstance) RunJob(ctx context.Context, cq *CompletionQueue, cli
 		}
 		if jobStarted.Workflow != "" && expectedWorkflow != "" && jobStarted.Workflow != expectedWorkflow {
 			diffs = append(diffs, fmt.Sprintf("workflow mismatch: assigned=%q expected=%q", jobStarted.Workflow, expectedWorkflow))
-		}
-
-		// 7. Commit SHA: $GITHUB_SHA vs .workflow_job.head_sha
-		expectedSHA := ""
-		if wi.Event != nil && wi.Event.GetWorkflowJob() != nil {
-			expectedSHA = wi.Event.GetWorkflowJob().GetHeadSHA()
-		}
-		if jobStarted.SHA != "" && expectedSHA != "" && !strings.EqualFold(jobStarted.SHA, expectedSHA) {
-			diffs = append(diffs, fmt.Sprintf("sha mismatch: assigned=%q expected=%q", jobStarted.SHA, expectedSHA))
-		}
-
-		// 8. Git Ref: $GITHUB_REF vs .workflow_job.head_branch (e.g. refs/heads/main vs main)
-		expectedBranch := ""
-		if wi.Event != nil && wi.Event.GetWorkflowJob() != nil {
-			expectedBranch = wi.Event.GetWorkflowJob().GetHeadBranch()
-		}
-		if jobStarted.Ref != "" && expectedBranch != "" {
-			refClean := strings.TrimPrefix(strings.TrimPrefix(jobStarted.Ref, "refs/heads/"), "refs/tags/")
-			branchClean := strings.TrimPrefix(strings.TrimPrefix(expectedBranch, "refs/heads/"), "refs/tags/")
-			if refClean != branchClean && jobStarted.Ref != expectedBranch {
-				diffs = append(diffs, fmt.Sprintf("ref mismatch: assigned=%q expected=%q", jobStarted.Ref, expectedBranch))
-			}
 		}
 
 		if len(diffs) > 0 {
