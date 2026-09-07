@@ -282,7 +282,7 @@ func buildAppBundle(ctx context.Context, cfg BundleConfig, outerInfo, innerInfo 
 	}
 	runner := buildtools.NewRunner(stepOpts...)
 
-	runner.AddSteps(outer.Clean())
+	runner.AddSteps(outer.Clean()...)
 	runner.AddSteps(outer.Create()...)
 
 	// Nested orchestrator bundle: the executable that holds the keychain
