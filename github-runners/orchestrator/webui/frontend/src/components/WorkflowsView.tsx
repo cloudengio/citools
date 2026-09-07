@@ -117,7 +117,7 @@ function WorkflowRow({ wf }: { wf: WorkflowStatus }) {
               className="loglink"
               href={jobUrl}
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
               title={`Open job run on GitHub: ${jobUrl}`}
             >
               {wf.workflow_name ?? 'workflow'}{wf.job_name ? ` / ${wf.job_name}` : ''} ↗

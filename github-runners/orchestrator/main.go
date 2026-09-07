@@ -224,7 +224,9 @@ func repoClientsPrehook(ctx context.Context) (context.Context, string, subcmd.Po
 }
 
 func main() {
-	runtime.LockOSThread() // Required for AppKit / Cocoa UI on macOS
+	if runtime.GOOS == "darwin" {
+		runtime.LockOSThread() // Required for AppKit / Cocoa UI on macOS
+	}
 	ctx := context.Background()
 	ctx, cancel := context.WithCancelCause(ctx)
 	cli := createCLI()

@@ -200,5 +200,48 @@ func TestJobStartedMismatchDetection(t *testing.T) {
 	}
 }
 
+func TestEnsureJobCompletedFoundByNameWhenJobIDZero(t *testing.T) {
+	ctx := context.Background()
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		if strings.Contains(r.URL.Path, "/actions/runs/3/jobs") {
+			jobsList := gogithub.Jobs{
+				TotalCount: new(1),
+				Jobs: []*gogithub.WorkflowJob{
+					{
+						ID:         new(int64(300)),
+						Name:       new("Run macOS Tests (arm64)"),
+						Status:     new("completed"),
+						Conclusion: new("success"),
+						RunID:      new(int64(3)),
+					},
+				},
+			}
+			data, _ := json.Marshal(jobsList)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(bytes.NewReader(data)),
+				Header:     make(http.Header),
+			}, nil
+		}
+		return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("not found"))}, nil
+	})
+
+	httpClient := &http.Client{Transport: rt}
+	rc := NewRepoClients()
+	rc.AddClient("cloudengio", "test-repo", operations.WithHTTPClient(httpClient))
+
+	// Look up by display name with jobID = 0 succeeds:
+	err := rc.EnsureJobCompletedOrCanceled(ctx, "cloudengio/test-repo", 3, 0, "Run macOS Tests (arm64)")
+	if err != nil {
+		t.Fatalf("expected nil error when matching display name with jobID 0, got: %v", err)
+	}
+
+	// Looking up by YAML ID "test-macos" (which does not match display name) fails:
+	err = rc.EnsureJobCompletedOrCanceled(ctx, "cloudengio/test-repo", 3, 0, "test-macos")
+	if err == nil {
+		t.Fatal("expected error when searching by mismatched YAML ID, got nil")
+	}
+}
+
 // Suppress unused import warnings if any
 var _ sync.Mutex

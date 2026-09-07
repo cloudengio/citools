@@ -309,10 +309,10 @@ func (wi *WorkflowInstance) RunJob(ctx context.Context, cq *CompletionQueue, cli
 		}
 
 		targetJobName := ""
-		if jobStarted != nil && jobStarted.Job != "" {
-			targetJobName = jobStarted.Job
-		} else if wi.Event != nil && wi.Event.GetWorkflowJob() != nil {
+		if wi.Event != nil && wi.Event.GetWorkflowJob() != nil && wi.Event.GetWorkflowJob().GetName() != "" {
 			targetJobName = wi.Event.GetWorkflowJob().GetName()
+		} else if jobStarted != nil && jobStarted.Job != "" {
+			targetJobName = jobStarted.Job
 		}
 
 		targetJobID := int64(0)

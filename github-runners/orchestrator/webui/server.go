@@ -201,7 +201,10 @@ func (s *Server) DownloadWorkflowLog(ctx context.Context, request DownloadWorkfl
 	if request.Params.View != nil && *request.Params.View && (strings.HasPrefix(contentType, "text/") || request.Artifact == "job") {
 		var jobURL string
 		if request.Params.JobUrl != nil && *request.Params.JobUrl != "" {
-			jobURL = *request.Params.JobUrl
+			candidate := *request.Params.JobUrl
+			if strings.HasPrefix(candidate, "https://github.com/") {
+				jobURL = candidate
+			}
 		} else if wf, ok, err := s.backend.Workflow(ctx, request.Name); err == nil && ok {
 			if wf.JobUrl != nil && *wf.JobUrl != "" {
 				jobURL = *wf.JobUrl

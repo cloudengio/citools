@@ -21,11 +21,27 @@ OUTPUT_FILE="${RUNNER_DIR:-$SCRIPT_DIR}/job-started.json"
 
 if command -v python3 >/dev/null 2>&1; then
     python3 -c '
-import os, json, sys
+import import json, os, sys
 
 output_path = sys.argv[1]
+keys = [
+   "GITHUB_RUN_ID",
+   "GITHUB_RUN_NUMBER",
+   "GITHUB_RUN_ATTEMPT",
+   "GITHUB_JOB",
+   "GITHUB_WORKFLOW",
+   "GITHUB_REPOSITORY",
+   "GITHUB_REPOSITORY_OWNER",
+   "GITHUB_EVENT_NAME",
+   "GITHUB_SHA",
+   "GITHUB_REF",
+   "GITHUB_ACTOR",
+   "RUNNER_NAME",
+ ]
+data = {k: os.environ.get(k, "") for k in keys if os.environ.get(k)}
 with open(output_path, "w", encoding="utf-8") as f:
-    json.dump(dict(os.environ), f, indent=2)
+    json.dump(data, f, indent=2)
+os.chmod(output_path, 0o600)
 print(f"Saved job started info to {output_path}")
 ' "$OUTPUT_FILE"
 fi

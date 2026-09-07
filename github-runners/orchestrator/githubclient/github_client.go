@@ -190,6 +190,13 @@ func (c *Repo) EnsureJobCompletedOrCanceled(ctx context.Context, runID, jobID in
 		return fmt.Errorf("failed to get job status from GitHub: %w", err)
 	}
 
+	if runID == 0 {
+		runID = job.GetRunID()
+	}
+	if runID == 0 {
+		return fmt.Errorf("cannot cancel workflow run: missing run_id for job %d (%s/%s)", job.GetID(), c.owner, c.repo)
+	}
+
 	status := job.GetStatus()
 	if status == "completed" {
 		return nil
