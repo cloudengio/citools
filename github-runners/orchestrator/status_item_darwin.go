@@ -64,6 +64,31 @@ func goStatusItemViewLogs() {
 	_ = exec.Command("open", lp).Start()
 }
 
+//export goStatusItemIsInstalled
+func goStatusItemIsInstalled() C.int {
+	if serviceAgent().IsInstalled() {
+		return 1
+	}
+	return 0
+}
+
+//export goStatusItemInstall
+func goStatusItemInstall() {
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		if err := installLoginService(context.Background(), "", "", "", false); err != nil {
+			return
+		}
+		menuBarMu.Lock()
+		cancel := menuBarCancel
+		menuBarMu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+		stopStatusItem()
+	}()
+}
+
 //export goStatusItemRestart
 func goStatusItemRestart() {
 	agent := serviceAgent()

@@ -10,12 +10,15 @@
 extern void goStatusItemOpenWebUI(void);
 extern void goStatusItemViewLogs(void);
 extern void goStatusItemRestart(void);
+extern void goStatusItemInstall(void);
 extern void goStatusItemUninstall(void);
 extern void goStatusItemQuit(void);
+extern int goStatusItemIsInstalled(void);
 
 @interface StatusItemMenuDelegate : NSObject <NSMenuDelegate>
 - (instancetype)initWithServiceInstalled:(BOOL)installed;
 - (void)updateStatusText:(NSString *)text;
+- (void)updateServiceItems:(BOOL)installed;
 @end
 
 static StatusItemMenuDelegate *gMenuDelegate = nil;
@@ -24,6 +27,7 @@ static NSStatusItem *gStatusItem = nil;
 @implementation StatusItemMenuDelegate {
     NSMenu *_menu;
     NSMenuItem *_statusItemRow;
+    NSMenuItem *_installItem;
     NSMenuItem *_restartItem;
     NSMenuItem *_uninstallItem;
 }
@@ -48,6 +52,8 @@ static NSStatusItem *gStatusItem = nil;
         }
 
         _menu = [[NSMenu alloc] initWithTitle:@"GitHub Runner Orchestrator"];
+        [_menu setAutoenablesItems:NO];
+        [_menu setDelegate:self];
 
         NSMenuItem *titleItem = [[NSMenuItem alloc] initWithTitle:@"GitHub Runner Orchestrator" action:nil keyEquivalent:@""];
         [titleItem setEnabled:NO];
@@ -61,33 +67,58 @@ static NSStatusItem *gStatusItem = nil;
 
         NSMenuItem *openWeb = [[NSMenuItem alloc] initWithTitle:@"Open Web UI" action:@selector(onOpenWeb:) keyEquivalent:@""];
         [openWeb setTarget:self];
+        [openWeb setEnabled:YES];
         [_menu addItem:openWeb];
 
         NSMenuItem *viewLogs = [[NSMenuItem alloc] initWithTitle:@"View Logs..." action:@selector(onViewLogs:) keyEquivalent:@""];
         [viewLogs setTarget:self];
+        [viewLogs setEnabled:YES];
         [_menu addItem:viewLogs];
 
         [_menu addItem:[NSMenuItem separatorItem]];
 
+        _installItem = [[NSMenuItem alloc] initWithTitle:@"Install Service..." action:@selector(onInstallService:) keyEquivalent:@""];
+        [_installItem setTarget:self];
+        [_menu addItem:_installItem];
+
         _restartItem = [[NSMenuItem alloc] initWithTitle:@"Restart Service..." action:@selector(onRestartService:) keyEquivalent:@""];
         [_restartItem setTarget:self];
-        [_restartItem setEnabled:installed];
         [_menu addItem:_restartItem];
 
         _uninstallItem = [[NSMenuItem alloc] initWithTitle:@"Uninstall Service..." action:@selector(onUninstallService:) keyEquivalent:@""];
         [_uninstallItem setTarget:self];
-        [_uninstallItem setEnabled:installed];
         [_menu addItem:_uninstallItem];
+
+        [self updateServiceItems:installed];
 
         [_menu addItem:[NSMenuItem separatorItem]];
 
         NSMenuItem *quit = [[NSMenuItem alloc] initWithTitle:@"Quit Orchestrator" action:@selector(onQuit:) keyEquivalent:@"q"];
         [quit setTarget:self];
+        [quit setEnabled:YES];
         [_menu addItem:quit];
 
         gStatusItem.menu = _menu;
     }
     return self;
+}
+
+- (void)updateServiceItems:(BOOL)installed {
+    [_installItem setHidden:installed];
+    [_installItem setEnabled:!installed];
+    [_restartItem setHidden:!installed];
+    [_restartItem setEnabled:installed];
+    [_uninstallItem setHidden:!installed];
+    [_uninstallItem setEnabled:installed];
+}
+
+- (void)menuNeedsUpdate:(NSMenu *)menu {
+    BOOL installed = (goStatusItemIsInstalled() != 0);
+    [self updateServiceItems:installed];
+}
+
+- (BOOL)validateMenuItem:(NSMenuItem *)menuItem {
+    return [menuItem isEnabled];
 }
 
 - (void)updateStatusText:(NSString *)text {
@@ -100,6 +131,19 @@ static NSStatusItem *gStatusItem = nil;
 
 - (void)onViewLogs:(id)sender {
     goStatusItemViewLogs();
+}
+
+- (void)onInstallService:(id)sender {
+    NSAlert *alert = [[NSAlert alloc] init];
+    [alert setMessageText:@"Install GitHub Runner Orchestrator Service?"];
+    [alert setInformativeText:@"This will register the orchestrator as a login service with launchd so it runs automatically when you log in."];
+    [alert addButtonWithTitle:@"Install"];
+    [alert addButtonWithTitle:@"Cancel"];
+    [alert setAlertStyle:NSAlertStyleInformational];
+    [NSApp activateIgnoringOtherApps:YES];
+    if ([alert runModal] == NSAlertFirstButtonReturn) {
+        goStatusItemInstall();
+    }
 }
 
 - (void)onRestartService:(id)sender {

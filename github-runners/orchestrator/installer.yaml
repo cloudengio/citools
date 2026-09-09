@@ -17,6 +17,7 @@ info_plist:
   CFBundleIdentifier: io.cloudeng.github-runner-orchestrator.app
   CFBundleName: github-runner-orchestrator
   CFBundleDisplayName: GitHub Runner Orchestrator
+  LSMinimumSystemVersion: 15.0
 
 # Code signing. Set the two environment variables below before running
 # `orchestrator bundle`; they are expanded here so the identity/team ID need not

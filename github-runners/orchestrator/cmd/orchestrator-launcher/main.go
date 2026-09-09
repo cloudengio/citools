@@ -70,17 +70,15 @@ func runLauncher() {
 	}
 
 	// Seed the minimal config the first time the app is opened.
-	created := false
 	if _, err := os.Stat(cfg); errors.Is(err, os.ErrNotExist) {
 		if out, err := run(ctx, orch, "install"); err != nil {
 			notify("Failed to create the configuration file:\n\n" + out)
 			return
 		}
-		created = true
 	}
 
-	// On first launch, offer to run the orchestrator automatically at login.
-	if created && !macosutils.IsServiceInstalled(serviceLabel) {
+	// Offer to run the orchestrator automatically at login if not already installed.
+	if !macosutils.IsServiceInstalled(serviceLabel) {
 		if confirm("Start the GitHub Runner Orchestrator automatically when you log in?") {
 			if out, err := run(ctx, orch, "service", "install"); err != nil {
 				notify("Failed to install the login service:\n\n" + out)

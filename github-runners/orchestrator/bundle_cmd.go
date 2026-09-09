@@ -7,11 +7,13 @@ package main
 import (
 	"context"
 	"fmt"
-	"maps"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"time"
 
 	"cloudeng.io/macos/buildtools"
+	"cloudeng.io/os/executil"
 	"gopkg.in/yaml.v3"
 
 	"github.com/cloudengio/citools/runners/macos/orchestrator/internal"
@@ -26,11 +28,12 @@ type BundleConfig struct {
 	// Bundle is the output .app path; defaults to <CFBundleExecutable>.app.
 	Bundle string `yaml:"bundle"`
 	// Info holds Info.plist fields (e.g. CFBundleIdentifier); missing standard
-	// keys are defaulted. It is a free-form map so callers need only set what
-	// they care about.
-	Info map[string]any `yaml:"info_plist"`
+	// keys are defaulted.
+	Info buildtools.InfoPlist `yaml:"info_plist"`
 	// Signing holds the code-signing identity, entitlements and codesign args.
 	Signing buildtools.SigningConfig `yaml:"signing"`
+	// Permissions holds the permissions for the bundle executables and directories.
+	Permissions buildtools.PermissionsConfig `yaml:"permissions,omitempty"`
 	// Notary holds the credentials used to notarize the signed bundle with
 	// Apple's notarization service. Only used when --notarize is set.
 	Notary buildtools.NotaryConfig `yaml:"notary"`
@@ -100,7 +103,8 @@ type BundleFlags struct {
 	Timing     bool   `subcmd:"timing,false,print timing information for each build step"`
 	DryRun     bool   `subcmd:"dry-run,false,print the build steps without executing them"`
 	Notarize   bool   `subcmd:"notarize,false,submit the signed bundle to Apple for notarization and staple the ticket"`
-	AllowDirty bool   `subcmd:"allow-dirty,false,'build even though the tree has uncommitted changes; the bundle is then stamped -dirty'"`
+	AllowDirty      bool   `subcmd:"allow-dirty,false,'build even though the tree has uncommitted changes; the bundle is then stamped -dirty'"`
+	SkipWebappBuild bool   `subcmd:"skip-webapp-build,false,skip building the web UI frontend before compiling the binary"`
 }
 
 func (BundleCommand) Run(ctx context.Context, fl any, _ []string) error {
@@ -126,14 +130,25 @@ func (BundleCommand) Run(ctx context.Context, fl any, _ []string) error {
 	if err != nil {
 		return err
 	}
-	innerInfo, err := buildInfoPlist(nil, defaultExecutable, orchestratorBundleID, version)
+	innerUser := buildtools.InfoPlist{
+		LSMinimumSystemVersion: outerInfo.LSMinimumSystemVersion,
+	}
+	innerInfo, err := buildInfoPlist(innerUser, defaultExecutable, orchestratorBundleID, version)
 	if err != nil {
 		return err
 	}
 
+	buildEnv := buildtools.GoBuildEnvForMacOSVersion(outerInfo.LSMinimumSystemVersion)
+
 	orchestrator := fv.Binary
 	if orchestrator == "" {
-		b, cleanup, err := buildBinary(ctx, ".")
+		if !fv.SkipWebappBuild && !fv.DryRun {
+			frontendDir := filepath.Join("webui", "frontend")
+			if err := buildWebapp(ctx, frontendDir, false, false); err != nil {
+				return fmt.Errorf("building web UI frontend: %w", err)
+			}
+		}
+		b, cleanup, err := buildBinary(ctx, ".", buildEnv...)
 		if err != nil {
 			return err
 		}
@@ -141,7 +156,7 @@ func (BundleCommand) Run(ctx context.Context, fl any, _ []string) error {
 		orchestrator = b
 	}
 
-	launcher, cleanup, err := buildBinary(ctx, launcherPackage)
+	launcher, cleanup, err := buildBinary(ctx, launcherPackage, buildEnv...)
 	if err != nil {
 		return err
 	}
@@ -209,29 +224,35 @@ func expandEnv(v any) any {
 // buildInfoPlist merges the caller-supplied Info.plist keys over the standard
 // defaults required for a launchable bundle with the given main executable and
 // bundle identifier, and produces a buildtools.InfoPlist.
-func buildInfoPlist(user map[string]any, executable, bundleID string, version versionInfo) (buildtools.InfoPlist, error) {
-	raw := map[string]any{
-		"CFBundleExecutable":     executable,
-		"CFBundleName":           defaultExecutable,
-		"CFBundleDisplayName":    "GitHub Runner Orchestrator",
-		"CFBundleIdentifier":     bundleID,
-		"CFBundlePackageType":    "APPL",
-		"LSMinimumSystemVersion": "15.0", // macOS Sequoia
+func buildInfoPlist(user buildtools.InfoPlist, executable, bundleID string, version versionInfo) (buildtools.InfoPlist, error) {
+	info := user.WithDefaults(executable)
+	if user.CFBundleName == "" {
+		info.CFBundleName = defaultExecutable
 	}
-	maps.Copy(raw, version.keys())
-	// The version keys are applied before the caller's, so that installer.yaml
-	// can still override them; everything else it sets wins over the defaults.
-	maps.Copy(raw, user)
-	merged, err := yaml.Marshal(raw)
-	if err != nil {
-		return buildtools.InfoPlist{}, err
+	if user.CFBundleDisplayName == "" {
+		info.CFBundleDisplayName = "GitHub Runner Orchestrator"
 	}
-	var info buildtools.InfoPlist
-	if err := yaml.Unmarshal(merged, &info); err != nil {
-		return buildtools.InfoPlist{}, fmt.Errorf("building Info.plist: %w", err)
+	if user.CFBundleIdentifier == "" {
+		info.CFBundleIdentifier = bundleID
 	}
-	// Required keys are no longer checked while unmarshalling, since an
-	// InfoPlist may also describe a launchd job, so check them here.
+	if user.LSMinimumSystemVersion == "" {
+		info.LSMinimumSystemVersion = "15.0" // macOS Sequoia
+	}
+	if user.CFBundleShortVersionString == "" {
+		info.CFBundleShortVersionString = version.Short
+	}
+	if user.CFBundleVersion == "" {
+		info.CFBundleVersion = version.Build
+	}
+	if info.Extra == nil {
+		info.Extra = make(map[string]any)
+	}
+	if _, ok := info.Extra["CGCommit"]; !ok {
+		info.Extra["CGCommit"] = version.Commit
+	}
+	if _, ok := info.Extra["CGBuildTime"]; !ok {
+		info.Extra["CGBuildTime"] = version.BuildTime.UTC().Format(time.RFC3339)
+	}
 	if err := info.Validate(); err != nil {
 		return buildtools.InfoPlist{}, fmt.Errorf("building Info.plist: %w", err)
 	}
@@ -240,14 +261,23 @@ func buildInfoPlist(user map[string]any, executable, bundleID string, version ve
 
 // buildBinary builds the Go package pkg into a temporary file, returning its
 // path and a cleanup function.
-func buildBinary(ctx context.Context, pkg string) (string, func(), error) {
+func buildBinary(ctx context.Context, pkg string, env ...string) (string, func(), error) {
 	tmp, err := os.CreateTemp("", "orchestrator-build-*")
 	if err != nil {
 		return "", nil, err
 	}
 	_ = tmp.Close()
 	cleanup := func() { _ = os.Remove(tmp.Name()) }
-	cmd := exec.CommandContext(ctx, "go", "build", "-o", tmp.Name(), pkg)
+
+	gobin, gobinargs, err := executil.GoBuildArgs(tmp.Name(), pkg)
+	if err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("getting Go build args: %w", err)
+	}
+	cmd := exec.CommandContext(ctx, gobin, gobinargs...)
+	if len(env) > 0 {
+		cmd.Env = append(cmd.Environ(), env...)
+	}
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		cleanup()
@@ -259,10 +289,15 @@ func buildBinary(ctx context.Context, pkg string) (string, func(), error) {
 // buildAppBundle assembles and (if an identity is configured) signs the outer
 // launcher app and its nested orchestrator bundle using cloudeng.io/macos/buildtools.
 func buildAppBundle(ctx context.Context, cfg BundleConfig, outerInfo, innerInfo buildtools.InfoPlist, launcher, orchestrator string, timing, verbose, dryRun, notarize bool) error {
-	if notarize && cfg.Signing.Identity == "" {
-		return fmt.Errorf("--notarize requires a signing identity: set signing.identity in the bundle config")
+	if notarize {
+		if !cfg.Notary.Configured() {
+			return fmt.Errorf("--notarize requires notary credentials: configure notary in the bundle config")
+		}
+		if err := cfg.Notary.ValidateSigning(cfg.Signing); err != nil {
+			return err
+		}
 	}
-	if cfg.Signing.Identity != "" && cfg.Signing.Entitlements != nil {
+	if cfg.Signing.Configured() && cfg.Signing.Entitlements != nil {
 		if cfg.ProvisioningProfile == "" {
 			return fmt.Errorf("signing with entitlements requires a provisioning profile: set provisioning_profile in the bundle config")
 		}
@@ -288,7 +323,12 @@ func buildAppBundle(ctx context.Context, cfg BundleConfig, outerInfo, innerInfo 
 	// Nested orchestrator bundle: the executable that holds the keychain
 	// entitlement, authorized by its own embedded provisioning profile.
 	runner.AddSteps(inner.Create()...)
-	runner.AddSteps(inner.WriteInfoPlist(), inner.CopyExecutable(orchestrator))
+	runner.AddSteps(
+		inner.WriteInfoPlist(),
+		inner.CopyExecutable(orchestrator),
+		inner.SetExecutablePermissions(orchestrator, cfg.Permissions.ExecutableMode()),
+		inner.SetMacOSDirPermissions(cfg.Permissions.MacOSDirMode()),
+	)
 	if cfg.ProvisioningProfile != "" {
 		profilePath := os.ExpandEnv(cfg.ProvisioningProfile)
 		if _, err := os.Stat(profilePath); err != nil {
@@ -303,9 +343,11 @@ func buildAppBundle(ctx context.Context, cfg BundleConfig, outerInfo, innerInfo 
 		outer.CopyExecutable(launcher),
 		outer.CopyContents(cfg.OrchestratorConfig, "Resources", bundledConfigName),
 		outer.CopyContents(cfg.LaunchAgentConfig, "Resources", internal.LaunchAgentFileName),
+		outer.SetExecutablePermissions(launcher, cfg.Permissions.ExecutableMode()),
+		outer.SetMacOSDirPermissions(cfg.Permissions.MacOSDirMode()),
 	)
 
-	if cfg.Signing.Identity != "" {
+	if cfg.Signing.Configured() {
 		// The orchestrator is signed with the keychain entitlement; the launcher
 		// needs none. Sign the nested bundle fully first, then the launcher, then
 		// seal the outer bundle last so each signature seals what it contains.

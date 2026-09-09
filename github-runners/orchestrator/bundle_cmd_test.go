@@ -5,14 +5,18 @@
 package main
 
 import (
+	"context"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"cloudeng.io/macos/buildtools"
 	"howett.net/plist"
 )
 
@@ -57,7 +61,7 @@ func TestExpandEnv(t *testing.T) {
 // ability to override them, since a missing key makes an unlaunchable bundle.
 func TestBuildInfoPlist(t *testing.T) {
 	version := versionInfo{Short: "1.0.0", Build: "1.0.0+abcdef12", Commit: "abcdef12345", BuildTime: time.Now()}
-	info, err := buildInfoPlist(nil, "my-exe", "io.cloudeng.example", version)
+	info, err := buildInfoPlist(buildtools.InfoPlist{}, "my-exe", "io.cloudeng.example", version)
 	if err != nil {
 		t.Fatalf("buildInfoPlist: %v", err)
 	}
@@ -86,9 +90,11 @@ func TestBuildInfoPlist(t *testing.T) {
 
 	// User keys override the defaults and unknown keys are preserved, so that
 	// a bundle can carry keys this package knows nothing about.
-	info, err = buildInfoPlist(map[string]any{
-		"CFBundleVersion":         "1.2.3",
-		"NSHighResolutionCapable": true,
+	info, err = buildInfoPlist(buildtools.InfoPlist{
+		CFBundleVersion: "1.2.3",
+		Extra: map[string]any{
+			"NSHighResolutionCapable": true,
+		},
 	}, "my-exe", "io.cloudeng.example", version)
 	if err != nil {
 		t.Fatalf("buildInfoPlist: %v", err)
@@ -104,10 +110,10 @@ func TestBuildInfoPlist(t *testing.T) {
 		t.Errorf("an unknown key was dropped:\n%s", data)
 	}
 
-	// Blanking a required key is rejected rather than producing a bundle that
+	// An empty bundle identifier is rejected rather than producing a bundle that
 	// will not launch.
-	if _, err := buildInfoPlist(map[string]any{"CFBundleName": nil}, "my-exe", "id", version); err == nil {
-		t.Error("a nil CFBundleName was accepted")
+	if _, err := buildInfoPlist(buildtools.InfoPlist{}, "my-exe", "", version); err == nil {
+		t.Error("an empty bundleID was accepted")
 	}
 }
 
@@ -131,6 +137,9 @@ func TestLoadBundleConfig(t *testing.T) {
 	if got, want := cfg.LaunchAgentConfig, "launch_agent.yml"; got != want {
 		t.Errorf("launch agent config: got %q, want %q", got, want)
 	}
+	if got, want := cfg.Info.CFBundleVersion, "9.9"; got != want {
+		t.Errorf("CFBundleVersion: got %q, want %q", got, want)
+	}
 
 	if _, err := loadBundleConfig(filepath.Join(t.TempDir(), "absent.yaml")); err == nil {
 		t.Error("a missing installer configuration was accepted")
@@ -152,7 +161,7 @@ func TestShippedInstallerConfig(t *testing.T) {
 	if _, err := buildInfoPlist(cfg.Info, launcherExecutable, outerBundleID, version); err != nil {
 		t.Errorf("the shipped installer.yaml yields an invalid outer Info.plist: %v", err)
 	}
-	if _, err := buildInfoPlist(nil, defaultExecutable, orchestratorBundleID, version); err != nil {
+	if _, err := buildInfoPlist(buildtools.InfoPlist{}, defaultExecutable, orchestratorBundleID, version); err != nil {
 		t.Errorf("the nested Info.plist is invalid: %v", err)
 	}
 }
@@ -194,5 +203,81 @@ func TestDetailErr(t *testing.T) {
 	// Neither body nor request leaves the error unchanged.
 	if got := detailErr(nil, nil, base); got != base {
 		t.Errorf("got %v, want the original error unchanged", got)
+	}
+}
+
+func TestBundleConfigPermissions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "installer.yaml")
+	content := `permissions:
+  executable: "0755"
+  macos_dir: "0700"
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadBundleConfig(path)
+	if err != nil {
+		t.Fatalf("loadBundleConfig: %v", err)
+	}
+	if got, want := cfg.Permissions.ExecutableMode(), fs.FileMode(0755); got != want {
+		t.Errorf("ExecutableMode: got %04o, want %04o", got, want)
+	}
+	if got, want := cfg.Permissions.MacOSDirMode(), fs.FileMode(0700); got != want {
+		t.Errorf("MacOSDirMode: got %04o, want %04o", got, want)
+	}
+}
+
+func TestInnerInfoLSMinimumSystemVersion(t *testing.T) {
+	version := versionInfo{Short: "1.0.0", Build: "1.0.0+abcdef12", Commit: "abcdef12345", BuildTime: time.Now()}
+	outerInfo, err := buildInfoPlist(buildtools.InfoPlist{LSMinimumSystemVersion: "15.2"}, launcherExecutable, outerBundleID, version)
+	if err != nil {
+		t.Fatalf("buildInfoPlist outer: %v", err)
+	}
+	if got, want := outerInfo.LSMinimumSystemVersion, "15.2"; got != want {
+		t.Errorf("outer LSMinimumSystemVersion: got %q, want %q", got, want)
+	}
+
+	innerUser := buildtools.InfoPlist{
+		LSMinimumSystemVersion: outerInfo.LSMinimumSystemVersion,
+	}
+	innerInfo, err := buildInfoPlist(innerUser, defaultExecutable, orchestratorBundleID, version)
+	if err != nil {
+		t.Fatalf("buildInfoPlist inner: %v", err)
+	}
+	if got, want := innerInfo.LSMinimumSystemVersion, "15.2"; got != want {
+		t.Errorf("inner LSMinimumSystemVersion: got %q, want %q", got, want)
+	}
+
+	buildEnv := buildtools.GoBuildEnvForMacOSVersion(outerInfo.LSMinimumSystemVersion)
+	wantEnv := []string{
+		"MACOSX_DEPLOYMENT_TARGET=15.2",
+		"CGO_CFLAGS=-mmacosx-version-min=15.2",
+		"CGO_CXXFLAGS=-mmacosx-version-min=15.2",
+		"CGO_LDFLAGS=-mmacosx-version-min=15.2",
+	}
+	if !slices.Equal(buildEnv, wantEnv) {
+		t.Errorf("GoBuildEnvForMacOSVersion: got %v, want %v", buildEnv, wantEnv)
+	}
+}
+
+func TestBuildAppBundleDryRun(t *testing.T) {
+	tempDir := t.TempDir()
+	cfg := BundleConfig{
+		Bundle:             filepath.Join(tempDir, "test.app"),
+		OrchestratorConfig: "minimal_config.yml",
+		LaunchAgentConfig:  "launch_agent.yml",
+	}
+	version := versionInfo{Short: "1.0.0", Build: "1.0.0", Commit: "abcdef12", BuildTime: time.Now()}
+	outerInfo, err := buildInfoPlist(buildtools.InfoPlist{}, launcherExecutable, outerBundleID, version)
+	if err != nil {
+		t.Fatalf("buildInfoPlist: %v", err)
+	}
+	innerInfo, err := buildInfoPlist(buildtools.InfoPlist{}, defaultExecutable, orchestratorBundleID, version)
+	if err != nil {
+		t.Fatalf("buildInfoPlist: %v", err)
+	}
+	err = buildAppBundle(context.Background(), cfg, outerInfo, innerInfo, "launcher", "orchestrator", false, false, true, false)
+	if err != nil {
+		t.Fatalf("buildAppBundle dry run failed: %v", err)
 	}
 }

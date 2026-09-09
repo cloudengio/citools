@@ -19,9 +19,13 @@ import (
 
 // TartConfig configures the tart VM backend for a pool.
 type TartConfig struct {
-	tartvm.Config `yaml:",inline"`
-	Image         string `yaml:"image" doc:"base image to use for cloning VMs in this pool"`
-	RunnerDir     string `yaml:"runner_dir" doc:"directory on the VM in which the runner was installed, specific to each type of image."`
+	tartvm.Config         `yaml:",inline"`
+	tartvm.ResourceConfig `yaml:",inline"`
+	Image                 string `yaml:"image" doc:"base image to use for cloning VMs in this pool"`
+	PullRemoteOnRun       bool   `yaml:"pull_remote_on_run" doc:"pull the image from its registry before creating each VM, so that a moving tag such as :latest is picked up without restarting the orchestrator. Ignored for a local image, which has no registry to pull from."`
+	Insecure              bool   `yaml:"pull_insecure" doc:"allow pulling images from insecure registries."`
+	PullConcurrency       int    `yaml:"pull_concurrency" doc:"concurrency for a pull of the remote image."`
+	RunnerDir             string `yaml:"runner_dir" doc:"directory on the VM in which the runner was installed, specific to each type of image."`
 }
 
 // VMSPrefix is the prefix shared by every VM name the orchestrator generates.
@@ -35,6 +39,24 @@ var vmInstID atomic.Int64
 // reference.
 func vmNamePrefix(pool, image string) string {
 	return fmt.Sprintf("%s%s-%s-", VMSPrefix, pool, image)
+}
+
+// isRemoteImage reports whether an image reference names an OCI registry, and
+// so can be pulled. tart treats a reference with a registry component as remote
+// and a bare name as a local image; the registry is the first path segment, and
+// is distinguishable from a repository path by containing a "." or a port, or
+// by being localhost.
+func isRemoteImage(image string) bool {
+	// A digest can only appear on a remote reference.
+	ref, _, hasDigest := strings.Cut(image, "@")
+	if hasDigest {
+		return true
+	}
+	host, rest, ok := strings.Cut(ref, "/")
+	if !ok || host == "" || rest == "" {
+		return false
+	}
+	return strings.ContainsAny(host, ".:") || host == "localhost"
 }
 
 // bareImageName reduces an image reference to the image name alone, so that it
@@ -72,10 +94,24 @@ func newTartProvider(name string, cfg TartConfig, logger *slog.Logger) *tartProv
 	// The VM name is derived from the image name alone; cfg.Image itself is
 	// passed to tart as the clone source and must keep any registry and tag.
 	prefix := vmNamePrefix(name, bareImageName(cfg.Image))
+	pull := cfg.PullRemoteOnRun && isRemoteImage(cfg.Image)
 	constructor := func(ctx context.Context) (vms.Instance, error) {
+		if pull {
+			// Fail the creation rather than fall back to whatever is cached:
+			// the point of pulling is that the VM runs the current image, and
+			// silently using a stale one would defeat it.
+			logger.Info("pulling image", "image", cfg.Image, "pool", name, "insecure", cfg.Insecure, "concurrency", cfg.PullConcurrency)
+			if err := tartvm.Pull(ctx, cfg.TartBinary, cfg.Image, cfg.Insecure, cfg.PullConcurrency); err != nil {
+				logger.Error("failed to pull image", "image", cfg.Image, "pool", name, "err", err)
+				return nil, fmt.Errorf("pulling %v for pool %v: %w", cfg.Image, name, err)
+			}
+		}
 		vmName := fmt.Sprintf("%s%s-%04d", prefix, time.Now().Format("20060102-150405"), vmInstID.Add(1))
 		opts := slices.Clone(cfg.Options())
-		opts = append(opts, tartvm.WithLogger(logger), tartvm.WithObtainIPAtStart(false))
+		opts = append(opts,
+			tartvm.WithResources(cfg.ResourceConfig),
+			tartvm.WithLogger(logger),
+			tartvm.WithObtainIPAtStart(false))
 		return tartvm.New(ctx, cfg.Image, vmName, opts...), nil
 	}
 	return &tartProvider{

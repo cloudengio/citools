@@ -8,6 +8,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -93,5 +96,118 @@ func TestVMNamePrefixRemoteImage(t *testing.T) {
 	// to clone from the registry.
 	if got, want := p.Image(), "mm-1:5001/linux-ci:latest"; got != want {
 		t.Errorf("Image(): got %q, want %q", got, want)
+	}
+}
+
+// TestIsRemoteImage covers which references name a registry and so can be
+// pulled; a bare or namespaced local name cannot.
+func TestIsRemoteImage(t *testing.T) {
+	for _, tc := range []struct {
+		image string
+		want  bool
+	}{
+		// Local images: nothing to pull from.
+		{"linux-ci", false},
+		{"linux-ci:latest", false},
+		{"", false},
+		// A registry is identified by a dot, a port, or localhost.
+		{"mm-1:5001/linux-ci:latest", true},
+		{"localhost:5000/macos-ci", true},
+		{"localhost/macos-ci", true},
+		{"ghcr.io/cirruslabs/ubuntu:latest", true},
+		{"registry.example.com/team/img", true},
+		// A digest can only appear on a remote reference.
+		{"linux-ci@sha256:0123456789abcdef", true},
+		// A leading segment that is neither: tart treats this as local.
+		{"myorg/linux-ci", false},
+	} {
+		if got := isRemoteImage(tc.image); got != tc.want {
+			t.Errorf("isRemoteImage(%q) = %v, want %v", tc.image, got, tc.want)
+		}
+	}
+}
+
+// fakeTart puts a stub tart on PATH that records its invocations, so that a
+// pull can be observed without a registry.
+func fakeTart(t *testing.T, exitCode int) func() []string {
+	t.Helper()
+	dir := t.TempDir()
+	calls := filepath.Join(dir, "calls")
+	script := "#!/bin/sh\necho \"$@\" >> " + strconv.Quote(calls) + "\nexit " + strconv.Itoa(exitCode) + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "tart"), []byte(script), 0700); err != nil { //nolint:gosec // test stub must be executable
+		t.Fatalf("writing tart stub: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return func() []string {
+		buf, err := os.ReadFile(calls)
+		if err != nil {
+			return nil // never invoked
+		}
+		return strings.Split(strings.TrimSpace(string(buf)), "\n")
+	}
+}
+
+// TestPullRemoteOnRun verifies that a VM creation pulls the image first when
+// configured to, and that the full reference, not the bare name, is pulled.
+func TestPullRemoteOnRun(t *testing.T) {
+	invocations := fakeTart(t, 0)
+	p := newTartProvider("linux", TartConfig{
+		Image:           "mm-1:5001/linux-ci:latest",
+		PullRemoteOnRun: true,
+	}, slog.Default())
+
+	if _, err := p.New(context.Background()); err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	got := invocations()
+	if len(got) != 1 {
+		t.Fatalf("tart invocations: got %v, want exactly one", got)
+	}
+	if want := "pull mm-1:5001/linux-ci:latest"; got[0] != want {
+		t.Errorf("tart args: got %q, want %q", got[0], want)
+	}
+}
+
+// TestPullRemoteOnRunNotPulled covers the cases where nothing is pulled: the
+// option is off, or the image is local and has no registry to pull from.
+func TestPullRemoteOnRunNotPulled(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  TartConfig
+	}{
+		{"option off", TartConfig{Image: "mm-1:5001/linux-ci:latest"}},
+		{"local image", TartConfig{Image: "linux-ci", PullRemoteOnRun: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			invocations := fakeTart(t, 0)
+			p := newTartProvider("linux", tc.cfg, slog.Default())
+			if _, err := p.New(context.Background()); err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if got := invocations(); got != nil {
+				t.Errorf("tart invocations: got %v, want none", got)
+			}
+		})
+	}
+}
+
+// TestPullRemoteOnRunFails verifies that a failed pull fails the creation,
+// rather than silently falling back to a stale cached image.
+func TestPullRemoteOnRunFails(t *testing.T) {
+	fakeTart(t, 1)
+	p := newTartProvider("linux", TartConfig{
+		Image:           "mm-1:5001/linux-ci:latest",
+		PullRemoteOnRun: true,
+	}, slog.Default())
+
+	inst, err := p.New(context.Background())
+	if err == nil {
+		t.Fatal("New: got nil error, want the failed pull to be reported")
+	}
+	if inst != nil {
+		t.Error("New returned an instance alongside the error")
+	}
+	if !strings.Contains(err.Error(), "pulling mm-1:5001/linux-ci:latest") {
+		t.Errorf("error %q does not name the image being pulled", err)
 	}
 }
