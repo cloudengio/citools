@@ -32,19 +32,6 @@ type versionInfo struct {
 	Dirty bool
 }
 
-// keys returns the Info.plist keys recording the version, for merging into the
-// bundle's other keys. CGCommit and CGBuildTime have no CFBundle equivalent;
-// they record which tree the bundle came from and when, which the version
-// strings alone cannot.
-func (v versionInfo) keys() map[string]any {
-	return map[string]any{
-		"CFBundleShortVersionString": v.Short,
-		"CFBundleVersion":            v.Build,
-		"CGCommit":                   v.Commit,
-		"CGBuildTime":                v.BuildTime.UTC().Format(time.RFC3339),
-	}
-}
-
 // gitVersion derives the version for a bundle built from the repository at dir.
 // A tree with uncommitted changes yields Dirty, which the caller must decide
 // how to treat: a bundle stamped with a commit it does not match is worse than

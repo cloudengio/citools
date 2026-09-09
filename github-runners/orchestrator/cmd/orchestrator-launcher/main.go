@@ -14,12 +14,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sync/atomic"
 
@@ -188,9 +186,11 @@ func runOrchestrator(ctx context.Context, orch, cfg string) {
 		// Nothing ever ran, so there is no output to show.
 		notify("Failed to start the orchestrator:\n" + err.Error())
 	default:
-		notify(fmt.Sprintf(
-			"The GitHub Runner Orchestrator stopped with an error (%v).\n\n%s\n\nFull log: %s",
-			err, logTail(lp), lp))
+		showLogDialog(
+			fmt.Sprintf("The GitHub Runner Orchestrator stopped with an error (%v).", err),
+			logTail(lp),
+			lp,
+		)
 	}
 }
 
@@ -206,21 +206,4 @@ func logTail(path string) []byte {
 	// Reading from an offset can start mid-line; Tail drops that partial line
 	// along with everything before the last maxDialogLines.
 	return textutil.Tail(buf, '\n', maxDialogLines)
-}
-
-// confirm shows a native two-button dialog and reports whether the affirmative
-// ("Install") button was chosen. Any failure (no GUI session, cancelled) is a
-// decline.
-func confirm(message string) bool {
-	script := fmt.Sprintf(
-		`display dialog %q buttons {"Not Now","Install"} default button "Install" with title %q`,
-		message, dialogTitle)
-	out, err := exec.Command("osascript", "-e", script, "-e", "button returned of result").Output() //nolint:gosec // fixed script, values quoted.
-	return err == nil && string(bytes.TrimRight(out, "\r\n")) == "Install"
-}
-
-// notify shows a native informational dialog. Failures are ignored.
-func notify(message string) {
-	script := fmt.Sprintf(`display dialog %q buttons {"OK"} default button "OK" with title %q`, message, dialogTitle)
-	_ = exec.Command("osascript", "-e", script).Run() //nolint:gosec // fixed script, values quoted.
 }

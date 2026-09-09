@@ -239,6 +239,9 @@ func TestInnerInfoLSMinimumSystemVersion(t *testing.T) {
 
 	innerUser := buildtools.InfoPlist{
 		LSMinimumSystemVersion: outerInfo.LSMinimumSystemVersion,
+		Extra: map[string]any{
+			"LSUIElement": true,
+		},
 	}
 	innerInfo, err := buildInfoPlist(innerUser, defaultExecutable, orchestratorBundleID, version)
 	if err != nil {
@@ -246,6 +249,9 @@ func TestInnerInfoLSMinimumSystemVersion(t *testing.T) {
 	}
 	if got, want := innerInfo.LSMinimumSystemVersion, "15.2"; got != want {
 		t.Errorf("inner LSMinimumSystemVersion: got %q, want %q", got, want)
+	}
+	if got, ok := innerInfo.Extra["LSUIElement"].(bool); !ok || !got {
+		t.Errorf("inner LSUIElement: got %v, want true", innerInfo.Extra["LSUIElement"])
 	}
 
 	buildEnv := buildtools.GoBuildEnvForMacOSVersion(outerInfo.LSMinimumSystemVersion)

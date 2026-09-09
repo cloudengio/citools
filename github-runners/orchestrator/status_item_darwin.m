@@ -15,16 +15,16 @@ extern void goStatusItemUninstall(void);
 extern void goStatusItemQuit(void);
 extern int goStatusItemIsInstalled(void);
 
-@interface StatusItemMenuDelegate : NSObject <NSMenuDelegate>
+@interface StatusItemAppDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate>
 - (instancetype)initWithServiceInstalled:(BOOL)installed;
 - (void)updateStatusText:(NSString *)text;
 - (void)updateServiceItems:(BOOL)installed;
 @end
 
-static StatusItemMenuDelegate *gMenuDelegate = nil;
+static StatusItemAppDelegate *gAppDelegate = nil;
 static NSStatusItem *gStatusItem = nil;
 
-@implementation StatusItemMenuDelegate {
+@implementation StatusItemAppDelegate {
     NSMenu *_menu;
     NSMenuItem *_statusItemRow;
     NSMenuItem *_installItem;
@@ -35,22 +35,6 @@ static NSStatusItem *gStatusItem = nil;
 - (instancetype)initWithServiceInstalled:(BOOL)installed {
     self = [super init];
     if (self) {
-        gStatusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
-        if (@available(macOS 11.0, *)) {
-            NSImage *img = [NSImage imageWithSystemSymbolName:@"server.rack" accessibilityDescription:@"GitHub Runner Orchestrator"];
-            if (!img) {
-                img = [NSImage imageWithSystemSymbolName:@"play.circle" accessibilityDescription:@"GitHub Runner Orchestrator"];
-            }
-            if (img) {
-                [img setTemplate:YES];
-                gStatusItem.button.image = img;
-            } else {
-                gStatusItem.button.title = @"[GH]";
-            }
-        } else {
-            gStatusItem.button.title = @"[GH]";
-        }
-
         _menu = [[NSMenu alloc] initWithTitle:@"GitHub Runner Orchestrator"];
         [_menu setAutoenablesItems:NO];
         [_menu setDelegate:self];
@@ -97,10 +81,27 @@ static NSStatusItem *gStatusItem = nil;
         [quit setTarget:self];
         [quit setEnabled:YES];
         [_menu addItem:quit];
-
-        gStatusItem.menu = _menu;
     }
     return self;
+}
+
+- (void)applicationDidFinishLaunching:(NSNotification *)note {
+    gStatusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
+    if (@available(macOS 11.0, *)) {
+        NSImage *img = [NSImage imageWithSystemSymbolName:@"server.rack" accessibilityDescription:@"GitHub Runner Orchestrator"];
+        if (!img) {
+            img = [NSImage imageWithSystemSymbolName:@"play.circle" accessibilityDescription:@"GitHub Runner Orchestrator"];
+        }
+        if (img) {
+            [img setTemplate:YES];
+            gStatusItem.button.image = img;
+        } else {
+            gStatusItem.button.title = @"[GH]";
+        }
+    } else {
+        gStatusItem.button.title = @"[GH]";
+    }
+    gStatusItem.menu = _menu;
 }
 
 - (void)updateServiceItems:(BOOL)installed {
@@ -189,7 +190,9 @@ int checkGUIAvailable(void) {
 void initAndRunCocoaApp(int serviceInstalled) {
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
-    gMenuDelegate = [[StatusItemMenuDelegate alloc] initWithServiceInstalled:(serviceInstalled != 0)];
+    gAppDelegate = [[StatusItemAppDelegate alloc] initWithServiceInstalled:(serviceInstalled != 0)];
+    [NSApp setDelegate:gAppDelegate];
+    [NSApp activateIgnoringOtherApps:YES];
     [NSApp run];
 }
 

@@ -156,7 +156,7 @@ func (shr *selfHostedRunner) runQueuedJob(ctx context.Context, inst *WorkflowIns
 	errs.Append(runErr)
 	errs.Append(stopErr)
 
-	ce := vmsclient.CompletionEvent[WorkflowInstance]{Payload: *inst}
+	ce := vmsclient.CompletionEvent[*WorkflowInstance]{Payload: inst}
 	if err := errs.Err(); err != nil {
 		shr.completionQueue.PushFailure(ce, err)
 		return inst.JobStarted, err

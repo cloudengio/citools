@@ -132,6 +132,9 @@ func (BundleCommand) Run(ctx context.Context, fl any, _ []string) error {
 	}
 	innerUser := buildtools.InfoPlist{
 		LSMinimumSystemVersion: outerInfo.LSMinimumSystemVersion,
+		Extra: map[string]any{
+			"LSUIElement": true,
+		},
 	}
 	innerInfo, err := buildInfoPlist(innerUser, defaultExecutable, orchestratorBundleID, version)
 	if err != nil {

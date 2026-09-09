@@ -32,10 +32,10 @@ type WorkflowEventHandler struct {
 	status          *statusTracker
 }
 
-type CompletionQueue = vmsclient.CompletionQueue[WorkflowInstance]
+type CompletionQueue = vmsclient.CompletionQueue[*WorkflowInstance]
 
 func NewCompletionQueue(ctx context.Context, size int, successfulRetention, failedRetention time.Duration) *CompletionQueue {
-	return vmsclient.NewCompletionQueue[WorkflowInstance](ctx, size, successfulRetention, failedRetention)
+	return vmsclient.NewCompletionQueue[*WorkflowInstance](ctx, size, successfulRetention, failedRetention)
 }
 
 func NewWorkflowEventHandler(ctx context.Context, tmpDir string, cq *CompletionQueue, statusRetention time.Duration, poolConfigs map[string]vmsclient.PoolConfig, repoConfigs []RepositoryConfig, clients *RepoClients) (*WorkflowEventHandler, error) {
@@ -356,7 +356,7 @@ func (r *WorkflowEventHandler) handleCompleted(ctx context.Context, event *gogit
 	if stopErr != nil || runErr != nil {
 		logger.Error("failed to stop VM on cancellation", "stop_err", stopErr, "run_err", runErr)
 	}
-	ce := vmsclient.CompletionEvent[WorkflowInstance]{Payload: *inst}
+	ce := vmsclient.CompletionEvent[*WorkflowInstance]{Payload: inst}
 	err := fmt.Errorf("job canceled")
 	r.completeQueue.PushFailure(ce, err)
 }

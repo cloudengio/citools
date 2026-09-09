@@ -6,7 +6,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -237,7 +236,7 @@ func main() {
 	// (draining/deleting VMs) when launchd stops the login service.
 	cmdutil.HandleSignals(func() { cancel(cmdutil.ErrInterrupt) }, os.Interrupt, syscall.SIGTERM)
 	if err := cli.Dispatch(ctx); err != nil {
-		if errors.Is(err, cmdutil.ErrInterrupt) {
+		if isCleanShutdown(err) {
 			return
 		}
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)

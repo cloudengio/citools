@@ -76,14 +76,14 @@ func newWorkflowInstance(ctx context.Context, lm *internal.LogFileManager, runne
 }
 
 // GetVM implements the CompletionEventPayload interface, returning the VM associated with this workflow instance.
-func (wi WorkflowInstance) GetVM() *vmspool.VM {
+func (wi *WorkflowInstance) GetVM() *vmspool.VM {
 	return wi.vm
 }
 
 // GetLogger implements the CompletionEventPayload interface, returning a logger enriched with workflow instance details.
-func (wi WorkflowInstance) GetLogger(logger *slog.Logger) *slog.Logger {
+func (wi *WorkflowInstance) GetLogger(logger *slog.Logger) *slog.Logger {
 	logger = LoggerWithEvent(logger, wi.Event)
-	logger = LoggerWithWorkflowInstance(logger, &wi)
+	logger = LoggerWithWorkflowInstance(logger, wi)
 	return logger
 }
 
@@ -280,7 +280,7 @@ func (wi *WorkflowInstance) RunJob(ctx context.Context, cq *CompletionQueue, cli
 				"assigned_run_id", jobStarted.RunID, "expected_run_id", expectedRunID,
 				"assigned_repo", jobStarted.Repository, "expected_repo", expectedRepo)
 			if wi.RunStdoutStderr != nil {
-				fmt.Fprintf(wi.RunStdoutStderr, "\nERROR: %s\n", diffMsg)
+				fmt.Fprintf(wi.RunStdoutStderr, "\nERROR: %s\n", diffMsg) //nolint:errcheck
 			}
 			if status != nil {
 				status.upsert(wi.Name, func(rec *WorkflowSnapshot) {
@@ -332,7 +332,7 @@ func (wi *WorkflowInstance) RunJob(ctx context.Context, cq *CompletionQueue, cli
 					"error", ghErr,
 				)
 				if wi.RunStdoutStderr != nil {
-					fmt.Fprintf(wi.RunStdoutStderr, "\nERROR: failed to ensure job completed/canceled on GitHub: %v\n", ghErr)
+					fmt.Fprintf(wi.RunStdoutStderr, "\nERROR: failed to ensure job completed/canceled on GitHub: %v\n", ghErr) //nolint:errcheck
 				}
 				if status != nil {
 					status.upsert(wi.Name, func(rec *WorkflowSnapshot) {
