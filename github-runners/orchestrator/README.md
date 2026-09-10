@@ -6,8 +6,11 @@ Usage of `orchestrator`
     `orchestrator` for GitHub self-hosted runners
 
              run - run the `orchestrator`
+          launch - launch the `orchestrator` as a GUI application
+            view - view the web UI of an `orchestrator` running on a remote host via SSH port forwarding
          run-job - run a single job on a VM, useful for testing vms
           github - GitHub API commands
+         version - print the version and git revision of this binary
          install - write the bundled minimal `orchestrator` config file to a standard location
           bundle - build a signed macOS .app bundle that installs the `orchestrator`
          service - manage the `orchestrator` as a per-user launchd login service
@@ -141,7 +144,7 @@ When the user selects **Quit** from the menu bar:
 
 The orchestrator registers a status item with variable length in the macOS Menu Extra bar displaying a runner icon or title. Clicking the icon presents a native `NSMenu` with dynamic state:
 
-- **Open Web UI:** Launches the default web browser targeting the configured Web UI listen address (`http://localhost:<port>`). Disabled if Web UI is disabled in configuration.
+- **Open Web UI:** Launches the default web browser targeting the configured Web UI listen address (`http://127.0.0.1:<port>`). Disabled if Web UI is disabled in configuration.
 - **View Logs:** Opens the service output log file using the default macOS handler (`Console.app` or default viewer).
 - *[Separator]*
 - **Service Controls (Dynamic):**

@@ -28,6 +28,10 @@ commands:
     summary: run the orchestrator
   - name: launch
     summary: launch the orchestrator as a GUI application
+  - name: view
+    summary: view the web UI of an orchestrator running on a remote host via SSH port forwarding
+    args:
+      - <[local-port:]host[:remote-port]> (remote host running the orchestrator, with optional local and remote ports)
   - name: run-job
     summary: run a single job on a VM, useful for testing vms
   - name: github
@@ -136,6 +140,9 @@ func createCLI() *subcmd.CommandSetYAML {
 
 	launchCmd := LaunchCommand{}
 	cmdSet.Set("launch").MustRunner(launchCmd.Run, &struct{}{})
+
+	viewCmd := ViewCommand{}
+	cmdSet.Set("view").MustRunner(viewCmd.Run, &ViewFlags{})
 
 	installCmd := InstallCommand{}
 	cmdSet.Set("install").MustRunner(installCmd.Run, &InstallFlags{})
