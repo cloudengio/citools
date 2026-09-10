@@ -283,7 +283,7 @@ func defaultServiceLogPath() string {
 
 func formatWebURL(listenAddr string) string {
 	if strings.HasPrefix(listenAddr, ":") {
-		return "http://localhost" + listenAddr
+		return "http://127.0.0.1" + listenAddr
 	}
 	return "http://" + listenAddr
 }
