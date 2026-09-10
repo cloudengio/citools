@@ -7,6 +7,7 @@ package webui
 import (
 	"io/fs"
 	"net/http"
+	"strings"
 )
 
 // Handler returns the top-level HTTP handler for the web UI: the JSON API under
@@ -31,6 +32,10 @@ func spaHandler(assets fs.FS) http.Handler {
 			return
 		}
 		if _, err := fs.Stat(assets, p[1:]); err != nil {
+			if strings.HasPrefix(p, "/assets/") {
+				http.NotFound(w, r)
+				return
+			}
 			// Unknown path: hand the SPA its entry point.
 			r = r.Clone(r.Context())
 			r.URL.Path = "/"

@@ -32,10 +32,10 @@ type WorkflowEventHandler struct {
 	status          *statusTracker
 }
 
-type CompletionQueue = vmsclient.CompletionQueue[WorkflowInstance]
+type CompletionQueue = vmsclient.CompletionQueue[*WorkflowInstance]
 
 func NewCompletionQueue(ctx context.Context, size int, successfulRetention, failedRetention time.Duration) *CompletionQueue {
-	return vmsclient.NewCompletionQueue[WorkflowInstance](ctx, size, successfulRetention, failedRetention)
+	return vmsclient.NewCompletionQueue[*WorkflowInstance](ctx, size, successfulRetention, failedRetention)
 }
 
 func NewWorkflowEventHandler(ctx context.Context, tmpDir string, cq *CompletionQueue, statusRetention time.Duration, poolConfigs map[string]vmsclient.PoolConfig, repoConfigs []RepositoryConfig, clients *RepoClients) (*WorkflowEventHandler, error) {
@@ -325,10 +325,25 @@ func (r *WorkflowEventHandler) handleCompleted(ctx context.Context, event *gogit
 		ctxlog.Info(ctx, "workflow_job completed on github", "conclusion", conclusion)
 		return
 	}
-	// The instance is still live: GitHub reported completion while the job was
-	// still running locally, i.e. it was canceled on GitHub. Tear the VM down.
+	// If the job completed on GitHub with any conclusion other than "cancelled"
+	// (e.g. "success", "failure"), it completed normally.
+	// runQueuedJob is currently finishing locally (extracting logs, stopping VM).
+	// Do NOT treat normal completions as cancellations or tear down the VM here!
+	if conclusion != "cancelled" {
+		r.status.upsert(inst.Name, func(rec *WorkflowSnapshot) {
+			rec.CompletedAt = time.Now()
+			if conclusion != "" {
+				rec.Result = conclusion
+			}
+		})
+		ctxlog.Info(ctx, "workflow_job completed on github while still running locally", "conclusion", conclusion)
+		return
+	}
+
+	// The instance is still live and was cancelled on GitHub. Tear the VM down,
+	// ensuring diag logs are extracted before the VM is stopped.
 	logger := LoggerWithWorkflowInstance(ctxlog.Logger(ctx), inst)
-	logger.Info("workflow_job completed on github while still running locally, treating as canceled", "conclusion", conclusion)
+	logger.Info("workflow_job cancelled on github while still running locally", "conclusion", conclusion)
 	r.status.upsert(inst.Name, func(rec *WorkflowSnapshot) {
 		rec.State = WorkflowCanceled
 		rec.Err = "job canceled on github"
@@ -337,9 +352,11 @@ func (r *WorkflowEventHandler) handleCompleted(ctx context.Context, event *gogit
 			rec.Result = conclusion
 		}
 	})
-	vm := inst.GetVM()
-	_, _ = vm.StopAndRelease(ctx, 30*time.Second)
-	ce := vmsclient.CompletionEvent[WorkflowInstance]{Payload: *inst}
+	runErr, stopErr := inst.StopAndReleaseVM(ctx, 30*time.Second)
+	if stopErr != nil || runErr != nil {
+		logger.Error("failed to stop VM on cancellation", "stop_err", stopErr, "run_err", runErr)
+	}
+	ce := vmsclient.CompletionEvent[*WorkflowInstance]{Payload: inst}
 	err := fmt.Errorf("job canceled")
 	r.completeQueue.PushFailure(ce, err)
 }
@@ -380,18 +397,27 @@ func (r *WorkflowEventHandler) handleQueuedEvent(ctx context.Context, event *gog
 		}
 	})
 
-	runErr := inst.RunJob(ctx, r.completeQueue)
+	runErr := inst.RunJob(ctx, r.completeQueue, r.clients, r.status)
 	// The VM has finished running the job locally at this point; record the
 	// vm_completed state. GitHub's "completed" webhook (handleCompleted) will
-	// later advance this to the completed state.
+	// later advance this to the completed state (or if it already arrived, advance now).
 	r.status.upsert(inst.Name, func(rec *WorkflowSnapshot) {
-		rec.State = WorkflowVMCompleted
 		rec.VMCompletedAt = time.Now()
+		if inst.JobStarted != nil {
+			rec.JobStarted = inst.JobStarted
+		}
 		if runErr != nil {
-			rec.Result = "Failed"
+			if rec.Result == "" {
+				rec.Result = "Failed"
+			}
 			rec.Err = runErr.Error()
-		} else {
+		} else if rec.Result == "" {
 			rec.Result = "Succeeded"
+		}
+		if !rec.CompletedAt.IsZero() {
+			rec.State = WorkflowCompleted
+		} else {
+			rec.State = WorkflowVMCompleted
 		}
 	})
 	return nil

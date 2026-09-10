@@ -32,19 +32,6 @@ type versionInfo struct {
 	Dirty bool
 }
 
-// keys returns the Info.plist keys recording the version, for merging into the
-// bundle's other keys. CGCommit and CGBuildTime have no CFBundle equivalent;
-// they record which tree the bundle came from and when, which the version
-// strings alone cannot.
-func (v versionInfo) keys() map[string]any {
-	return map[string]any{
-		"CFBundleShortVersionString": v.Short,
-		"CFBundleVersion":            v.Build,
-		"CGCommit":                   v.Commit,
-		"CGBuildTime":                v.BuildTime.UTC().Format(time.RFC3339),
-	}
-}
-
 // gitVersion derives the version for a bundle built from the repository at dir.
 // A tree with uncommitted changes yields Dirty, which the caller must decide
 // how to treat: a bundle stamped with a commit it does not match is worse than
@@ -96,7 +83,7 @@ type VersionCommand struct{}
 // comes from -buildvcs, which is on by default when building from a repository,
 // so no linker flags are needed to stamp it.
 func (VersionCommand) Run(_ context.Context, _ any, _ []string) error {
-	goVersion, revision, lastCommit, dirty, ok := cmdutil.VCSInfo()
+	goVersion, revision, lastCommit, buildTime, dirty, ok := cmdutil.VCSInfo()
 	if !ok {
 		fmt.Printf("%s\nno version information: built without VCS stamping\n", goVersion)
 		return nil
@@ -106,7 +93,15 @@ func (VersionCommand) Run(_ context.Context, _ any, _ []string) error {
 		suffix = " (dirty)"
 	}
 	fmt.Printf("commit:  %s%s\n", revision, suffix)
-	fmt.Printf("date:    %s\n", lastCommit.UTC().Format(time.RFC3339))
+	if dirty {
+		if !buildTime.IsZero() {
+			fmt.Printf("date:    %s\n", buildTime.UTC().Format(time.RFC3339))
+		}
+	} else {
+		if !lastCommit.IsZero() {
+			fmt.Printf("date:    %s\n", lastCommit.UTC().Format(time.RFC3339))
+		}
+	}
 	fmt.Printf("go:      %s\n", goVersion)
 	return nil
 }

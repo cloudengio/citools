@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"cloudeng.io/cmdutil"
@@ -77,6 +78,7 @@ type RunCommand struct{}
 type RunFlags struct {
 	CommonRunFlags
 	DeleteOrphanedVMs bool `subcmd:"delete-orphaned-vms,false,delete any orphaned VMs that are found at startup"`
+	NoMenuBar         bool `subcmd:"no-menu-bar,false,disable the macOS menu bar status item"`
 }
 
 // statusRetention returns how long completed workflow records should be kept in
@@ -166,7 +168,70 @@ func (r RunCommand) Run(ctx context.Context, fl any, _ []string) error {
 	}
 
 	h := githubwebhook.New(cfg.Webhook.RelayURL, wh.HandleWebhooks)
-	return h.Listen(ctx, opts)
+
+	useMenuBar := !fv.NoMenuBar && isGUIAvailable()
+	if !useMenuBar {
+		err := h.Listen(ctx, opts)
+		if isCleanShutdown(err) {
+			return nil
+		}
+		return err
+	}
+
+	webURL := ""
+	if cfg.WebUI.Enabled && cfg.WebUI.ListenAddress != "" {
+		if strings.HasPrefix(cfg.WebUI.ListenAddress, ":") {
+			webURL = "http://localhost" + cfg.WebUI.ListenAddress
+		} else {
+			webURL = "http://" + cfg.WebUI.ListenAddress
+		}
+	}
+
+	runCtx, runCancel := context.WithCancel(ctx)
+	defer runCancel()
+
+	listenErrCh := make(chan error, 1)
+	go func() {
+		err := h.Listen(runCtx, opts)
+		listenErrCh <- err
+		stopStatusItem()
+	}()
+
+	startStatusItem(runCtx, runCancel, webURL, globalFlags.File)
+
+	runCancel()
+	err = <-listenErrCh
+	if isCleanShutdown(err) {
+		return nil
+	}
+	return err
+}
+
+func isCleanShutdown(err error) bool {
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, cmdutil.ErrInterrupt) {
+		type multiUnwrap interface {
+			Unwrap() []error
+		}
+		if u, ok := err.(multiUnwrap); ok {
+			for _, e := range u.Unwrap() {
+				if !isCleanShutdown(e) {
+					return false
+				}
+			}
+			return true
+		}
+		type singleUnwrap interface {
+			Unwrap() error
+		}
+		if u, ok := err.(singleUnwrap); ok {
+			return isCleanShutdown(u.Unwrap())
+		}
+		return true
+	}
+	return false
 }
 
 type RunJobFlags struct {

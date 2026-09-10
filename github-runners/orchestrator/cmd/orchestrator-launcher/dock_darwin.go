@@ -7,13 +7,22 @@
 package main
 
 /*
+#cgo CFLAGS: -fobjc-arc
 #cgo LDFLAGS: -framework AppKit
+#include <stdlib.h>
+
 void runCocoaApp(void);
 void stopCocoaApp(void);
+int showNativeConfirm(const char *title, const char *message);
+void showNativeNotify(const char *title, const char *message);
+void showNativeLogDialog(const char *title, const char *message, const char *logSnippet, const char *logPath);
 */
 import "C"
 
-import "runtime"
+import (
+	"runtime"
+	"unsafe"
+)
 
 // runApp runs the launcher inside a Cocoa application. Running the event loop
 // (rather than just calling finishLaunching) is what actually stops the Dock
@@ -41,4 +50,32 @@ func launcherMain() {
 //export launcherWillTerminate
 func launcherWillTerminate() {
 	terminateChild()
+}
+
+func confirm(message string) bool {
+	cTitle := C.CString(dialogTitle)
+	defer C.free(unsafe.Pointer(cTitle))
+	cMsg := C.CString(message)
+	defer C.free(unsafe.Pointer(cMsg))
+	return C.showNativeConfirm(cTitle, cMsg) != 0
+}
+
+func notify(message string) {
+	cTitle := C.CString(dialogTitle)
+	defer C.free(unsafe.Pointer(cTitle))
+	cMsg := C.CString(message)
+	defer C.free(unsafe.Pointer(cMsg))
+	C.showNativeNotify(cTitle, cMsg)
+}
+
+func showLogDialog(header string, logSnippet []byte, fullLogPath string) {
+	cTitle := C.CString(dialogTitle)
+	defer C.free(unsafe.Pointer(cTitle))
+	cHeader := C.CString(header)
+	defer C.free(unsafe.Pointer(cHeader))
+	cSnippet := C.CString(string(logSnippet))
+	defer C.free(unsafe.Pointer(cSnippet))
+	cLogPath := C.CString(fullLogPath)
+	defer C.free(unsafe.Pointer(cLogPath))
+	C.showNativeLogDialog(cTitle, cHeader, cSnippet, cLogPath)
 }

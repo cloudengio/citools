@@ -26,37 +26,40 @@ type WebappBuildFlags struct {
 	SkipGen     bool   `subcmd:"skip-gen,false,skip regenerating the typed API client from openapi.yaml"`
 }
 
-func (WebappBuildCommand) Run(ctx context.Context, flags any, _ []string) error {
-	fv := flags.(*WebappBuildFlags)
-
-	dir, err := filepath.Abs(fv.Dir)
+func buildWebapp(ctx context.Context, dir string, skipInstall, skipGen bool) error {
+	absDir, err := filepath.Abs(dir)
 	if err != nil {
 		return err
 	}
-	if _, err := os.Stat(filepath.Join(dir, "package.json")); err != nil {
-		return fmt.Errorf("no package.json found in %s: %w", dir, err)
+	if _, err := os.Stat(filepath.Join(absDir, "package.json")); err != nil {
+		return fmt.Errorf("no package.json found in %s: %w", absDir, err)
 	}
 	if _, err := exec.LookPath("npm"); err != nil {
 		return fmt.Errorf("npm not found on PATH: %w", err)
 	}
 
 	var steps [][]string
-	if !fv.SkipInstall {
+	if !skipInstall {
 		steps = append(steps, []string{"install"})
 	}
-	if !fv.SkipGen {
+	if !skipGen {
 		steps = append(steps, []string{"run", "gen"})
 	}
 	steps = append(steps, []string{"run", "build"})
 
 	for _, args := range steps {
-		if err := runNpm(ctx, dir, args...); err != nil {
+		if err := runNpm(ctx, absDir, args...); err != nil {
 			return fmt.Errorf("npm %v failed: %w", args, err)
 		}
 	}
-	ctxlog.Info(ctx, "web ui build complete", "dir", dir)
-	fmt.Printf("web UI built into %s\n", filepath.Join(dir, "dist"))
+	ctxlog.Info(ctx, "web ui build complete", "dir", absDir)
+	fmt.Printf("web UI built into %s\n", filepath.Join(absDir, "dist"))
 	return nil
+}
+
+func (WebappBuildCommand) Run(ctx context.Context, flags any, _ []string) error {
+	fv := flags.(*WebappBuildFlags)
+	return buildWebapp(ctx, fv.Dir, fv.SkipInstall, fv.SkipGen)
 }
 
 func runNpm(ctx context.Context, dir string, args ...string) error {

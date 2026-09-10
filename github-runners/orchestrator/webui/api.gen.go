@@ -114,6 +114,39 @@ func (e WorkflowState) Valid() bool {
 	}
 }
 
+// BuildInfo defines model for BuildInfo.
+type BuildInfo struct {
+	// Arch Example: arm64
+	Arch string `json:"arch"`
+
+	// BuildTime Example: 2026-09-03T18:00:00Z
+	BuildTime *string `json:"build_time,omitempty"`
+
+	// GoVersion Example: go1.24.0
+	GoVersion string `json:"go_version"`
+
+	// Modified Example: false
+	Modified *bool `json:"modified,omitempty"`
+
+	// Os Example: darwin
+	Os string `json:"os"`
+
+	// Path Example: github.com/cloudengio/citools/runners/macos/orchestrator
+	Path *string `json:"path,omitempty"`
+
+	// Revision Example: e005e3a0b1c2...
+	Revision *string `json:"revision,omitempty"`
+
+	// RevisionShort Example: e005e3a0
+	RevisionShort *string `json:"revision_short,omitempty"`
+
+	// RevisionTime Example: 2026-09-03T17:15:00Z
+	RevisionTime *string `json:"revision_time,omitempty"`
+
+	// Version Example: v0.1.0
+	Version *string `json:"version,omitempty"`
+}
+
 // ConfigSummary defines model for ConfigSummary.
 type ConfigSummary struct {
 	// ConfigFile Path to the YAML config file this orchestrator was started with.
@@ -198,6 +231,18 @@ type RunnerSummary struct {
 	VmPool     *string   `json:"vm_pool,omitempty"`
 }
 
+// ServiceStatus defines model for ServiceStatus.
+type ServiceStatus struct {
+	// Installed Whether the launchd login service is installed.
+	Installed bool `json:"installed"`
+
+	// Label The service label / bundle ID.
+	Label *string `json:"label,omitempty"`
+
+	// Running Whether the orchestrator is currently running as a service.
+	Running bool `json:"running"`
+}
+
 // VMState State of a VM as reported by the pool.
 type VMState string
 
@@ -230,11 +275,14 @@ type WorkflowStatus struct {
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 
 	// Error Error detail if the job failed or was canceled.
-	Error   *string        `json:"error,omitempty"`
-	JobId   *int64         `json:"job_id,omitempty"`
-	JobName *string        `json:"job_name,omitempty"`
-	Labels  *[]string      `json:"labels,omitempty"`
-	Logs    *[]LogArtifact `json:"logs,omitempty"`
+	Error   *string `json:"error,omitempty"`
+	JobId   *int64  `json:"job_id,omitempty"`
+	JobName *string `json:"job_name,omitempty"`
+
+	// JobUrl URL to the workflow run job on GitHub (e.g. https://github.com/<owner>/<repo>/actions/runs/<run_id>/job/<job_id>).
+	JobUrl *string        `json:"job_url,omitempty"`
+	Labels *[]string      `json:"labels,omitempty"`
+	Logs   *[]LogArtifact `json:"logs,omitempty"`
 
 	// Name The runner instance name assigned by the orchestrator.
 	Name         string     `json:"name"`
@@ -245,6 +293,7 @@ type WorkflowStatus struct {
 
 	// Result Terminal result if completed, e.g. "Succeeded".
 	Result    *string    `json:"result,omitempty"`
+	RunId     *int64     `json:"run_id,omitempty"`
 	StartedAt *time.Time `json:"started_at,omitempty"`
 
 	// State Lifecycle state of a workflow job within the orchestrator. `vm_completed` means the job finished on the local VM but GitHub has not yet delivered the completion webhook; `completed` means GitHub acknowledged completion.
@@ -262,8 +311,20 @@ type ListWorkflowsParams struct {
 	State *WorkflowState `form:"state,omitempty" json:"state,omitempty"`
 }
 
+// DownloadWorkflowLogParams defines parameters for DownloadWorkflowLog.
+type DownloadWorkflowLogParams struct {
+	// View When true, display the log inline as a web page instead of downloading as an attachment.
+	View *bool `form:"view,omitempty" json:"view,omitempty"`
+
+	// JobUrl URL to the workflow run job on GitHub.
+	JobUrl *string `form:"job_url,omitempty" json:"job_url,omitempty"`
+}
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// GetBuildInfo Get orchestrator build and version information
+	// (GET /buildinfo)
+	GetBuildInfo(w http.ResponseWriter, r *http.Request)
 	// GetConfig Current orchestrator configuration (structured summary)
 	// (GET /config)
 	GetConfig(w http.ResponseWriter, r *http.Request)
@@ -276,6 +337,15 @@ type ServerInterface interface {
 	// ListPools List VM pools and the VMs within each pool
 	// (GET /pools)
 	ListPools(w http.ResponseWriter, r *http.Request)
+	// GetServiceStatus Status of the launchd login service
+	// (GET /service)
+	GetServiceStatus(w http.ResponseWriter, r *http.Request)
+	// RestartService Restart the orchestrator login service
+	// (POST /service/restart)
+	RestartService(w http.ResponseWriter, r *http.Request)
+	// UninstallService Uninstall and stop the orchestrator login service
+	// (POST /service/uninstall)
+	UninstallService(w http.ResponseWriter, r *http.Request)
 	// ListWorkflows List running and recently-completed workflow jobs
 	// (GET /workflows)
 	ListWorkflows(w http.ResponseWriter, r *http.Request, params ListWorkflowsParams)
@@ -290,7 +360,7 @@ type ServerInterface interface {
 	ListWorkflowLogs(w http.ResponseWriter, r *http.Request, name string)
 	// DownloadWorkflowLog Download a specific log artifact for a workflow job
 	// (GET /workflows/{name}/logs/{artifact})
-	DownloadWorkflowLog(w http.ResponseWriter, r *http.Request, name string, artifact string)
+	DownloadWorkflowLog(w http.ResponseWriter, r *http.Request, name string, artifact string, params DownloadWorkflowLogParams)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -301,6 +371,20 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// GetBuildInfo operation middleware
+func (siw *ServerInterfaceWrapper) GetBuildInfo(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBuildInfo(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // GetConfig operation middleware
 func (siw *ServerInterfaceWrapper) GetConfig(w http.ResponseWriter, r *http.Request) {
@@ -349,6 +433,48 @@ func (siw *ServerInterfaceWrapper) ListPools(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListPools(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetServiceStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetServiceStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetServiceStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RestartService operation middleware
+func (siw *ServerInterfaceWrapper) RestartService(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RestartService(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UninstallService operation middleware
+func (siw *ServerInterfaceWrapper) UninstallService(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UninstallService(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -493,8 +619,37 @@ func (siw *ServerInterfaceWrapper) DownloadWorkflowLog(w http.ResponseWriter, r 
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DownloadWorkflowLogParams
+
+	// ------------- Optional query parameter "view" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "view", r.URL.Query(), &params.View, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "view"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "view", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "job_url" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "job_url", r.URL.Query(), &params.JobUrl, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "job_url"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "job_url", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DownloadWorkflowLog(w, r, name, artifact)
+		siw.Handler.DownloadWorkflowLog(w, r, name, artifact, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -625,6 +780,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	}
 
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/config", wrapper.GetConfig)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/buildinfo", wrapper.GetBuildInfo)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/config/file", wrapper.DownloadConfigFile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/pools", wrapper.ListPools)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/workflows", wrapper.ListWorkflows)
@@ -633,8 +789,32 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/workflows/{name}/logs", wrapper.ListWorkflowLogs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/workflows/{name}/logs/{artifact}", wrapper.DownloadWorkflowLog)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/events", wrapper.StreamEvents)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/service", wrapper.GetServiceStatus)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/service/restart", wrapper.RestartService)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/service/uninstall", wrapper.UninstallService)
 
 	return m
+}
+
+type GetBuildInfoRequestObject struct {
+}
+
+type GetBuildInfoResponseObject interface {
+	VisitGetBuildInfoResponse(w http.ResponseWriter) error
+}
+
+type GetBuildInfo200JSONResponse BuildInfo
+
+func (response GetBuildInfo200JSONResponse) VisitGetBuildInfoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 type GetConfigRequestObject struct {
@@ -766,6 +946,85 @@ func (response ListPools200JSONResponse) VisitListPoolsResponse(w http.ResponseW
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetServiceStatusRequestObject struct {
+}
+
+type GetServiceStatusResponseObject interface {
+	VisitGetServiceStatusResponse(w http.ResponseWriter) error
+}
+
+type GetServiceStatus200JSONResponse ServiceStatus
+
+func (response GetServiceStatus200JSONResponse) VisitGetServiceStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RestartServiceRequestObject struct {
+}
+
+type RestartServiceResponseObject interface {
+	VisitRestartServiceResponse(w http.ResponseWriter) error
+}
+
+type RestartService200Response struct {
+}
+
+func (response RestartService200Response) VisitRestartServiceResponse(w http.ResponseWriter) error {
+	w.WriteHeader(200)
+	return nil
+}
+
+type RestartService400JSONResponse Error
+
+func (response RestartService400JSONResponse) VisitRestartServiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UninstallServiceRequestObject struct {
+}
+
+type UninstallServiceResponseObject interface {
+	VisitUninstallServiceResponse(w http.ResponseWriter) error
+}
+
+type UninstallService200Response struct {
+}
+
+func (response UninstallService200Response) VisitUninstallServiceResponse(w http.ResponseWriter) error {
+	w.WriteHeader(200)
+	return nil
+}
+
+type UninstallService400JSONResponse Error
+
+func (response UninstallService400JSONResponse) VisitUninstallServiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -911,6 +1170,7 @@ func (response ListWorkflowLogs404JSONResponse) VisitListWorkflowLogsResponse(w 
 type DownloadWorkflowLogRequestObject struct {
 	Name     string `json:"name"`
 	Artifact string `json:"artifact"`
+	Params   DownloadWorkflowLogParams
 }
 
 type DownloadWorkflowLogResponseObject interface {
@@ -953,6 +1213,9 @@ func (response DownloadWorkflowLog404JSONResponse) VisitDownloadWorkflowLogRespo
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// GetBuildInfo Get orchestrator build and version information
+	// (GET /buildinfo)
+	GetBuildInfo(ctx context.Context, request GetBuildInfoRequestObject) (GetBuildInfoResponseObject, error)
 	// GetConfig Current orchestrator configuration (structured summary)
 	// (GET /config)
 	GetConfig(ctx context.Context, request GetConfigRequestObject) (GetConfigResponseObject, error)
@@ -965,6 +1228,15 @@ type StrictServerInterface interface {
 	// ListPools List VM pools and the VMs within each pool
 	// (GET /pools)
 	ListPools(ctx context.Context, request ListPoolsRequestObject) (ListPoolsResponseObject, error)
+	// GetServiceStatus Status of the launchd login service
+	// (GET /service)
+	GetServiceStatus(ctx context.Context, request GetServiceStatusRequestObject) (GetServiceStatusResponseObject, error)
+	// RestartService Restart the orchestrator login service
+	// (POST /service/restart)
+	RestartService(ctx context.Context, request RestartServiceRequestObject) (RestartServiceResponseObject, error)
+	// UninstallService Uninstall and stop the orchestrator login service
+	// (POST /service/uninstall)
+	UninstallService(ctx context.Context, request UninstallServiceRequestObject) (UninstallServiceResponseObject, error)
 	// ListWorkflows List running and recently-completed workflow jobs
 	// (GET /workflows)
 	ListWorkflows(ctx context.Context, request ListWorkflowsRequestObject) (ListWorkflowsResponseObject, error)
@@ -1019,6 +1291,30 @@ type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
 	options     StrictHTTPServerOptions
+}
+
+// GetBuildInfo operation middleware
+func (sh *strictHandler) GetBuildInfo(w http.ResponseWriter, r *http.Request) {
+	var request GetBuildInfoRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetBuildInfo(ctx, request.(GetBuildInfoRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetBuildInfo")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetBuildInfoResponseObject); ok {
+		if err := validResponse.VisitGetBuildInfoResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }
 
 // GetConfig operation middleware
@@ -1110,6 +1406,78 @@ func (sh *strictHandler) ListPools(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ListPoolsResponseObject); ok {
 		if err := validResponse.VisitListPoolsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetServiceStatus operation middleware
+func (sh *strictHandler) GetServiceStatus(w http.ResponseWriter, r *http.Request) {
+	var request GetServiceStatusRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetServiceStatus(ctx, request.(GetServiceStatusRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetServiceStatus")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetServiceStatusResponseObject); ok {
+		if err := validResponse.VisitGetServiceStatusResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RestartService operation middleware
+func (sh *strictHandler) RestartService(w http.ResponseWriter, r *http.Request) {
+	var request RestartServiceRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RestartService(ctx, request.(RestartServiceRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RestartService")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RestartServiceResponseObject); ok {
+		if err := validResponse.VisitRestartServiceResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UninstallService operation middleware
+func (sh *strictHandler) UninstallService(w http.ResponseWriter, r *http.Request) {
+	var request UninstallServiceRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UninstallService(ctx, request.(UninstallServiceRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UninstallService")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UninstallServiceResponseObject); ok {
+		if err := validResponse.VisitUninstallServiceResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -1222,11 +1590,12 @@ func (sh *strictHandler) ListWorkflowLogs(w http.ResponseWriter, r *http.Request
 }
 
 // DownloadWorkflowLog operation middleware
-func (sh *strictHandler) DownloadWorkflowLog(w http.ResponseWriter, r *http.Request, name string, artifact string) {
+func (sh *strictHandler) DownloadWorkflowLog(w http.ResponseWriter, r *http.Request, name string, artifact string, params DownloadWorkflowLogParams) {
 	var request DownloadWorkflowLogRequestObject
 
 	request.Name = name
 	request.Artifact = artifact
+	request.Params = params
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.DownloadWorkflowLog(ctx, request.(DownloadWorkflowLogRequestObject))
@@ -1253,43 +1622,53 @@ func (sh *strictHandler) DownloadWorkflowLog(w http.ResponseWriter, r *http.Requ
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

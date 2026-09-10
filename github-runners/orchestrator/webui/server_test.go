@@ -37,7 +37,16 @@ func (fakeBackend) Pools(context.Context) ([]PoolStatus, error) {
 
 func workflowWithLogs() WorkflowStatus {
 	logs := []LogArtifact{{Id: "job", Filename: "job.txt", Href: BasePath + "/workflows/w1/logs/job"}}
-	return WorkflowStatus{Name: "w1", State: WorkflowStateRunning, VmId: new("vm1"), Logs: &logs}
+	jobURL := "https://github.com/cloudengio/go.pkgs/actions/runs/33788991410/job/100760675888"
+	return WorkflowStatus{
+		Name:   "w1",
+		State:  WorkflowStateRunning,
+		VmId:   new("vm1"),
+		Logs:   &logs,
+		JobUrl: &jobURL,
+		RunId:  new(int64(33788991410)),
+		JobId:  new(int64(100760675888)),
+	}
 }
 
 func (fakeBackend) Workflows(context.Context) ([]WorkflowStatus, error) {
@@ -60,6 +69,27 @@ func (fakeBackend) CancelWorkflow(_ context.Context, name string) error {
 
 func (fakeBackend) WorkflowLog(_ context.Context, _, artifact string) (io.ReadCloser, LogArtifact, error) {
 	return io.NopCloser(strings.NewReader("hello log")), LogArtifact{Id: artifact, Filename: "job.txt"}, nil
+}
+
+func (fakeBackend) ServiceStatus(context.Context) (ServiceStatus, error) {
+	lbl := "io.cloudeng.citools.runners.macos.orchestrator"
+	return ServiceStatus{
+		Installed: true,
+		Running:   true,
+		Label:     &lbl,
+	}, nil
+}
+
+func (fakeBackend) RestartService(context.Context) error {
+	return nil
+}
+
+func (fakeBackend) UninstallService(context.Context) error {
+	return nil
+}
+
+func (fakeBackend) BuildInfo(context.Context) (BuildInfo, error) {
+	return CurrentBuildInfo(), nil
 }
 
 func (f *fakeBackend) Subscribe(context.Context) (<-chan struct{}, func()) {
@@ -91,9 +121,11 @@ func TestEndpoints(t *testing.T) {
 		{BasePath + "/config/file", "global:"},
 		{BasePath + "/pools", `"name":"macos"`},
 		{BasePath + "/workflows", `"name":"w1"`},
-		{BasePath + "/workflows/w1", `"state":"running"`},
+		{BasePath + "/workflows/w1", `"job_url":"https://github.com/cloudengio/go.pkgs/actions/runs/33788991410/job/100760675888"`},
 		{BasePath + "/workflows/w1/logs", `"id":"job"`},
 		{BasePath + "/workflows/w1/logs/job", "hello log"},
+		{BasePath + "/service", `"installed":true`},
+		{BasePath + "/buildinfo", `"go_version"`},
 		{"/", "Runner Orchestrator"},
 	}
 	for _, tc := range cases {
@@ -104,6 +136,24 @@ func TestEndpoints(t *testing.T) {
 		if !strings.Contains(body, tc.want) {
 			t.Errorf("%s: body %q missing %q", tc.path, body, tc.want)
 		}
+	}
+}
+
+func TestServiceEndpoints(t *testing.T) {
+	ts := newTestServer(t)
+	post := func(path string) int {
+		resp, err := http.Post(ts.URL+path, "", nil) //nolint:noctx
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	if code := post(BasePath + "/service/restart"); code != http.StatusOK {
+		t.Errorf("POST /service/restart: got %d want %d", code, http.StatusOK)
+	}
+	if code := post(BasePath + "/service/uninstall"); code != http.StatusOK {
+		t.Errorf("POST /service/uninstall: got %d want %d", code, http.StatusOK)
 	}
 }
 
@@ -141,6 +191,56 @@ func TestConfigFileDownloadHeaders(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	if cd := resp.Header.Get("Content-Disposition"); !strings.Contains(cd, "cfg.yml") {
 		t.Errorf("Content-Disposition = %q, want filename cfg.yml", cd)
+	}
+}
+
+func TestWorkflowLogDownload(t *testing.T) {
+	ts := newTestServer(t)
+	resp, err := http.Get(ts.URL + BasePath + "/workflows/w1/logs/job") //nolint:noctx
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d, want 200", resp.StatusCode)
+	}
+	if cd := resp.Header.Get("Content-Disposition"); !strings.Contains(cd, "attachment") || !strings.Contains(cd, "job.txt") {
+		t.Errorf("Content-Disposition = %q, want attachment with filename job.txt", cd)
+	}
+}
+
+func TestWorkflowLogView(t *testing.T) {
+	ts := newTestServer(t)
+	resp, err := http.Get(ts.URL + BasePath + "/workflows/w1/logs/job?view=true") //nolint:noctx
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want text/html", ct)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(body)
+	if !strings.Contains(s, "hello log") {
+		t.Errorf("expected body to contain log content 'hello log', got %s", s)
+	}
+	if !strings.Contains(s, "Workflow: <strong>w1</strong>") {
+		t.Errorf("expected body to contain workflow title, got %s", s)
+	}
+	if !strings.Contains(s, "https://github.com/cloudengio/go.pkgs/actions/runs/33788991410/job/100760675888") {
+		t.Errorf("expected body to contain GitHub job URL, got %s", s)
+	}
+	if !strings.Contains(s, "color-scheme: light") {
+		t.Errorf("expected body to contain light color-scheme, got %s", s)
+	}
+	if !strings.Contains(s, "background-color: #ffffff") {
+		t.Errorf("expected body to contain white background, got %s", s)
 	}
 }
 

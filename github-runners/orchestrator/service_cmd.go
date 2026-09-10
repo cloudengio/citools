@@ -77,10 +77,7 @@ func bundledLaunchAgentConfig() (string, bool) {
 		macosutils.IsReadable, "Contents", "Resources")
 }
 
-func (ServiceCommand) Install(ctx context.Context, fl any, _ []string) error {
-	fv := fl.(*ServiceInstallFlags)
-
-	exe := fv.Executable
+func installLoginService(ctx context.Context, exe, config, launchAgentFile string, verbose bool) error {
 	if exe == "" {
 		e, err := os.Executable()
 		if err != nil {
@@ -88,7 +85,6 @@ func (ServiceCommand) Install(ctx context.Context, fl any, _ []string) error {
 		}
 		exe = e
 	}
-	config := fv.Config
 	if config == "" {
 		c, _, err := installMinimalConfigIfMissing()
 		if err != nil {
@@ -97,7 +93,7 @@ func (ServiceCommand) Install(ctx context.Context, fl any, _ []string) error {
 		config = c
 	}
 
-	lc, source, err := loadLaunchAgentConfig(ctx, fv.LaunchAgentFile)
+	lc, source, err := loadLaunchAgentConfig(ctx, launchAgentFile)
 	if err != nil {
 		return err
 	}
@@ -107,13 +103,18 @@ func (ServiceCommand) Install(ctx context.Context, fl any, _ []string) error {
 	if err := os.MkdirAll(lc.LogDirOrDefault(), 0o755); err != nil {
 		return fmt.Errorf("creating log directory: %w", err)
 	}
-	if err := runSteps(ctx, fv.stepsVerbose(), agent.Install()...); err != nil {
+	if err := runSteps(ctx, verbose, agent.Install()...); err != nil {
 		return err
 	}
 	path, _ := agent.PlistPath()
 	fmt.Printf("installed and loaded login service %s\n  agent:      %s\n  executable: %s\n  config:     %s\n  service:    %s\n",
 		serviceLabel, path, exe, config, source)
 	return nil
+}
+
+func (ServiceCommand) Install(ctx context.Context, fl any, _ []string) error {
+	fv := fl.(*ServiceInstallFlags)
+	return installLoginService(ctx, fv.Executable, fv.Config, fv.LaunchAgentFile, fv.stepsVerbose())
 }
 
 // ServiceFlags are the flags common to the service subcommands that act on an

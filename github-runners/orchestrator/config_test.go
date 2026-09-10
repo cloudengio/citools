@@ -5,10 +5,16 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"cloudeng.io/cmdutil"
+	cerrors "cloudeng.io/errors"
 )
 
 func TestValidateListenAddress(t *testing.T) {
@@ -62,3 +68,41 @@ func TestLogDirOrDefault(t *testing.T) {
 		}
 	}
 }
+
+func TestIsCleanShutdown(t *testing.T) {
+	if !isCleanShutdown(nil) {
+		t.Errorf("isCleanShutdown(nil) = false, want true")
+	}
+
+	if !isCleanShutdown(context.Canceled) {
+		t.Errorf("isCleanShutdown(context.Canceled) = false, want true")
+	}
+
+	if !isCleanShutdown(cmdutil.ErrInterrupt) {
+		t.Errorf("isCleanShutdown(cmdutil.ErrInterrupt) = false, want true")
+	}
+
+	wrapped := fmt.Errorf("wrapped: %w", context.Canceled)
+	if !isCleanShutdown(wrapped) {
+		t.Errorf("isCleanShutdown(wrapped context.Canceled) = false, want true")
+	}
+
+	var m cerrors.M
+	m.Append(context.Canceled)
+	if !isCleanShutdown(m.Err()) {
+		t.Errorf("isCleanShutdown(errors.M with context.Canceled) = false, want true")
+	}
+
+	realErr := errors.New("something crashed")
+	if isCleanShutdown(realErr) {
+		t.Errorf("isCleanShutdown(realErr) = true, want false")
+	}
+
+	var mixed cerrors.M
+	mixed.Append(realErr)
+	mixed.Append(context.Canceled)
+	if isCleanShutdown(mixed.Err()) {
+		t.Errorf("isCleanShutdown(mixed) = true, want false")
+	}
+}
+

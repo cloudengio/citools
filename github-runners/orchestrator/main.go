@@ -6,9 +6,9 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"syscall"
 
 	"cloudeng.io/cmdutil"
@@ -223,6 +223,9 @@ func repoClientsPrehook(ctx context.Context) (context.Context, string, subcmd.Po
 }
 
 func main() {
+	if runtime.GOOS == "darwin" {
+		runtime.LockOSThread() // Required for AppKit / Cocoa UI on macOS
+	}
 	ctx := context.Background()
 	ctx, cancel := context.WithCancelCause(ctx)
 	cli := createCLI()
@@ -233,7 +236,7 @@ func main() {
 	// (draining/deleting VMs) when launchd stops the login service.
 	cmdutil.HandleSignals(func() { cancel(cmdutil.ErrInterrupt) }, os.Interrupt, syscall.SIGTERM)
 	if err := cli.Dispatch(ctx); err != nil {
-		if errors.Is(err, cmdutil.ErrInterrupt) {
+		if isCleanShutdown(err) {
 			return
 		}
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
