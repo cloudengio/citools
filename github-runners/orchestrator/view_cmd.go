@@ -28,9 +28,9 @@ type ViewFlags struct {
 	RemotePort        int           `subcmd:"remote-port,8088,port of the web UI on the remote host"`
 	LocalPort         int           `subcmd:"local-port,0,'local port to forward to; defaults to remote-port if free, or an ephemeral free port'"`
 	User              string        `subcmd:"user,,ssh user name (defaults to current user)"`
-	SSHPort           int           `subcmd:"ssh-port,22,default ssh port if not specified in host"`
-	AcceptNewHostKeys bool          `subcmd:"accept-new-host-keys,true,accept and record new SSH host keys"`
-	DialTimeout       time.Duration `subcmd:"dial-timeout,30s,timeout for establishing the initial SSH connection"`
+	SSHPort           int           `subcmd:"ssh-port,22,ssh port on remote host"`
+	AcceptNewHostKeys bool          `subcmd:"accept-new-host-keys,false,'accept and record new SSH host keys (strict known-host verification is used by default)'"`
+	DialTimeout       time.Duration `subcmd:"dial-timeout,30s,timeout for initial connection and web UI readiness"`
 	NoBrowser         bool          `subcmd:"no-browser,false,do not automatically open the web browser"`
 }
 
@@ -57,6 +57,11 @@ type parsedTarget struct {
 	remotePort int
 }
 
+func isPort(s string) bool {
+	p, err := strconv.Atoi(s)
+	return err == nil && p >= 1 && p <= 65535
+}
+
 func parsePort(s string, name string) (int, error) {
 	p, err := strconv.Atoi(s)
 	if err != nil {
@@ -68,6 +73,8 @@ func parsePort(s string, name string) (int, error) {
 	return p, nil
 }
 
+// parseSSHTarget parses a target argument conforming to [local-port:]host[:remote-port].
+// The SSH connection port is configured exclusively via the --ssh-port flag.
 func parseSSHTarget(target string, defaultUser string, defaultSSHPort, defaultLocalPort, defaultRemotePort int) (parsedTarget, error) {
 	res := parsedTarget{
 		user:       defaultUser,
@@ -110,6 +117,9 @@ func parseSSHTarget(target string, defaultUser string, defaultSSHPort, defaultLo
 		}
 		prefix := target[:openIdx]
 		if prefix != "" {
+			if !strings.HasSuffix(prefix, ":") {
+				return res, fmt.Errorf("invalid target %q: expected colon between local port and host", target)
+			}
 			prefix = strings.TrimSuffix(prefix, ":")
 			if prefix != "" {
 				p, err := parsePort(prefix, "local")
@@ -121,29 +131,16 @@ func parseSSHTarget(target string, defaultUser string, defaultSSHPort, defaultLo
 		}
 		suffix := target[closeIdx+1:]
 		if suffix != "" {
+			if !strings.HasPrefix(suffix, ":") {
+				return res, fmt.Errorf("invalid target %q: expected colon between host and remote port", target)
+			}
 			suffix = strings.TrimPrefix(suffix, ":")
 			if suffix != "" {
-				parts := strings.Split(suffix, ":")
-				if len(parts) == 1 {
-					p, err := parsePort(parts[0], "remote")
-					if err != nil {
-						return res, err
-					}
-					res.remotePort = p
-				} else if len(parts) == 2 {
-					sp, err := parsePort(parts[0], "ssh")
-					if err != nil {
-						return res, err
-					}
-					res.sshPort = sp
-					rp, err := parsePort(parts[1], "remote")
-					if err != nil {
-						return res, err
-					}
-					res.remotePort = rp
-				} else {
-					return res, fmt.Errorf("too many colons in target suffix %q", suffix)
+				p, err := parsePort(suffix, "remote")
+				if err != nil {
+					return res, err
 				}
+				res.remotePort = p
 			}
 		}
 		return res, nil
@@ -156,25 +153,50 @@ func parseSSHTarget(target string, defaultUser string, defaultSSHPort, defaultLo
 		if res.host == "" {
 			return res, fmt.Errorf("empty host specified")
 		}
-	case 2:
-		// Could be local-port:host or host:ssh-port
-		if p0, err := strconv.Atoi(tokens[0]); err == nil && p0 > 0 && p0 <= 65535 {
-			res.localPort = p0
-			res.host = tokens[1]
-			if res.host == "" {
-				return res, fmt.Errorf("empty host specified after local port")
-			}
-		} else {
-			res.host = tokens[0]
-			if res.host == "" {
-				return res, fmt.Errorf("empty host specified")
-			}
-			p1, err := parsePort(tokens[1], "ssh")
-			if err != nil {
-				return res, err
-			}
-			res.sshPort = p1
+		if isPort(res.host) {
+			return res, fmt.Errorf("invalid host %q: host cannot be a port number", res.host)
 		}
+	case 2:
+		t0, t1 := tokens[0], tokens[1]
+		if t0 == "" && t1 == "" {
+			return res, fmt.Errorf("empty host specified in target %q", target)
+		}
+		if t0 == "" {
+			// :host
+			if isPort(t1) {
+				return res, fmt.Errorf("invalid host %q: host cannot be a port number", t1)
+			}
+			res.host = t1
+			return res, nil
+		}
+		if t1 == "" {
+			// host:
+			if isPort(t0) {
+				return res, fmt.Errorf("invalid host %q: host cannot be a port number", t0)
+			}
+			res.host = t0
+			return res, nil
+		}
+
+		p0, err0 := parsePort(t0, "local")
+		p1, err1 := parsePort(t1, "remote")
+
+		if err0 == nil && err1 == nil {
+			return res, fmt.Errorf("invalid target %q: both components are port numbers; format is [local-port:]host[:remote-port]", target)
+		}
+		if err0 == nil && err1 != nil {
+			// local-port:host
+			res.localPort = p0
+			res.host = t1
+			return res, nil
+		}
+		if err0 != nil && err1 == nil {
+			// host:remote-port
+			res.host = t0
+			res.remotePort = p1
+			return res, nil
+		}
+		return res, fmt.Errorf("invalid target %q: expected [local-port:]host or host[:remote-port]", target)
 	case 3:
 		// local-port:host:remote-port
 		if tokens[0] != "" {
@@ -184,10 +206,13 @@ func parseSSHTarget(target string, defaultUser string, defaultSSHPort, defaultLo
 			}
 			res.localPort = p0
 		}
-		res.host = tokens[1]
-		if res.host == "" {
+		if tokens[1] == "" {
 			return res, fmt.Errorf("empty host specified in local-port:host:remote-port")
 		}
+		if isPort(tokens[1]) {
+			return res, fmt.Errorf("invalid host %q: host cannot be a port number", tokens[1])
+		}
+		res.host = tokens[1]
 		if tokens[2] != "" {
 			p2, err := parsePort(tokens[2], "remote")
 			if err != nil {
@@ -195,35 +220,11 @@ func parseSSHTarget(target string, defaultUser string, defaultSSHPort, defaultLo
 			}
 			res.remotePort = p2
 		}
-	case 4:
-		// local-port:host:ssh-port:remote-port
-		if tokens[0] != "" {
-			p0, err := parsePort(tokens[0], "local")
-			if err != nil {
-				return res, err
-			}
-			res.localPort = p0
-		}
-		res.host = tokens[1]
-		if res.host == "" {
-			return res, fmt.Errorf("empty host specified in local-port:host:ssh-port:remote-port")
-		}
-		if tokens[2] != "" {
-			sp, err := parsePort(tokens[2], "ssh")
-			if err != nil {
-				return res, err
-			}
-			res.sshPort = sp
-		}
-		if tokens[3] != "" {
-			p3, err := parsePort(tokens[3], "remote")
-			if err != nil {
-				return res, err
-			}
-			res.remotePort = p3
-		}
 	default:
-		return res, fmt.Errorf("too many colons in target %q; format is [local-port:]host[:remote-port]", target)
+		if strings.Count(target, ":") > 3 && !strings.Contains(target, "[") {
+			return res, fmt.Errorf("too many colons in target %q; format is [local-port:]host[:remote-port] (enclose IPv6 addresses in square brackets, e.g. [::1])", target)
+		}
+		return res, fmt.Errorf("too many colons in target %q; format is [local-port:]host[:remote-port] (use --ssh-port to set SSH port)", target)
 	}
 
 	return res, nil
@@ -245,6 +246,15 @@ func selectLocalPort(requested, remotePort int) (int, error) {
 	}
 	defer func() { _ = l.Close() }()
 	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+func isPortListening(port int) bool {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 50*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 func checkForwardReady(ctx context.Context, port int) bool {
@@ -346,6 +356,7 @@ waitLoop:
 			return nil
 		case <-ctx.Done():
 			client.Close()
+			<-errCh
 			return ctx.Err()
 		case <-ticker.C:
 			if checkForwardReady(ctx, localPort) {
@@ -355,11 +366,17 @@ waitLoop:
 		}
 	}
 
-	if ready {
-		fmt.Printf("Web UI is ready at %s\n", webURL)
-	} else {
-		fmt.Printf("Web UI port forward established at %s (waiting for remote web service response)\n", webURL)
+	if !ready {
+		tunnelListening := isPortListening(localPort)
+		client.Close()
+		<-errCh
+		if tunnelListening {
+			return fmt.Errorf("port forward to %s established, but web UI at %s did not respond within %v", hostPort, webURL, timeout)
+		}
+		return fmt.Errorf("ssh connection to %s timed out after %v", hostPort, timeout)
 	}
+
+	fmt.Printf("Web UI is ready at %s\n", webURL)
 
 	if !fv.NoBrowser {
 		fmt.Printf("Opening browser at %s...\n", webURL)
