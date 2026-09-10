@@ -8,7 +8,7 @@ require (
 	cloudeng.io/errors v0.0.14-0.20260312171538-61fcde6ce278
 	cloudeng.io/file v0.0.0-20260909165456-ddaa2de546a0
 	cloudeng.io/logging v0.0.0-20260909165456-ddaa2de546a0
-	cloudeng.io/macos v0.0.0-20260909213230-fb89241f16d7
+	cloudeng.io/macos v0.0.0-20260910023704-f66be8a74afb
 	cloudeng.io/os v0.0.0-20260909165456-ddaa2de546a0
 	cloudeng.io/sync v0.0.12-0.20260804222138-e9281ed260ba
 	cloudeng.io/text v0.0.16-0.20260624171915-da98fe9dec2b
@@ -53,7 +53,7 @@ require (
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
-	golang.org/x/tools v0.49.0 // indirect
+	golang.org/x/tools v0.50.0 // indirect
 )
 
 tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
