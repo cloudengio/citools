@@ -1,47 +1,10 @@
-# [github.com/cloudengio/citools/runners/macos/orchestrator](https://pkg.go.dev/github.com/cloudengio/citools/runners/macos/orchestrator?tab=doc)
-
-
-Usage of `orchestrator`
-
-    `orchestrator` for GitHub self-hosted runners
-
-             run - run the `orchestrator`
-         run-job - run a single job on a VM, useful for testing vms
-          github - GitHub API commands
-         install - write the bundled minimal `orchestrator` config file to a standard location
-          bundle - build a signed macOS .app bundle that installs the `orchestrator`
-         service - manage the `orchestrator` as a per-user launchd login service
-    webapp-build - build the embedded web UI frontend (runs npm install, gen and build)
-          config - config related commands
-             vms - inspect and clean up the VMs created by the `orchestrator`'s pools
-
-global flags: [--config=github_orchestrator_config.yml --log-file=
---log-format=json --log-level=0 --log-source-code=false --verbose=false]
-
-    -config string
-      path to YAML configuration file (default "github_orchestrator_config.yml")
-    -log-file string
-      log file path. If not specified logs are written to stderr, if set to -
-      logs are written to stdout
-    -log-format string
-      log format: text or json (default "json")
-    -log-level int
-      logging level: 0=error, 1=warn, 2=info, 3=debug
-    -log-source-code
-      include source code file and line number in logs
-    -verbose
-      enable verbose logging
-
-
-## External Markdown Files Included Here
-
-### macOS UI Architecture & Design (macos_ui_readme.md)
+# macOS UI Architecture & Design
 
 This document details the architecture and design of the macOS user interface subsystem for the GitHub Runner Orchestrator.
 
 ---
 
-#### 1. Overview & Objectives
+## 1. Overview & Objectives
 
 The orchestrator UI provides a seamless desktop experience on macOS while simultaneously serving as a headless or background daemon. The design achieves four core goals:
 
@@ -52,11 +15,11 @@ The orchestrator UI provides a seamless desktop experience on macOS while simult
 
 ---
 
-#### 2. Architecture & The `internal/ui` Package
+## 2. Architecture & The `internal/ui` Package
 
 The UI subsystem is encapsulated within [`internal/ui`](internal/ui/). The package defines a pure Go interface, accompanied by a Darwin AppKit implementation (`ui_darwin.go`, `ui_darwin.m`) and a no-op stub for other platforms (`ui_other.go`).
 
-##### Interface Definitions
+### Interface Definitions
 
 ```go
 type Mode int
@@ -95,7 +58,7 @@ type Dialogs interface {
 }
 ```
 
-##### Threading & Cgo Boundary
+### Threading & Cgo Boundary
 
 - **Main Thread Locking:** Cocoa/AppKit requires that UI operations and the `NSApplication` run loop execute on the OS main thread. `main.go` calls `runtime.LockOSThread()` before launching CLI commands.
 - **Asynchronous Event Dispatch:** When Go routines invoke UI methods (such as `u.Stop()` or dialog alerts), the Objective-C layer dispatches them onto the main queue via `dispatch_async(dispatch_get_main_queue(), ^{ ... })` or `dispatch_sync`.
@@ -103,7 +66,7 @@ type Dialogs interface {
 
 ---
 
-#### 3. Execution Modes & Lifecycle
+## 3. Execution Modes & Lifecycle
 
 | Aspect | Regular Mode (`ModeRegular`) | Accessory Mode (`ModeAccessory`) | Headless Mode |
 | :--- | :--- | :--- | :--- |
@@ -113,7 +76,7 @@ type Dialogs interface {
 | **Subcommand** | `launch` | `run` | `run --no-menu-bar` |
 | **Typical Context** | User launches `.app` from Finder / Dock | LaunchAgent login service at login | Terminal CLI / CI / headless host |
 
-##### Launch Detection & Dispatch
+### Launch Detection & Dispatch
 
 When a user double-clicks the application bundle in macOS Finder or launches it from the Dock:
 1. The bundle executable is launched with no arguments (`len(os.Args) == 1`).
@@ -126,7 +89,7 @@ When a user double-clicks the application bundle in macOS Finder or launches it 
    - If the user confirms, installs and loads the LaunchAgent login service.
    - If the user declines, runs the orchestrator in-process with a Dock icon (`ModeRegular`) and menu bar item.
 
-##### Clean Shutdown
+### Clean Shutdown
 
 When the user selects **Quit** from the menu bar:
 1. AppKit calls the Objective-C `onQuit:` selector.
@@ -137,7 +100,7 @@ When the user selects **Quit** from the menu bar:
 
 ---
 
-#### 4. Menu Bar Status Item (`NSStatusItem`)
+## 4. Menu Bar Status Item (`NSStatusItem`)
 
 The orchestrator registers a status item with variable length in the macOS Menu Extra bar displaying a runner icon or title. Clicking the icon presents a native `NSMenu` with dynamic state:
 
@@ -155,13 +118,13 @@ The orchestrator registers a status item with variable length in the macOS Menu 
 
 ---
 
-#### 5. Native Modal Dialogs & Log Viewer
+## 5. Native Modal Dialogs & Log Viewer
 
-##### Why `osascript` Was Replaced
+### Why `osascript` Was Replaced
 
 Previously, UI notifications and confirmations used AppleScript executed via `osascript -e 'display alert ...'`. In modern macOS (including macOS 15+ Sequoia and Tahoe), spawning an external `osascript` process from an active Cocoa application causes the WindowServer to treat the resulting modal window as backgrounded or unassociated with the caller. This triggered macOS click-through protection, rendering the dialog buttons (such as the "OK" button) unresponsive to user clicks.
 
-##### Native AppKit Dialog Implementation
+### Native AppKit Dialog Implementation
 
 All dialogs now run in-process on the AppKit main dispatch queue using `NSAlert`:
 
@@ -174,7 +137,7 @@ All dialogs now run in-process on the AppKit main dispatch queue using `NSAlert`
 
 ---
 
-#### 6. Single App Bundle Architecture
+## 6. Single App Bundle Architecture
 
 The application bundle packaging (`orchestrator bundle`) builds a single, unnested macOS application:
 
@@ -190,10 +153,8 @@ github-runner-orchestrator.app/
     embedded.provisionprofile            <- Developer ID profile with Keychain Sharing
 ```
 
-##### Key Advantages
+### Key Advantages
 
 1. **Size Efficiency:** Eliminating the secondary nested launcher `.app` bundle halved the total bundle footprint (~40 MB instead of ~80 MB).
 2. **Simplified Entitlements:** The restricted `keychain-access-groups` entitlement is applied directly to the main executable and authorized by `embedded.provisionprofile`. Under Apple Mobile File Integrity (AMFI), provisioning profiles are validated for the main bundle executable, eliminating nested bundle permission friction.
 3. **Unified Signing:** Code signing seals the single bundle in a single pass without needing to sign inner nested bundles before outer bundles.
-
-

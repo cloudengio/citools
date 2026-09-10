@@ -6,6 +6,13 @@ import github.com/cloudengio/citools/runners/macos/orchestrator/vmsclient
 
 
 ## Constants
+### DefaultMockImage
+```go
+DefaultMockImage = "mock"
+
+```
+DefaultMockImage is reported by a mock pool that configures no image.
+
 ### VMSPrefix
 ```go
 VMSPrefix = "ghr-orchestrator-"
@@ -16,9 +23,17 @@ VMSPrefix is the prefix shared by every VM name the orchestrator generates.
 
 
 ## Variables
+### ErrMultipleBackends
+```go
+ErrMultipleBackends = errors.New("more than one VM backend configured (set exactly one of tart_config or mock_config)")
+
+```
+ErrMultipleBackends is returned when a pool configuration selects more than
+one VM backend, which would leave the choice of backend ambiguous.
+
 ### ErrNoBackend
 ```go
-ErrNoBackend = errors.New("no VM backend configured (set tart_config or another backend)")
+ErrNoBackend = errors.New("no VM backend configured (set tart_config or mock_config)")
 
 ```
 ErrNoBackend is returned when a pool configuration selects no VM backend.
@@ -115,6 +130,31 @@ func (q *CompletionQueue[T]) Success() <-chan CompletionEvent[T]
 
 
 
+### Type MockConfig
+```go
+type MockConfig struct {
+	// Image is reported in status output in place of a real base image, so
+	// that a mock pool is identifiable at a glance.
+	Image string `yaml:"image" doc:"name reported in place of a base image for this pool; defaults to 'mock'"`
+	// RunnerDir mirrors the tart backend's setting so that the runner
+	// installation commands are built the same way.
+	RunnerDir string `yaml:"runner_dir" doc:"directory on the guest in which the runner is installed; only recorded, never used"`
+	// Suspendable selects whether the mock VMs support suspend and resume,
+	// which determines whether a pool configured with the suspended staging
+	// behaviour suspends its VMs or falls back to stopping them.
+	Suspendable bool `yaml:"suspendable" doc:"whether the mock VMs support suspend/resume; when false a suspended pool falls back to stopping its VMs"`
+}
+```
+MockConfig configures the mock VM backend for a pool. The pool behaves
+exactly as a real one — it creates, stages, hands out and deletes VMs,
+and reports the same events — but the VMs are in-process fakes that run no
+commands. It exists so that the orchestrator can be exercised end to end,
+in tests and by hand, on a machine with no VM technology installed.
+
+Anything that would be run inside the VM is recorded rather than executed,
+so a mock pool reports success for any job.
+
+
 ### Type Pool
 ```go
 type Pool struct {
@@ -137,6 +177,7 @@ func (p *Pool) Name() string
 type PoolConfig struct {
 	vmspool.Config `yaml:",inline"`
 	Tart           *TartConfig `yaml:"tart_config" doc:"configure and select the tart VM backend for this pool"`
+	Mock           *MockConfig `yaml:"mock_config" doc:"configure and select the mock VM backend for this pool, for exercising the orchestrator without any VM technology installed"`
 }
 ```
 PoolConfig configures a single VM pool: the generic vmspool settings plus
@@ -155,7 +196,8 @@ installed for this pool's backend, or "" if no backend is configured.
 ```go
 func (cfg PoolConfig) Validate() error
 ```
-Validate ensures a VM backend is configured for the pool.
+Validate ensures that exactly one VM backend is configured for the pool and
+that its required settings are present.
 
 
 
@@ -268,9 +310,13 @@ run simultaneously.
 ### Type TartConfig
 ```go
 type TartConfig struct {
-	tartvm.Config `yaml:",inline"`
-	Image         string `yaml:"image" doc:"base image to use for cloning VMs in this pool"`
-	RunnerDir     string `yaml:"runner_dir" doc:"directory on the VM in which the runner was installed, specific to each type of image."`
+	tartvm.Config         `yaml:",inline"`
+	tartvm.ResourceConfig `yaml:",inline"`
+	Image                 string `yaml:"image" doc:"base image to use for cloning VMs in this pool"`
+	PullRemoteOnRun       bool   `yaml:"pull_remote_on_run" doc:"pull the image from its registry before creating each VM, so that a moving tag such as :latest is picked up without restarting the orchestrator. Ignored for a local image, which has no registry to pull from."`
+	Insecure              bool   `yaml:"pull_insecure" doc:"allow pulling images from insecure registries."`
+	PullConcurrency       int    `yaml:"pull_concurrency" doc:"concurrency for a pull of the remote image."`
+	RunnerDir             string `yaml:"runner_dir" doc:"directory on the VM in which the runner was installed, specific to each type of image."`
 }
 ```
 TartConfig configures the tart VM backend for a pool.

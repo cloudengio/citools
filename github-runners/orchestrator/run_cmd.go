@@ -10,6 +10,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -20,6 +23,8 @@ import (
 	"cloudeng.io/webapp/webassets"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/githubclient"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/githubwebhook"
+	"github.com/cloudengio/citools/runners/macos/orchestrator/internal"
+	"github.com/cloudengio/citools/runners/macos/orchestrator/internal/ui"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/webui"
 )
 
@@ -98,6 +103,10 @@ func reconfigureVMPools(cfg Config, deleteAcquiredOnClose bool) Config {
 
 func (r RunCommand) Run(ctx context.Context, fl any, _ []string) error {
 	fv := fl.(*RunFlags)
+	return r.runWithUIMode(ctx, fv, ui.ModeAccessory)
+}
+
+func (r RunCommand) runWithUIMode(ctx context.Context, fv *RunFlags, mode ui.Mode) error {
 	cfg, ok := ConfigFromContext(ctx)
 	if !ok {
 		return fmt.Errorf("no config in context")
@@ -169,8 +178,8 @@ func (r RunCommand) Run(ctx context.Context, fl any, _ []string) error {
 
 	h := githubwebhook.New(cfg.Webhook.RelayURL, wh.HandleWebhooks)
 
-	useMenuBar := !fv.NoMenuBar && isGUIAvailable()
-	if !useMenuBar {
+	u := ui.New(mode)
+	if fv.NoMenuBar || !u.IsAvailable() {
 		err := h.Listen(ctx, opts)
 		if isCleanShutdown(err) {
 			return nil
@@ -180,24 +189,26 @@ func (r RunCommand) Run(ctx context.Context, fl any, _ []string) error {
 
 	webURL := ""
 	if cfg.WebUI.Enabled && cfg.WebUI.ListenAddress != "" {
-		if strings.HasPrefix(cfg.WebUI.ListenAddress, ":") {
-			webURL = "http://localhost" + cfg.WebUI.ListenAddress
-		} else {
-			webURL = "http://" + cfg.WebUI.ListenAddress
-		}
+		webURL = formatWebURL(cfg.WebUI.ListenAddress)
 	}
 
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
 
+	handler := &runUIHandler{
+		cancel:  runCancel,
+		webURL:  webURL,
+		logPath: globalFlags.File,
+	}
+
 	listenErrCh := make(chan error, 1)
 	go func() {
 		err := h.Listen(runCtx, opts)
 		listenErrCh <- err
-		stopStatusItem()
+		u.Stop()
 	}()
 
-	startStatusItem(runCtx, runCancel, webURL, globalFlags.File)
+	_ = u.Start(runCtx, handler, webURL, globalFlags.File)
 
 	runCancel()
 	err = <-listenErrCh
@@ -205,6 +216,76 @@ func (r RunCommand) Run(ctx context.Context, fl any, _ []string) error {
 		return nil
 	}
 	return err
+}
+
+type runUIHandler struct {
+	cancel  context.CancelFunc
+	webURL  string
+	logPath string
+}
+
+func (h *runUIHandler) OnOpenWebUI() {
+	if h.webURL != "" {
+		_ = exec.Command("open", h.webURL).Start()
+	}
+}
+
+func (h *runUIHandler) OnViewLogs() {
+	lp := h.logPath
+	if lp == "" {
+		lp = defaultServiceLogPath()
+	}
+	_ = exec.Command("open", lp).Start()
+}
+
+func (h *runUIHandler) IsServiceInstalled() bool {
+	return serviceAgent().IsInstalled()
+}
+
+func (h *runUIHandler) OnInstallService() {
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		if err := installLoginService(context.Background(), "", "", "", false); err == nil {
+			h.cancel()
+		}
+	}()
+}
+
+func (h *runUIHandler) OnRestartService() {
+	agent := serviceAgent()
+	if agent.IsInstalled() {
+		go func() {
+			time.Sleep(300 * time.Millisecond)
+			_ = runSteps(context.Background(), false, agent.Restart())
+		}()
+	}
+}
+
+func (h *runUIHandler) OnUninstallService() {
+	agent := serviceAgent()
+	if agent.IsInstalled() {
+		go func() {
+			time.Sleep(300 * time.Millisecond)
+			_ = runSteps(context.Background(), false, agent.Uninstall()...)
+			h.cancel()
+		}()
+	}
+}
+
+func (h *runUIHandler) OnQuit() {
+	h.cancel()
+}
+
+func defaultServiceLogPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, "Library", "Logs", serviceLabel, internal.OrchestratorBinary+".service.out.log")
+}
+
+func formatWebURL(listenAddr string) string {
+	if strings.HasPrefix(listenAddr, ":") {
+		return "http://localhost" + listenAddr
+	}
+	return "http://" + listenAddr
 }
 
 func isCleanShutdown(err error) bool {

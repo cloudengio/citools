@@ -42,7 +42,7 @@ type BundleConfig struct {
 	// OrchestratorConfig is the minimal orchestrator config file embedded into
 	// the bundle as the installed default. Defaults to minimal_config.yml.
 	OrchestratorConfig string `yaml:"orchestrator_config"`
-	// Version is the human-readable release version stamped into both bundles
+	// Version is the human-readable release version stamped into the bundle
 	// as CFBundleShortVersionString. Defaults to DefaultVersion.
 	Version string `yaml:"version"`
 	// LaunchAgentConfig is the launchd login service configuration embedded
@@ -51,41 +51,18 @@ type BundleConfig struct {
 	LaunchAgentConfig string `yaml:"launch_agent_config"`
 }
 
-// The bundle is a launcher app that wraps the orchestrator:
+// The bundle packages the orchestrator as a standalone macOS application:
 //
-//	github-runner-orchestrator.app/                 (outer app, no entitlements)
-//	  Contents/MacOS/github-runner-orchestrator-launcher   <- CFBundleExecutable
-//	  Contents/MacOS/github-runner-orchestrator.app/       <- nested orchestrator
-//	    Contents/MacOS/github-runner-orchestrator          <- keychain entitlement
-//	    Contents/embedded.provisionprofile
-//	  Contents/Resources/                                  <- config and service defaults
+//	github-runner-orchestrator.app/
+//	  Contents/MacOS/github-runner-orchestrator          <- CFBundleExecutable (with entitlements)
+//	  Contents/embedded.provisionprofile
+//	  Contents/Resources/                                <- config and service defaults
 //
-// The nested bundle must live in the outer bundle's Contents/MacOS, not
-// Contents/Library: macosutils.InBundle, which the orchestrator and launcher
-// use to find their way around, resolves a path to its enclosing bundle by way
-// of a Contents/MacOS parent pair, so a bundle placed anywhere else cannot be
-// resolved back to the app that contains it.
-//
-// The launcher (main executable) surfaces failures in a dialog and needs no
-// entitlements or provisioning profile. The orchestrator carries the
-// keychain-access-groups entitlement, which — being provisioning-profile
-// restricted — only AMFI-authorizes for a bundle's own main executable; hence it
-// is a nested bundle with its own embedded provisioning profile.
+// The single binary handles both standalone app launches (with a Dock icon and
+// menu bar status item) and background service execution (status item only).
 const (
-	defaultExecutable  = internal.OrchestratorBinary
-	launcherExecutable = internal.LauncherBinary
-	launcherPackage    = "./cmd/orchestrator-launcher"
-
-	// orchestratorBundleID is the nested bundle's CFBundleIdentifier; it matches
-	// the App ID / provisioning profile carrying the keychain entitlement.
+	defaultExecutable    = internal.OrchestratorBinary
 	orchestratorBundleID = internal.BundleID
-	// outerBundleID is the default identifier of the outer launcher app. It must
-	// differ from the nested bundle's id and needs no provisioning profile.
-	outerBundleID = internal.OuterBundleID
-	// nestedOrchestratorApp is the nested bundle path within the outer app's
-	// Contents directory.
-	nestedOrchestratorDir = "MacOS"
-	nestedOrchestratorApp = internal.NestedOrchestratorApp
 )
 
 // bundledConfigName is the fixed name the orchestrator config is stored under in
@@ -115,7 +92,7 @@ func (BundleCommand) Run(ctx context.Context, fl any, _ []string) error {
 		return err
 	}
 
-	// Both bundles are built from this tree, so both carry the same version.
+	// The bundle is built from this tree, so it carries the version derived from git.
 	version, err := gitVersion(ctx, ".", cfg.Version)
 	if err != nil {
 		return err
@@ -125,23 +102,12 @@ func (BundleCommand) Run(ctx context.Context, fl any, _ []string) error {
 	}
 	fmt.Printf("version %s (commit %s)\n", version.Build, version.Commit)
 
-	// The outer app runs the launcher; the nested bundle runs the orchestrator.
-	outerInfo, err := buildInfoPlist(cfg.Info, launcherExecutable, outerBundleID, version)
-	if err != nil {
-		return err
-	}
-	innerUser := buildtools.InfoPlist{
-		LSMinimumSystemVersion: outerInfo.LSMinimumSystemVersion,
-		Extra: map[string]any{
-			"LSUIElement": true,
-		},
-	}
-	innerInfo, err := buildInfoPlist(innerUser, defaultExecutable, orchestratorBundleID, version)
+	info, err := buildInfoPlist(cfg.Info, defaultExecutable, orchestratorBundleID, version)
 	if err != nil {
 		return err
 	}
 
-	buildEnv := buildtools.GoBuildEnvForMacOSVersion(outerInfo.LSMinimumSystemVersion)
+	buildEnv := buildtools.GoBuildEnvForMacOSVersion(info.LSMinimumSystemVersion)
 
 	orchestrator := fv.Binary
 	if orchestrator == "" {
@@ -159,15 +125,9 @@ func (BundleCommand) Run(ctx context.Context, fl any, _ []string) error {
 		orchestrator = b
 	}
 
-	launcher, cleanup, err := buildBinary(ctx, launcherPackage, buildEnv...)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-
 	fmt.Printf("building app bundle %s with orchestrator binary %s (dry run: %v)\n", cfg.Bundle, orchestrator, fv.DryRun)
 
-	return buildAppBundle(ctx, cfg, outerInfo, innerInfo, launcher, orchestrator, fv.Timing, fv.stepsVerbose(), fv.DryRun, fv.Notarize)
+	return buildAppBundle(ctx, cfg, info, orchestrator, fv.Timing, fv.stepsVerbose(), fv.DryRun, fv.Notarize)
 }
 
 func loadBundleConfig(path string) (BundleConfig, error) {
@@ -289,9 +249,9 @@ func buildBinary(ctx context.Context, pkg string, env ...string) (string, func()
 	return tmp.Name(), cleanup, nil
 }
 
-// buildAppBundle assembles and (if an identity is configured) signs the outer
-// launcher app and its nested orchestrator bundle using cloudeng.io/macos/buildtools.
-func buildAppBundle(ctx context.Context, cfg BundleConfig, outerInfo, innerInfo buildtools.InfoPlist, launcher, orchestrator string, timing, verbose, dryRun, notarize bool) error {
+// buildAppBundle assembles and (if an identity is configured) signs the
+// orchestrator app bundle using cloudeng.io/macos/buildtools.
+func buildAppBundle(ctx context.Context, cfg BundleConfig, info buildtools.InfoPlist, orchestrator string, timing, verbose, dryRun, notarize bool) error {
 	if notarize {
 		if !cfg.Notary.Configured() {
 			return fmt.Errorf("--notarize requires notary credentials: configure notary in the bundle config")
@@ -305,11 +265,7 @@ func buildAppBundle(ctx context.Context, cfg BundleConfig, outerInfo, innerInfo 
 			return fmt.Errorf("signing with entitlements requires a provisioning profile: set provisioning_profile in the bundle config")
 		}
 	}
-	outer := buildtools.AppBundle{Path: cfg.Bundle, Info: outerInfo}
-	inner := buildtools.AppBundle{
-		Path: outer.Contents(nestedOrchestratorDir, nestedOrchestratorApp),
-		Info: innerInfo,
-	}
+	app := buildtools.AppBundle{Path: cfg.Bundle, Info: info}
 
 	var stepOpts []buildtools.StepRunnerOption
 	if timing {
@@ -320,53 +276,38 @@ func buildAppBundle(ctx context.Context, cfg BundleConfig, outerInfo, innerInfo 
 	}
 	runner := buildtools.NewRunner(stepOpts...)
 
-	runner.AddSteps(outer.Clean()...)
-	runner.AddSteps(outer.Create()...)
+	runner.AddSteps(app.Clean()...)
+	runner.AddSteps(app.Create()...)
 
-	// Nested orchestrator bundle: the executable that holds the keychain
-	// entitlement, authorized by its own embedded provisioning profile.
-	runner.AddSteps(inner.Create()...)
 	runner.AddSteps(
-		inner.WriteInfoPlist(),
-		inner.CopyExecutable(orchestrator),
-		inner.SetExecutablePermissions(orchestrator, cfg.Permissions.ExecutableMode()),
-		inner.SetMacOSDirPermissions(cfg.Permissions.MacOSDirMode()),
+		app.WriteInfoPlist(),
+		app.CopyExecutable(orchestrator),
+		app.CopyContents(cfg.OrchestratorConfig, "Resources", bundledConfigName),
+		app.CopyContents(cfg.LaunchAgentConfig, "Resources", internal.LaunchAgentFileName),
+		app.SetExecutablePermissions(orchestrator, cfg.Permissions.ExecutableMode()),
+		app.SetMacOSDirPermissions(cfg.Permissions.MacOSDirMode()),
 	)
+
 	if cfg.ProvisioningProfile != "" {
 		profilePath := os.ExpandEnv(cfg.ProvisioningProfile)
 		if _, err := os.Stat(profilePath); err != nil {
 			return fmt.Errorf("provisioning profile %q is not accessible: %w", profilePath, err)
 		}
-		runner.AddSteps(inner.InstallProvisioningProfile(profilePath))
+		runner.AddSteps(app.InstallProvisioningProfile(profilePath))
 	}
-
-	// Outer launcher app.
-	runner.AddSteps(
-		outer.WriteInfoPlist(),
-		outer.CopyExecutable(launcher),
-		outer.CopyContents(cfg.OrchestratorConfig, "Resources", bundledConfigName),
-		outer.CopyContents(cfg.LaunchAgentConfig, "Resources", internal.LaunchAgentFileName),
-		outer.SetExecutablePermissions(launcher, cfg.Permissions.ExecutableMode()),
-		outer.SetMacOSDirPermissions(cfg.Permissions.MacOSDirMode()),
-	)
 
 	if cfg.Signing.Configured() {
-		// The orchestrator is signed with the keychain entitlement; the launcher
-		// needs none. Sign the nested bundle fully first, then the launcher, then
-		// seal the outer bundle last so each signature seals what it contains.
-		entitled := cfg.Signing.Signer()
-		plain := buildtools.NewSigner(cfg.Signing.Identity, nil, nil, cfg.Signing.CodesignArguments)
+		signer := cfg.Signing.Signer()
 		runner.AddSteps(
-			inner.SignExecutable(entitled),
-			inner.Sign(entitled),
-			outer.SignExecutable(plain),
-			outer.Sign(plain),
+			app.SignExecutable(signer),
+			app.Sign(signer),
 		)
 	}
+
 	// Notarization must follow signing: Apple staples a ticket into the already
 	// signed bundle so Gatekeeper accepts it on other Macs.
 	if notarize {
-		runner.AddSteps(outer.Notarize(cfg.Notary)...)
+		runner.AddSteps(app.Notarize(cfg.Notary)...)
 	}
 
 	results := runner.Run(ctx, buildtools.NewCommandRunner(buildtools.WithDryRun(dryRun)))

@@ -7,13 +7,13 @@
 #import <AppKit/AppKit.h>
 #import <CoreGraphics/CoreGraphics.h>
 
-extern void goStatusItemOpenWebUI(void);
-extern void goStatusItemViewLogs(void);
-extern void goStatusItemRestart(void);
-extern void goStatusItemInstall(void);
-extern void goStatusItemUninstall(void);
-extern void goStatusItemQuit(void);
-extern int goStatusItemIsInstalled(void);
+extern void goUIOpenWebUI(void);
+extern void goUIViewLogs(void);
+extern void goUIInstallService(void);
+extern void goUIRestartService(void);
+extern void goUIUninstallService(void);
+extern void goUIQuit(void);
+extern int goUIIsInstalled(void);
 
 @interface StatusItemAppDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate>
 - (instancetype)initWithServiceInstalled:(BOOL)installed;
@@ -104,6 +104,10 @@ static NSStatusItem *gStatusItem = nil;
     gStatusItem.menu = _menu;
 }
 
+- (void)applicationWillTerminate:(NSNotification *)note {
+    goUIQuit();
+}
+
 - (void)updateServiceItems:(BOOL)installed {
     [_installItem setHidden:installed];
     [_installItem setEnabled:!installed];
@@ -114,7 +118,7 @@ static NSStatusItem *gStatusItem = nil;
 }
 
 - (void)menuNeedsUpdate:(NSMenu *)menu {
-    BOOL installed = (goStatusItemIsInstalled() != 0);
+    BOOL installed = (goUIIsInstalled() != 0);
     [self updateServiceItems:installed];
 }
 
@@ -127,11 +131,11 @@ static NSStatusItem *gStatusItem = nil;
 }
 
 - (void)onOpenWeb:(id)sender {
-    goStatusItemOpenWebUI();
+    goUIOpenWebUI();
 }
 
 - (void)onViewLogs:(id)sender {
-    goStatusItemViewLogs();
+    goUIViewLogs();
 }
 
 - (void)onInstallService:(id)sender {
@@ -143,7 +147,7 @@ static NSStatusItem *gStatusItem = nil;
     [alert setAlertStyle:NSAlertStyleInformational];
     [NSApp activateIgnoringOtherApps:YES];
     if ([alert runModal] == NSAlertFirstButtonReturn) {
-        goStatusItemInstall();
+        goUIInstallService();
     }
 }
 
@@ -156,7 +160,7 @@ static NSStatusItem *gStatusItem = nil;
     [alert setAlertStyle:NSAlertStyleWarning];
     [NSApp activateIgnoringOtherApps:YES];
     if ([alert runModal] == NSAlertFirstButtonReturn) {
-        goStatusItemRestart();
+        goUIRestartService();
     }
 }
 
@@ -169,12 +173,12 @@ static NSStatusItem *gStatusItem = nil;
     [alert setAlertStyle:NSAlertStyleCritical];
     [NSApp activateIgnoringOtherApps:YES];
     if ([alert runModal] == NSAlertFirstButtonReturn) {
-        goStatusItemUninstall();
+        goUIUninstallService();
     }
 }
 
 - (void)onQuit:(id)sender {
-    goStatusItemQuit();
+    goUIQuit();
 }
 
 @end
@@ -187,9 +191,13 @@ int checkGUIAvailable(void) {
     return 1;
 }
 
-void initAndRunCocoaApp(int serviceInstalled) {
+void initAndRunCocoaApp(int mode, int serviceInstalled) {
     [NSApplication sharedApplication];
-    [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    if (mode == 1) { // ModeRegular
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+    } else { // ModeAccessory
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    }
     gAppDelegate = [[StatusItemAppDelegate alloc] initWithServiceInstalled:(serviceInstalled != 0)];
     [NSApp setDelegate:gAppDelegate];
     [NSApp activateIgnoringOtherApps:YES];
@@ -210,4 +218,115 @@ void stopCocoaApp(void) {
                                                data2:0];
         [NSApp postEvent:event atStart:YES];
     });
+}
+
+static NSString *safeString(const char *str) {
+    if (!str) {
+        return @"";
+    }
+    NSString *s = [NSString stringWithUTF8String:str];
+    if (!s) {
+        s = [[NSString alloc] initWithBytes:str length:strlen(str) encoding:NSISOLatin1StringEncoding];
+    }
+    return s ? s : @"";
+}
+
+int showNativeConfirm(const char *title, const char *message) {
+    __block int result = 0;
+    void (^block)(void) = ^{
+        NSAlert *alert = [[NSAlert alloc] init];
+        [alert setMessageText:safeString(title)];
+        [alert setInformativeText:safeString(message)];
+        [alert addButtonWithTitle:@"Install"];
+        [alert addButtonWithTitle:@"Not Now"];
+        [alert setAlertStyle:NSAlertStyleInformational];
+        [NSApp activateIgnoringOtherApps:YES];
+        NSModalResponse resp = [alert runModal];
+        result = (resp == NSAlertFirstButtonReturn) ? 1 : 0;
+    };
+    if ([NSThread isMainThread]) {
+        block();
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), block);
+    }
+    return result;
+}
+
+void showNativeNotify(const char *title, const char *message) {
+    void (^block)(void) = ^{
+        NSAlert *alert = [[NSAlert alloc] init];
+        [alert setMessageText:safeString(title)];
+        [alert setInformativeText:safeString(message)];
+        [alert addButtonWithTitle:@"OK"];
+        [alert setAlertStyle:NSAlertStyleInformational];
+        [NSApp activateIgnoringOtherApps:YES];
+        [alert runModal];
+    };
+    if ([NSThread isMainThread]) {
+        block();
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), block);
+    }
+}
+
+void showNativeLogDialog(const char *title, const char *message, const char *logSnippet, const char *logPath) {
+    void (^block)(void) = ^{
+        NSAlert *alert = [[NSAlert alloc] init];
+        [alert setMessageText:safeString(title)];
+        [alert setInformativeText:safeString(message)];
+        [alert setAlertStyle:NSAlertStyleWarning];
+        [alert addButtonWithTitle:@"OK"];
+
+        NSString *lp = safeString(logPath);
+        BOOL hasLogPath = (lp.length > 0);
+        if (hasLogPath) {
+            [alert addButtonWithTitle:@"Open Full Log"];
+        }
+
+        NSRect scrollFrame = NSMakeRect(0, 0, 520, 180);
+        NSScrollView *scrollView = [[NSScrollView alloc] initWithFrame:scrollFrame];
+        [scrollView setHasVerticalScroller:YES];
+        [scrollView setHasHorizontalScroller:YES];
+        [scrollView setAutohidesScrollers:YES];
+        [scrollView setBorderType:NSBezelBorder];
+
+        NSTextView *textView = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, scrollFrame.size.width, scrollFrame.size.height)];
+        [textView setMinSize:NSMakeSize(0.0, scrollFrame.size.height)];
+        [textView setMaxSize:NSMakeSize(FLT_MAX, FLT_MAX)];
+        [textView setVerticallyResizable:YES];
+        [textView setHorizontallyResizable:YES];
+        [textView setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+        [[textView textContainer] setContainerSize:NSMakeSize(FLT_MAX, FLT_MAX)];
+        [[textView textContainer] setWidthTracksTextView:NO];
+        [textView setEditable:NO];
+        [textView setSelectable:YES];
+
+        NSFont *font = nil;
+        if (@available(macOS 10.15, *)) {
+            font = [NSFont monospacedSystemFontOfSize:11.0 weight:NSFontWeightRegular];
+        }
+        if (!font) {
+            font = [NSFont userFixedPitchFontOfSize:11.0];
+        }
+        if (font) {
+            [textView setFont:font];
+        }
+        [textView setString:safeString(logSnippet)];
+        [textView scrollRangeToVisible:NSMakeRange([[textView string] length], 0)];
+
+        [scrollView setDocumentView:textView];
+        [alert setAccessoryView:scrollView];
+
+        [NSApp activateIgnoringOtherApps:YES];
+        NSModalResponse resp = [alert runModal];
+        if (hasLogPath && resp == NSAlertSecondButtonReturn) {
+            NSURL *url = [NSURL fileURLWithPath:lp];
+            [[NSWorkspace sharedWorkspace] openURL:url];
+        }
+    };
+    if ([NSThread isMainThread]) {
+        block();
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), block);
+    }
 }
