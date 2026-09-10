@@ -5,6 +5,34 @@ import github.com/cloudengio/citools/runners/macos/orchestrator/internal
 ```
 
 
+## Constants
+### OrchestratorBinary, BundleID, ConfigDir, ConfigFileName, LaunchAgentFileName, RunLockName
+```go
+// OrchestratorBinary is the name of the orchestrator executable.
+OrchestratorBinary = "github-runner-orchestrator"
+// BundleID is the orchestrator bundle's CFBundleIdentifier, matching the
+// App ID and provisioning profile that carry the keychain entitlement.
+// It is also the launchd label of the login service.
+BundleID = "io.cloudeng." + OrchestratorBinary
+// ConfigDir is the per-user directory, within the directory reported by
+// os.UserConfigDir, holding the configuration file and the run lock.
+ConfigDir = "io.cloudeng." + OrchestratorBinary
+// ConfigFileName is the name of the configuration file, both in ConfigDir
+// and in the bundle's Resources directory.
+ConfigFileName = "github_orchestrator_config.yml"
+// LaunchAgentFileName is the name of the launchd login service
+// configuration, both in the source tree and in the bundle's Resources.
+LaunchAgentFileName = "launch_agent.yml"
+// RunLockName is the name of the single-instance run lock in ConfigDir.
+RunLockName = "run.lock"
+
+```
+The names and identifiers shared by the orchestrator and the bundle command.
+Derived from OrchestratorBinary rather than repeated so that renaming the
+tool is a single edit.
+
+
+
 ## Types
 ### Type LogFileManager
 ```go

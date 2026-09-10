@@ -23,6 +23,17 @@ BasePath is the URL prefix under which the JSON API is served.
 
 
 
+## Variables
+### ErrWorkflowNotFound
+```go
+ErrWorkflowNotFound = errors.New("no such running workflow")
+
+```
+ErrWorkflowNotFound is returned by Backend.CancelWorkflow when no running
+workflow with the given name exists.
+
+
+
 ## Functions
 ### Func FrontendAssets
 ```go
@@ -113,9 +124,21 @@ type Backend interface {
 	Workflows(ctx context.Context) ([]WorkflowStatus, error)
 	// Workflow returns a single workflow job by runner-instance name.
 	Workflow(ctx context.Context, name string) (WorkflowStatus, bool, error)
+	// CancelWorkflow cancels a running workflow job by runner-instance name,
+	// which also tears down its VM. It returns ErrWorkflowNotFound if no such
+	// running workflow exists.
+	CancelWorkflow(ctx context.Context, name string) error
 	// WorkflowLog opens a log artifact for a workflow job. The caller closes the
 	// returned reader.
 	WorkflowLog(ctx context.Context, name, artifact string) (io.ReadCloser, LogArtifact, error)
+	// ServiceStatus returns the status of the launchd login service.
+	ServiceStatus(ctx context.Context) (ServiceStatus, error)
+	// RestartService requests restarting the orchestrator login service.
+	RestartService(ctx context.Context) error
+	// UninstallService requests uninstalling and stopping the orchestrator login service.
+	UninstallService(ctx context.Context) error
+	// BuildInfo returns the orchestrator binary build and version details.
+	BuildInfo(ctx context.Context) (BuildInfo, error)
 	// Subscribe returns a coalescing change signal and a cancel function. The
 	// subscription is also released when ctx is cancelled.
 	Subscribe(ctx context.Context) (<-chan struct{}, func())
@@ -124,6 +147,112 @@ type Backend interface {
 Backend supplies the live orchestrator state that the API serves. It is
 implemented by the run command over the WorkflowEventHandler and VM pools.
 All methods must be safe for concurrent use.
+
+
+### Type BuildInfo
+```go
+type BuildInfo struct {
+	// Arch Example: arm64
+	Arch string `json:"arch"`
+
+	// BuildTime Example: 2026-09-03T18:00:00Z
+	BuildTime *string `json:"build_time,omitempty"`
+
+	// GoVersion Example: go1.24.0
+	GoVersion string `json:"go_version"`
+
+	// Modified Example: false
+	Modified *bool `json:"modified,omitempty"`
+
+	// Os Example: darwin
+	Os string `json:"os"`
+
+	// Path Example: github.com/cloudengio/citools/runners/macos/orchestrator
+	Path *string `json:"path,omitempty"`
+
+	// Revision Example: e005e3a0b1c2...
+	Revision *string `json:"revision,omitempty"`
+
+	// RevisionShort Example: e005e3a0
+	RevisionShort *string `json:"revision_short,omitempty"`
+
+	// RevisionTime Example: 2026-09-03T17:15:00Z
+	RevisionTime *string `json:"revision_time,omitempty"`
+
+	// Version Example: v0.1.0
+	Version *string `json:"version,omitempty"`
+}
+```
+BuildInfo defines model for BuildInfo.
+
+### Functions
+
+```go
+func CurrentBuildInfo() BuildInfo
+```
+CurrentBuildInfo extracts build and version information for the running
+binary.
+
+
+
+
+### Type CancelWorkflow202Response
+```go
+type CancelWorkflow202Response struct {
+}
+```
+
+### Methods
+
+```go
+func (response CancelWorkflow202Response) VisitCancelWorkflowResponse(w http.ResponseWriter) error
+```
+
+
+
+
+### Type CancelWorkflow404JSONResponse
+```go
+type CancelWorkflow404JSONResponse Error
+```
+
+### Methods
+
+```go
+func (response CancelWorkflow404JSONResponse) VisitCancelWorkflowResponse(w http.ResponseWriter) error
+```
+
+
+
+
+### Type CancelWorkflow500JSONResponse
+```go
+type CancelWorkflow500JSONResponse Error
+```
+
+### Methods
+
+```go
+func (response CancelWorkflow500JSONResponse) VisitCancelWorkflowResponse(w http.ResponseWriter) error
+```
+
+
+
+
+### Type CancelWorkflowRequestObject
+```go
+type CancelWorkflowRequestObject struct {
+	Name string `json:"name"`
+}
+```
+
+
+### Type CancelWorkflowResponseObject
+```go
+type CancelWorkflowResponseObject interface {
+	VisitCancelWorkflowResponse(w http.ResponseWriter) error
+}
+```
 
 
 ### Type ConfigSummary
@@ -217,11 +346,25 @@ func (response DownloadWorkflowLog404JSONResponse) VisitDownloadWorkflowLogRespo
 
 
 
+### Type DownloadWorkflowLogParams
+```go
+type DownloadWorkflowLogParams struct {
+	// View When true, display the log inline as a web page instead of downloading as an attachment.
+	View *bool `form:"view,omitempty" json:"view,omitempty"`
+
+	// JobUrl URL to the workflow run job on GitHub.
+	JobUrl *string `form:"job_url,omitempty" json:"job_url,omitempty"`
+}
+```
+DownloadWorkflowLogParams defines parameters for DownloadWorkflowLog.
+
+
 ### Type DownloadWorkflowLogRequestObject
 ```go
 type DownloadWorkflowLogRequestObject struct {
 	Name     string `json:"name"`
 	Artifact string `json:"artifact"`
+	Params   DownloadWorkflowLogParams
 }
 ```
 
@@ -283,6 +426,35 @@ Valid indicates whether the value is a known member of the EventType enum.
 
 
 
+### Type GetBuildInfo200JSONResponse
+```go
+type GetBuildInfo200JSONResponse BuildInfo
+```
+
+### Methods
+
+```go
+func (response GetBuildInfo200JSONResponse) VisitGetBuildInfoResponse(w http.ResponseWriter) error
+```
+
+
+
+
+### Type GetBuildInfoRequestObject
+```go
+type GetBuildInfoRequestObject struct {
+}
+```
+
+
+### Type GetBuildInfoResponseObject
+```go
+type GetBuildInfoResponseObject interface {
+	VisitGetBuildInfoResponse(w http.ResponseWriter) error
+}
+```
+
+
 ### Type GetConfig200JSONResponse
 ```go
 type GetConfig200JSONResponse ConfigSummary
@@ -308,6 +480,35 @@ type GetConfigRequestObject struct {
 ```go
 type GetConfigResponseObject interface {
 	VisitGetConfigResponse(w http.ResponseWriter) error
+}
+```
+
+
+### Type GetServiceStatus200JSONResponse
+```go
+type GetServiceStatus200JSONResponse ServiceStatus
+```
+
+### Methods
+
+```go
+func (response GetServiceStatus200JSONResponse) VisitGetServiceStatusResponse(w http.ResponseWriter) error
+```
+
+
+
+
+### Type GetServiceStatusRequestObject
+```go
+type GetServiceStatusRequestObject struct {
+}
+```
+
+
+### Type GetServiceStatusResponseObject
+```go
+type GetServiceStatusResponseObject interface {
+	VisitGetServiceStatusResponse(w http.ResponseWriter) error
 }
 ```
 
@@ -606,6 +807,50 @@ func (e *RequiredParamError) Error() string
 
 
 
+### Type RestartService200Response
+```go
+type RestartService200Response struct {
+}
+```
+
+### Methods
+
+```go
+func (response RestartService200Response) VisitRestartServiceResponse(w http.ResponseWriter) error
+```
+
+
+
+
+### Type RestartService400JSONResponse
+```go
+type RestartService400JSONResponse Error
+```
+
+### Methods
+
+```go
+func (response RestartService400JSONResponse) VisitRestartServiceResponse(w http.ResponseWriter) error
+```
+
+
+
+
+### Type RestartServiceRequestObject
+```go
+type RestartServiceRequestObject struct {
+}
+```
+
+
+### Type RestartServiceResponseObject
+```go
+type RestartServiceResponseObject interface {
+	VisitRestartServiceResponse(w http.ResponseWriter) error
+}
+```
+
+
 ### Type RunnerSummary
 ```go
 type RunnerSummary struct {
@@ -655,6 +900,11 @@ APIHandler returns an http.Handler that serves the JSON API under BasePath.
 
 
 ```go
+func (s *Server) CancelWorkflow(ctx context.Context, request CancelWorkflowRequestObject) (CancelWorkflowResponseObject, error)
+```
+
+
+```go
 func (s *Server) DownloadConfigFile(ctx context.Context, _ DownloadConfigFileRequestObject) (DownloadConfigFileResponseObject, error)
 ```
 
@@ -665,7 +915,17 @@ func (s *Server) DownloadWorkflowLog(ctx context.Context, request DownloadWorkfl
 
 
 ```go
+func (s *Server) GetBuildInfo(ctx context.Context, _ GetBuildInfoRequestObject) (GetBuildInfoResponseObject, error)
+```
+
+
+```go
 func (s *Server) GetConfig(ctx context.Context, _ GetConfigRequestObject) (GetConfigResponseObject, error)
+```
+
+
+```go
+func (s *Server) GetServiceStatus(ctx context.Context, _ GetServiceStatusRequestObject) (GetServiceStatusResponseObject, error)
 ```
 
 
@@ -699,7 +959,17 @@ func (s *Server) ListWorkflows(ctx context.Context, request ListWorkflowsRequest
 
 
 ```go
+func (s *Server) RestartService(ctx context.Context, _ RestartServiceRequestObject) (RestartServiceResponseObject, error)
+```
+
+
+```go
 func (s *Server) StreamEvents(ctx context.Context, _ StreamEventsRequestObject) (StreamEventsResponseObject, error)
+```
+
+
+```go
+func (s *Server) UninstallService(ctx context.Context, _ UninstallServiceRequestObject) (UninstallServiceResponseObject, error)
 ```
 
 
@@ -708,6 +978,9 @@ func (s *Server) StreamEvents(ctx context.Context, _ StreamEventsRequestObject) 
 ### Type ServerInterface
 ```go
 type ServerInterface interface {
+	// GetBuildInfo Get orchestrator build and version information
+	// (GET /buildinfo)
+	GetBuildInfo(w http.ResponseWriter, r *http.Request)
 	// GetConfig Current orchestrator configuration (structured summary)
 	// (GET /config)
 	GetConfig(w http.ResponseWriter, r *http.Request)
@@ -720,18 +993,30 @@ type ServerInterface interface {
 	// ListPools List VM pools and the VMs within each pool
 	// (GET /pools)
 	ListPools(w http.ResponseWriter, r *http.Request)
+	// GetServiceStatus Status of the launchd login service
+	// (GET /service)
+	GetServiceStatus(w http.ResponseWriter, r *http.Request)
+	// RestartService Restart the orchestrator login service
+	// (POST /service/restart)
+	RestartService(w http.ResponseWriter, r *http.Request)
+	// UninstallService Uninstall and stop the orchestrator login service
+	// (POST /service/uninstall)
+	UninstallService(w http.ResponseWriter, r *http.Request)
 	// ListWorkflows List running and recently-completed workflow jobs
 	// (GET /workflows)
 	ListWorkflows(w http.ResponseWriter, r *http.Request, params ListWorkflowsParams)
 	// GetWorkflow Get a single workflow job by its runner-instance name
 	// (GET /workflows/{name})
 	GetWorkflow(w http.ResponseWriter, r *http.Request, name string)
+	// CancelWorkflow Cancel a running workflow job (cancels the GitHub run, which tears down its VM)
+	// (POST /workflows/{name}/cancel)
+	CancelWorkflow(w http.ResponseWriter, r *http.Request, name string)
 	// ListWorkflowLogs List downloadable log artifacts for a workflow job
 	// (GET /workflows/{name}/logs)
 	ListWorkflowLogs(w http.ResponseWriter, r *http.Request, name string)
 	// DownloadWorkflowLog Download a specific log artifact for a workflow job
 	// (GET /workflows/{name}/logs/{artifact})
-	DownloadWorkflowLog(w http.ResponseWriter, r *http.Request, name string, artifact string)
+	DownloadWorkflowLog(w http.ResponseWriter, r *http.Request, name string, artifact string, params DownloadWorkflowLogParams)
 }
 ```
 ServerInterface represents all server handlers.
@@ -763,6 +1048,12 @@ ServerInterfaceWrapper converts contexts to parameters.
 ### Methods
 
 ```go
+func (siw *ServerInterfaceWrapper) CancelWorkflow(w http.ResponseWriter, r *http.Request)
+```
+CancelWorkflow operation middleware
+
+
+```go
 func (siw *ServerInterfaceWrapper) DownloadConfigFile(w http.ResponseWriter, r *http.Request)
 ```
 DownloadConfigFile operation middleware
@@ -775,9 +1066,21 @@ DownloadWorkflowLog operation middleware
 
 
 ```go
+func (siw *ServerInterfaceWrapper) GetBuildInfo(w http.ResponseWriter, r *http.Request)
+```
+GetBuildInfo operation middleware
+
+
+```go
 func (siw *ServerInterfaceWrapper) GetConfig(w http.ResponseWriter, r *http.Request)
 ```
 GetConfig operation middleware
+
+
+```go
+func (siw *ServerInterfaceWrapper) GetServiceStatus(w http.ResponseWriter, r *http.Request)
+```
+GetServiceStatus operation middleware
 
 
 ```go
@@ -805,9 +1108,21 @@ ListWorkflows operation middleware
 
 
 ```go
+func (siw *ServerInterfaceWrapper) RestartService(w http.ResponseWriter, r *http.Request)
+```
+RestartService operation middleware
+
+
+```go
 func (siw *ServerInterfaceWrapper) StreamEvents(w http.ResponseWriter, r *http.Request)
 ```
 StreamEvents operation middleware
+
+
+```go
+func (siw *ServerInterfaceWrapper) UninstallService(w http.ResponseWriter, r *http.Request)
+```
+UninstallService operation middleware
 
 
 
@@ -827,6 +1142,22 @@ WithAssets overrides the SPA asset filesystem served at the root (see
 FrontendAssets), e.g. to enable live reloading from the local filesystem.
 
 
+
+
+### Type ServiceStatus
+```go
+type ServiceStatus struct {
+	// Installed Whether the launchd login service is installed.
+	Installed bool `json:"installed"`
+
+	// Label The service label / bundle ID.
+	Label *string `json:"label,omitempty"`
+
+	// Running Whether the orchestrator is currently running as a service.
+	Running bool `json:"running"`
+}
+```
+ServiceStatus defines model for ServiceStatus.
 
 
 ### Type StdHTTPServerOptions
@@ -896,6 +1227,9 @@ type StrictMiddlewareFunc func(f StrictHandlerFunc, operationID string) StrictHa
 ### Type StrictServerInterface
 ```go
 type StrictServerInterface interface {
+	// GetBuildInfo Get orchestrator build and version information
+	// (GET /buildinfo)
+	GetBuildInfo(ctx context.Context, request GetBuildInfoRequestObject) (GetBuildInfoResponseObject, error)
 	// GetConfig Current orchestrator configuration (structured summary)
 	// (GET /config)
 	GetConfig(ctx context.Context, request GetConfigRequestObject) (GetConfigResponseObject, error)
@@ -908,12 +1242,24 @@ type StrictServerInterface interface {
 	// ListPools List VM pools and the VMs within each pool
 	// (GET /pools)
 	ListPools(ctx context.Context, request ListPoolsRequestObject) (ListPoolsResponseObject, error)
+	// GetServiceStatus Status of the launchd login service
+	// (GET /service)
+	GetServiceStatus(ctx context.Context, request GetServiceStatusRequestObject) (GetServiceStatusResponseObject, error)
+	// RestartService Restart the orchestrator login service
+	// (POST /service/restart)
+	RestartService(ctx context.Context, request RestartServiceRequestObject) (RestartServiceResponseObject, error)
+	// UninstallService Uninstall and stop the orchestrator login service
+	// (POST /service/uninstall)
+	UninstallService(ctx context.Context, request UninstallServiceRequestObject) (UninstallServiceResponseObject, error)
 	// ListWorkflows List running and recently-completed workflow jobs
 	// (GET /workflows)
 	ListWorkflows(ctx context.Context, request ListWorkflowsRequestObject) (ListWorkflowsResponseObject, error)
 	// GetWorkflow Get a single workflow job by its runner-instance name
 	// (GET /workflows/{name})
 	GetWorkflow(ctx context.Context, request GetWorkflowRequestObject) (GetWorkflowResponseObject, error)
+	// CancelWorkflow Cancel a running workflow job (cancels the GitHub run, which tears down its VM)
+	// (POST /workflows/{name}/cancel)
+	CancelWorkflow(ctx context.Context, request CancelWorkflowRequestObject) (CancelWorkflowResponseObject, error)
 	// ListWorkflowLogs List downloadable log artifacts for a workflow job
 	// (GET /workflows/{name}/logs)
 	ListWorkflowLogs(ctx context.Context, request ListWorkflowLogsRequestObject) (ListWorkflowLogsResponseObject, error)
@@ -962,6 +1308,50 @@ func (e *UnescapedCookieParamError) Unwrap() error
 ```
 
 
+
+
+### Type UninstallService200Response
+```go
+type UninstallService200Response struct {
+}
+```
+
+### Methods
+
+```go
+func (response UninstallService200Response) VisitUninstallServiceResponse(w http.ResponseWriter) error
+```
+
+
+
+
+### Type UninstallService400JSONResponse
+```go
+type UninstallService400JSONResponse Error
+```
+
+### Methods
+
+```go
+func (response UninstallService400JSONResponse) VisitUninstallServiceResponse(w http.ResponseWriter) error
+```
+
+
+
+
+### Type UninstallServiceRequestObject
+```go
+type UninstallServiceRequestObject struct {
+}
+```
+
+
+### Type UninstallServiceResponseObject
+```go
+type UninstallServiceResponseObject interface {
+	VisitUninstallServiceResponse(w http.ResponseWriter) error
+}
+```
 
 
 ### Type UnmarshalingParamError
@@ -1090,11 +1480,14 @@ type WorkflowStatus struct {
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 
 	// Error Error detail if the job failed or was canceled.
-	Error   *string        `json:"error,omitempty"`
-	JobId   *int64         `json:"job_id,omitempty"`
-	JobName *string        `json:"job_name,omitempty"`
-	Labels  *[]string      `json:"labels,omitempty"`
-	Logs    *[]LogArtifact `json:"logs,omitempty"`
+	Error   *string `json:"error,omitempty"`
+	JobId   *int64  `json:"job_id,omitempty"`
+	JobName *string `json:"job_name,omitempty"`
+
+	// JobUrl URL to the workflow run job on GitHub (e.g. https://github.com/<owner>/<repo>/actions/runs/<run_id>/job/<job_id>).
+	JobUrl *string        `json:"job_url,omitempty"`
+	Labels *[]string      `json:"labels,omitempty"`
+	Logs   *[]LogArtifact `json:"logs,omitempty"`
 
 	// Name The runner instance name assigned by the orchestrator.
 	Name         string     `json:"name"`
@@ -1105,6 +1498,7 @@ type WorkflowStatus struct {
 
 	// Result Terminal result if completed, e.g. "Succeeded".
 	Result    *string    `json:"result,omitempty"`
+	RunId     *int64     `json:"run_id,omitempty"`
 	StartedAt *time.Time `json:"started_at,omitempty"`
 
 	// State Lifecycle state of a workflow job within the orchestrator. `vm_completed` means the job finished on the local VM but GitHub has not yet delivered the completion webhook; `completed` means GitHub acknowledged completion.

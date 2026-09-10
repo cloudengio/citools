@@ -5,6 +5,17 @@ import github.com/cloudengio/citools/runners/macos/orchestrator/githubclient
 ```
 
 
+## Variables
+### ErrWorkflowNotRunning
+```go
+ErrWorkflowNotRunning = errors.New("no such running workflow")
+
+```
+ErrWorkflowNotRunning is returned by Cancel when no live workflow with the
+given name exists (it may already have completed).
+
+
+
 ## Functions
 ### Func LogEventGroup
 ```go
@@ -46,13 +57,44 @@ func LoggerWithWorkflowInstance(logger *slog.Logger, inst *WorkflowInstance) *sl
 ## Types
 ### Type CompletionQueue
 ```go
-type CompletionQueue = vmsclient.CompletionQueue[WorkflowInstance]
+type CompletionQueue = vmsclient.CompletionQueue[*WorkflowInstance]
 ```
 
 ### Functions
 
 ```go
 func NewCompletionQueue(ctx context.Context, size int, successfulRetention, failedRetention time.Duration) *CompletionQueue
+```
+
+
+
+
+### Type JobStartedInfo
+```go
+type JobStartedInfo struct {
+	RunID           int64             `json:"run_id,omitempty"`
+	RunNumber       int64             `json:"run_number,omitempty"`
+	RunAttempt      int64             `json:"run_attempt,omitempty"`
+	Job             string            `json:"job,omitempty"`
+	Workflow        string            `json:"workflow,omitempty"`
+	Repository      string            `json:"repository,omitempty"`
+	RepositoryOwner string            `json:"repository_owner,omitempty"`
+	EventName       string            `json:"event_name,omitempty"`
+	SHA             string            `json:"sha,omitempty"`
+	Ref             string            `json:"ref,omitempty"`
+	Actor           string            `json:"actor,omitempty"`
+	RunnerName      string            `json:"runner_name,omitempty"`
+	Raw             map[string]string `json:"raw,omitempty"`
+}
+```
+JobStartedInfo contains metadata captured by the
+ACTIONS_RUNNER_HOOK_JOB_STARTED hook when GitHub assigns a workflow run to
+the runner.
+
+### Methods
+
+```go
+func (j *JobStartedInfo) UnmarshalJSON(data []byte) error
 ```
 
 
@@ -76,6 +118,11 @@ func New(owner, repo string, opts ...operations.Option) *Repo
 
 
 ### Methods
+
+```go
+func (c *Repo) EnsureJobCompletedOrCanceled(ctx context.Context, runID, jobID int64, jobName string) error
+```
+
 
 ```go
 func (c *Repo) GetRegistrationToken(ctx context.Context) (*gogithub.RegistrationToken, error)
@@ -114,6 +161,14 @@ func (rc *RepoClients) AddClient(owner, repo string, opts ...operations.Option) 
 ```go
 func (rc *RepoClients) CancelWorkflowRunFullName(ctx context.Context, fullName string, runID int64) error
 ```
+
+
+```go
+func (rc *RepoClients) EnsureJobCompletedOrCanceled(ctx context.Context, fullName string, runID, jobID int64, jobName string) error
+```
+EnsureJobCompletedOrCanceled checks the job status on GitHub. If the job is
+not yet completed or canceled, it requests cancellation of the workflow run
+and verifies that GitHub reports the job as completed/canceled.
 
 
 ```go
@@ -218,6 +273,15 @@ func NewWorkflowEventHandler(ctx context.Context, tmpDir string, cq *CompletionQ
 ### Methods
 
 ```go
+func (r *WorkflowEventHandler) Cancel(ctx context.Context, name string) error
+```
+Cancel cancels a running workflow job by runner-instance name. It cancels
+the job's GitHub workflow run; the resulting "completed" webhook then tears
+the job's VM down through the normal completion path (see handleCompleted).
+It returns ErrWorkflowNotRunning if no live instance exists for name.
+
+
+```go
 func (r *WorkflowEventHandler) Close(ctx context.Context) error
 ```
 
@@ -274,6 +338,8 @@ type WorkflowInstance struct {
 	Name                        string
 	RunStdoutStderr, DiagStdout io.Writer
 	LogName, DiagName           string
+	JobStarted                  *JobStartedInfo
+	JobStartedRaw               []byte
 	RunnerConfig                *RunnerConfig
 	PoolConfig                  *vmsclient.PoolConfig
 	Event                       *gogithub.WorkflowJobEvent
@@ -298,24 +364,42 @@ func (wi *WorkflowInstance) Close(ctx context.Context)
 
 
 ```go
-func (wi WorkflowInstance) GetLogger(logger *slog.Logger) *slog.Logger
+func (wi *WorkflowInstance) ExtractLogs(ctx context.Context) error
+```
+ExtractLogs extracts job-started info and diagnostic logs from the VM.
+It is guaranteed to run at most once, and always before the VM is stopped.
+
+
+```go
+func (wi *WorkflowInstance) GetLogger(logger *slog.Logger) *slog.Logger
 ```
 GetLogger implements the CompletionEventPayload interface, returning a
 logger enriched with workflow instance details.
 
 
 ```go
-func (wi WorkflowInstance) GetVM() *vmspool.VM
+func (wi *WorkflowInstance) GetVM() *vmspool.VM
 ```
 GetVM implements the CompletionEventPayload interface, returning the VM
 associated with this workflow instance.
 
 
 ```go
-func (wi *WorkflowInstance) RunJob(ctx context.Context, cq *CompletionQueue) error
+func (wi *WorkflowInstance) RunJob(ctx context.Context, cq *CompletionQueue, clients *RepoClients, status *statusTracker) error
 ```
-RunJob runs the job on the instance's VM and returns the local outcome (nil
-on success). The VM has finished running by the time this returns.
+RunJob runs the job on the instance's VM and returns the local outcome
+(nil on success). The VM has finished running by the time this returns.
+It examines the jobStarted data reported by the VM's start hook, compares it
+with the workflow instance values (reporting errors to logs and UI if they
+differ), and ensures that the job status on GitHub is completed or canceled.
+
+
+```go
+func (wi *WorkflowInstance) StopAndReleaseVM(ctx context.Context, timeout time.Duration) (error, error)
+```
+StopAndReleaseVM ensures diagnostic logs are extracted before the VM is
+stopped, and then stops and releases the VM. It guarantees StopAndRelease is
+called at most once, and never concurrently with log extraction.
 
 
 
@@ -330,6 +414,8 @@ type WorkflowSnapshot struct {
 	WorkflowName string
 	JobName      string
 	JobID        int64
+	RunID        int64
+	JobURL       string
 	Labels       []string
 	Pool         string
 	VMID         string
@@ -343,6 +429,7 @@ type WorkflowSnapshot struct {
 	CompletedAt   time.Time
 	JobLogPath    string
 	DiagLogPath   string
+	JobStarted    *JobStartedInfo
 }
 ```
 WorkflowSnapshot is a point-in-time view of a single workflow job tracked
