@@ -24,9 +24,7 @@ import (
 var minimalConfigYAML []byte
 
 // InstallCommand writes the bundled minimal configuration file to a standard
-// location. It is the runtime side of the installer app bundle built by
-// `orchestrator bundle`: double-clicking the bundle runs it (see
-// appBundleInstallLaunch).
+// location.
 type InstallCommand struct{}
 
 type InstallFlags struct {

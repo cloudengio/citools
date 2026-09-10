@@ -4,32 +4,17 @@
 
 package internal
 
-// The names and identifiers shared by the orchestrator, the launcher and the
-// bundle command. The launcher locates the orchestrator, its config and its
-// login service inside the .app that the bundle command builds, so the two must
-// agree on every one of these; defining them once here is what keeps them in
-// step. They are derived from OrchestratorBinary rather than repeated so that
-// renaming the tool is a single edit.
+// The names and identifiers shared by the orchestrator and the bundle command.
+// Derived from OrchestratorBinary rather than repeated so that renaming the tool
+// is a single edit.
 const (
 	// OrchestratorBinary is the name of the orchestrator executable.
 	OrchestratorBinary = "github-runner-orchestrator"
 
-	// LauncherBinary is the name of the .app launcher executable, the outer
-	// bundle's CFBundleExecutable.
-	LauncherBinary = OrchestratorBinary + "-launcher"
-
-	// NestedOrchestratorApp is the name of the nested bundle, within the outer
-	// app's Contents/Library, that holds the orchestrator.
-	NestedOrchestratorApp = OrchestratorBinary + ".app"
-
-	// BundleID is the nested bundle's CFBundleIdentifier, matching the App ID
-	// and provisioning profile that carry the keychain entitlement. It is also
-	// the launchd label of the login service.
+	// BundleID is the orchestrator bundle's CFBundleIdentifier, matching the
+	// App ID and provisioning profile that carry the keychain entitlement.
+	// It is also the launchd label of the login service.
 	BundleID = "io.cloudeng." + OrchestratorBinary
-
-	// OuterBundleID is the identifier of the outer launcher app. It must differ
-	// from BundleID and needs no provisioning profile.
-	OuterBundleID = BundleID + ".app"
 
 	// ConfigDir is the per-user directory, within the directory reported by
 	// os.UserConfigDir, holding the configuration file and the run lock.

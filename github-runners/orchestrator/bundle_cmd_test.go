@@ -158,11 +158,8 @@ func TestShippedInstallerConfig(t *testing.T) {
 		t.Fatalf("loadBundleConfig: %v", err)
 	}
 	version := versionInfo{Short: cfg.Version, Build: cfg.Version + "+abcdef12", Commit: "abcdef12", BuildTime: time.Now()}
-	if _, err := buildInfoPlist(cfg.Info, launcherExecutable, outerBundleID, version); err != nil {
-		t.Errorf("the shipped installer.yaml yields an invalid outer Info.plist: %v", err)
-	}
-	if _, err := buildInfoPlist(buildtools.InfoPlist{}, defaultExecutable, orchestratorBundleID, version); err != nil {
-		t.Errorf("the nested Info.plist is invalid: %v", err)
+	if _, err := buildInfoPlist(cfg.Info, defaultExecutable, orchestratorBundleID, version); err != nil {
+		t.Errorf("the shipped installer.yaml yields an invalid Info.plist: %v", err)
 	}
 }
 
@@ -227,34 +224,17 @@ func TestBundleConfigPermissions(t *testing.T) {
 	}
 }
 
-func TestInnerInfoLSMinimumSystemVersion(t *testing.T) {
+func TestBundleInfoLSMinimumSystemVersion(t *testing.T) {
 	version := versionInfo{Short: "1.0.0", Build: "1.0.0+abcdef12", Commit: "abcdef12345", BuildTime: time.Now()}
-	outerInfo, err := buildInfoPlist(buildtools.InfoPlist{LSMinimumSystemVersion: "15.2"}, launcherExecutable, outerBundleID, version)
+	info, err := buildInfoPlist(buildtools.InfoPlist{LSMinimumSystemVersion: "15.2"}, defaultExecutable, orchestratorBundleID, version)
 	if err != nil {
-		t.Fatalf("buildInfoPlist outer: %v", err)
+		t.Fatalf("buildInfoPlist: %v", err)
 	}
-	if got, want := outerInfo.LSMinimumSystemVersion, "15.2"; got != want {
-		t.Errorf("outer LSMinimumSystemVersion: got %q, want %q", got, want)
+	if got, want := info.LSMinimumSystemVersion, "15.2"; got != want {
+		t.Errorf("LSMinimumSystemVersion: got %q, want %q", got, want)
 	}
 
-	innerUser := buildtools.InfoPlist{
-		LSMinimumSystemVersion: outerInfo.LSMinimumSystemVersion,
-		Extra: map[string]any{
-			"LSUIElement": true,
-		},
-	}
-	innerInfo, err := buildInfoPlist(innerUser, defaultExecutable, orchestratorBundleID, version)
-	if err != nil {
-		t.Fatalf("buildInfoPlist inner: %v", err)
-	}
-	if got, want := innerInfo.LSMinimumSystemVersion, "15.2"; got != want {
-		t.Errorf("inner LSMinimumSystemVersion: got %q, want %q", got, want)
-	}
-	if got, ok := innerInfo.Extra["LSUIElement"].(bool); !ok || !got {
-		t.Errorf("inner LSUIElement: got %v, want true", innerInfo.Extra["LSUIElement"])
-	}
-
-	buildEnv := buildtools.GoBuildEnvForMacOSVersion(outerInfo.LSMinimumSystemVersion)
+	buildEnv := buildtools.GoBuildEnvForMacOSVersion(info.LSMinimumSystemVersion)
 	wantEnv := []string{
 		"MACOSX_DEPLOYMENT_TARGET=15.2",
 		"CGO_CFLAGS=-mmacosx-version-min=15.2",
@@ -274,15 +254,11 @@ func TestBuildAppBundleDryRun(t *testing.T) {
 		LaunchAgentConfig:  "launch_agent.yml",
 	}
 	version := versionInfo{Short: "1.0.0", Build: "1.0.0", Commit: "abcdef12", BuildTime: time.Now()}
-	outerInfo, err := buildInfoPlist(buildtools.InfoPlist{}, launcherExecutable, outerBundleID, version)
+	info, err := buildInfoPlist(buildtools.InfoPlist{}, defaultExecutable, orchestratorBundleID, version)
 	if err != nil {
 		t.Fatalf("buildInfoPlist: %v", err)
 	}
-	innerInfo, err := buildInfoPlist(buildtools.InfoPlist{}, defaultExecutable, orchestratorBundleID, version)
-	if err != nil {
-		t.Fatalf("buildInfoPlist: %v", err)
-	}
-	err = buildAppBundle(context.Background(), cfg, outerInfo, innerInfo, "launcher", "orchestrator", false, false, true, false)
+	err = buildAppBundle(context.Background(), cfg, info, "orchestrator", false, false, true, false)
 	if err != nil {
 		t.Fatalf("buildAppBundle dry run failed: %v", err)
 	}

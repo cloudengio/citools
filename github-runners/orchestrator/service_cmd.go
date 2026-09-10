@@ -65,16 +65,13 @@ func loadLaunchAgentConfig(ctx context.Context, path string) (LaunchAgentConfig,
 }
 
 // bundledLaunchAgentConfig returns the path of the service configuration inside
-// the app bundle this executable belongs to. The orchestrator ships in a bundle
-// nested inside the launcher app while the resource lives in the outer one, so
-// the search must walk outwards through the enclosing bundles.
+// the app bundle this executable belongs to.
 func bundledLaunchAgentConfig() (string, bool) {
-	exe, err := macosutils.ExecutablePath()
-	if err != nil {
+	bundle, ok := macosutils.ProcessInBundle()
+	if !ok {
 		return "", false
 	}
-	return macosutils.LocateInNestedBundle(exe, internal.LaunchAgentFileName,
-		macosutils.IsReadable, "Contents", "Resources")
+	return macosutils.LocateInBundle(bundle, internal.LaunchAgentFileName, macosutils.IsReadable)
 }
 
 func installLoginService(ctx context.Context, exe, config, launchAgentFile string, verbose bool) error {

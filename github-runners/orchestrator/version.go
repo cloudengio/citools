@@ -17,9 +17,7 @@ import (
 // DefaultVersion is used when installer.yaml does not set one.
 const DefaultVersion = "0.0.0"
 
-// versionInfo describes the build stamped into the bundles. The outer app and
-// the nested one are built from a single tree, so both carry the same values:
-// a difference between them would be a bug rather than information.
+// versionInfo describes the build stamped into the bundle.
 type versionInfo struct {
 	// Short is CFBundleShortVersionString, the human-readable release version.
 	Short string

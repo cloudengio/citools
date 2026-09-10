@@ -6,15 +6,13 @@
 
 bundle: build/github-runner-orchestrator.app
 
-# version is the human-readable release version, stamped into both bundles as
+# version is the human-readable release version, stamped into the bundle as
 # CFBundleShortVersionString; CFBundleVersion appends the git commit.
 version: 0.1.0
 
-# info_plist applies to the OUTER launcher app. Its identifier must differ from
-# the nested orchestrator bundle's (io.cloudeng.github-runner-orchestrator); the
-# outer app carries no entitlements and needs no provisioning profile.
+# info_plist applies to the orchestrator app bundle.
 info_plist:
-  CFBundleIdentifier: io.cloudeng.github-runner-orchestrator.app
+  CFBundleIdentifier: io.cloudeng.github-runner-orchestrator
   CFBundleName: github-runner-orchestrator
   CFBundleDisplayName: GitHub Runner Orchestrator
   LSMinimumSystemVersion: 15.0
@@ -30,16 +28,8 @@ info_plist:
 # local testing, not for distribution).
 signing:
   identity: ${ORCHESTRATOR_SIGNING_IDENTITY}
-  # These entitlements are applied to the NESTED orchestrator bundle (the outer
-  # launcher app is signed with no entitlements). They grant access to the
-  # (data-protection / iCloud) keychain items the orchestrator manages.
-  #
-  # IMPORTANT: keychain-access-groups is a *provisioning-profile-restricted*
-  # entitlement. AMFI only authorizes it for a bundle's own main executable, and
-  # only when an embedded provisioning profile is present — hence the orchestrator
-  # is shipped as a nested bundle with the provisioning_profile below. Without it
-  # the process is SIGKILLed on launch ("load code signature error / Unsatisfied
-  # Entitlements").
+  # These entitlements grant access to the (data-protection / iCloud) keychain
+  # items the orchestrator manages.
   entitlements:
     keychain-access-groups:
       # The orchestrator's own group; its default for items it writes.
@@ -50,10 +40,9 @@ signing:
       - ${ORCHESTRATOR_DEVID}.*
 
 # REQUIRED by the keychain-access-groups entitlement above. Embedded into the
-# NESTED orchestrator bundle (Contents/Library/github-runner-orchestrator.app/
-# Contents/embedded.provisionprofile). It is a "Developer ID" provisioning
-# profile for App ID io.cloudeng.github-runner-orchestrator with the Keychain
-# Sharing capability, signed by the same Developer ID cert used above.
+# bundle (Contents/embedded.provisionprofile). It is a "Developer ID"
+# provisioning profile for App ID io.cloudeng.github-runner-orchestrator with
+# the Keychain Sharing capability, signed by the same Developer ID cert used above.
 provisioning_profile: ${ORCHESTRATOR_PROFILE}
 
 # Notarization. Only used when `orchestrator bundle --notarize` is passed. A

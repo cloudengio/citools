@@ -15,6 +15,7 @@ import (
 	"cloudeng.io/cmdutil/cmdyaml"
 	"cloudeng.io/cmdutil/subcmd"
 	"cloudeng.io/logging/ctxlog"
+	"cloudeng.io/macos/macosutils"
 	"cloudeng.io/webapi/clients/github/githubcmd"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/githubclient"
 )
@@ -25,6 +26,8 @@ summary: orchestrator for GitHub self-hosted runners
 commands:
   - name: run
     summary: run the orchestrator
+  - name: launch
+    summary: launch the orchestrator as a GUI application
   - name: run-job
     summary: run a single job on a VM, useful for testing vms
   - name: github
@@ -131,6 +134,9 @@ func createCLI() *subcmd.CommandSetYAML {
 	// version needs no configuration, so it has no pre-hook.
 	cmdSet.Set("version").MustRunner(VersionCommand{}.Run, &struct{}{})
 
+	launchCmd := LaunchCommand{}
+	cmdSet.Set("launch").MustRunner(launchCmd.Run, &struct{}{})
+
 	installCmd := InstallCommand{}
 	cmdSet.Set("install").MustRunner(installCmd.Run, &InstallFlags{})
 
@@ -225,6 +231,11 @@ func repoClientsPrehook(ctx context.Context) (context.Context, string, subcmd.Po
 func main() {
 	if runtime.GOOS == "darwin" {
 		runtime.LockOSThread() // Required for AppKit / Cocoa UI on macOS
+	}
+	if len(os.Args) == 1 {
+		if _, ok := macosutils.ProcessInBundle(); ok {
+			os.Args = append(os.Args, "launch")
+		}
 	}
 	ctx := context.Background()
 	ctx, cancel := context.WithCancelCause(ctx)
