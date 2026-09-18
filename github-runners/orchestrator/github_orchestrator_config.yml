@@ -21,7 +21,7 @@ jwt_spec: &jwt_spec
 
 web_ui:
   enabled: true
-  listen_address: 127.0.0.1:9088
+  listen_address: 127.0.0.1:8089
   jwt_verifier:
     cookie:
       <<: *jwt_cookie_spec
