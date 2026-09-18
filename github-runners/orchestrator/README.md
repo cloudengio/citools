@@ -17,6 +17,7 @@ Usage of `orchestrator`
     webapp-build - build the embedded web UI frontend (runs npm install, gen and build)
           config - config related commands
              vms - inspect and clean up the VMs created by the `orchestrator`'s pools
+             jwt - JSON Web Token (JWT) key and authentication commands
 
 global flags: [--config=github_orchestrator_config.yml --log-file=
 --log-format=json --log-level=0 --log-source-code=false --verbose=false]

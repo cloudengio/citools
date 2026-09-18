@@ -102,9 +102,13 @@ commands:
     summary: JSON Web Token (JWT) key and authentication commands
     commands:
       - name: create
-        summary: create an Ed25519 signing key pair and writes it to <filename>
-        arguments:
-          - <filename>
+        summary: |
+          create a new Ed25519 JWT signing key pair, if a <filename>
+          is specified the private key is written to <filename> in json format
+          and the public key to <filename>.pub.json. If filename is - for stdout
+          then the public key is written to <keyuser>-<keyid>.pub.json:
+        args:
+          - <filename> (the private key file, or - for stdou)
       - name: issue
         summary: serve a JWT authentication cookie to trusted clients via a random URL
 `

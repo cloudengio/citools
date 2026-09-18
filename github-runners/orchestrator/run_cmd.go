@@ -37,8 +37,8 @@ import (
 // the rest of initialization completes; the backend's handler is wired in later
 // (via SetHandler) so pool/workflow data fills in as it becomes available.
 func startWebUI(ctx context.Context, cfg Config, backend *webuiBackend, verifyJWT bool, cookieName string) (*http.Server, error) {
-	if !cfg.WebUI.Enabled || cfg.WebUI.ListenAddress == "" {
-		return nil, nil
+	if cfg.WebUI.ListenAddress == "" {
+		return nil, fmt.Errorf("web UI listen address is not configured")
 	}
 	assetOpts := cfg.WebUI.Reload.Options()
 	if len(assetOpts) > 0 {
@@ -84,7 +84,7 @@ func startWebUI(ctx context.Context, cfg Config, backend *webuiBackend, verifyJW
 
 func getJWTValidator(ctx context.Context, cfg Config) (jwtutil.Validator, error) {
 	if cfg.WebUI.JWTVerification == nil {
-		return nil, fmt.Errorf("JWT verification requested, but no verification or signing keys are configured")
+		return nil, fmt.Errorf("JWT verification requested, but no verification keys are configured")
 	}
 	verificationKeys, err := resolveKeyInfo(ctx, cfg.WebUI.JWTVerification.VerificationKeys)
 	if err != nil {
@@ -190,25 +190,28 @@ func (r RunCommand) runWithUIMode(ctx context.Context, fv *RunFlags, mode ui.Mod
 		return err
 	}
 
-	// Start the web UI immediately so it is available (serving config and an
-	// empty-but-live dashboard) while the slower parts of initialization below
-	// proceed; the handler is wired in once ready and the UI fills in.
-	backend := newWebUIBackend(cfg, globalFlags.ConfigFile)
-	webUIStarted := false
-	cookieName := ""
-	if cfg.WebUI.JWTVerification != nil {
-		cookieName = cfg.WebUI.JWTVerification.Name
-	}
-	if cookieName == "" {
-		return fmt.Errorf("no JWT cookie name configured")
-	}
-	srv, err := startWebUI(ctx, cfg, backend, fv.VerifyJWT || cfg.WebUI.JWTVerification != nil, cookieName)
-	if err != nil {
-		return err
-	}
-	if srv != nil {
-		webUIStarted = true
-		defer shutdownWebUI(srv)
+	var backend *webuiBackend
+	if cfg.WebUI.Enabled {
+
+		// Start the web UI immediately so it is available (serving config and an
+		// empty-but-live dashboard) while the slower parts of initialization below
+		// proceed; the handler is wired in once ready and the UI fills in.
+		backend = newWebUIBackend(cfg, globalFlags.ConfigFile)
+		cookieName := ""
+		if cfg.WebUI.JWTVerification != nil {
+			cookieName = cfg.WebUI.JWTVerification.Name
+		}
+		if cookieName == "" {
+			return fmt.Errorf("no JWT cookie name configured")
+		}
+		srv, err := startWebUI(ctx, cfg, backend, fv.VerifyJWT || cfg.WebUI.JWTVerification != nil, cookieName)
+		if err != nil {
+			return err
+		}
+		if srv != nil {
+			defer shutdownWebUI(srv)
+		}
+
 	}
 
 	if fv.DeleteOrphanedVMs {
@@ -234,7 +237,7 @@ func (r RunCommand) runWithUIMode(ctx context.Context, fv *RunFlags, mode ui.Mod
 
 	// Wire the handler into the already-running web UI; pool and workflow data
 	// now becomes available and early SSE clients are notified to refresh.
-	if webUIStarted {
+	if backend != nil {
 		backend.SetHandler(ctx, wh)
 	}
 

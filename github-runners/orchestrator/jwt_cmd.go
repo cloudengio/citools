@@ -33,11 +33,10 @@ type JWTCreateFlags struct {
 	Update  bool   `subcmd:"update,false,overwrite the destination file if it already exists"`
 }
 
-// Create generates a new Ed25519 JWT signing key pair and writes it, as
-// YAML, to the file named by the command's sole argument. IsDstSafe and
-// CopyContents (via SafeWriteToLocal) are used so that "-" or "" safely
-// write to stdout only when it is piped, exactly as for the other keyscmd
-// commands.
+// Create generates a new Ed25519 JWT signing key pair, if a filename
+// is specified the private key is written to <filename> in json format
+// and the public key to <filename>.pub.json. If filename is - for stdout
+// then the public key is written to keyuser-keyid.pub.json.
 func (c JWTCommand) Create(ctx context.Context, flags any, args []string) error {
 	fv := flags.(*JWTCreateFlags)
 	if fv.KeyID == "" {
@@ -51,17 +50,19 @@ func (c JWTCommand) Create(ctx context.Context, flags any, args []string) error 
 	}
 	filename := args[0]
 
-	if err := keyscmd.IsDstSafe(filename); err != nil {
-		return err
-	}
-	if ext := filepath.Ext(filename); ext != ".json" {
-		return fmt.Errorf("expected a .json file, got %q with extension %q", filename, ext)
-	}
-	if !fv.Update && !keyscmd.IsStdoutStdin(filename) {
-		if _, err := localfs.New().Stat(ctx, filename); err == nil {
-			return fmt.Errorf("%q already exists, use --update to overwrite it", filename)
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("failed to check for an existing %q: %w", filename, err)
+	if !keyscmd.IsStdoutStdin(filename) {
+		if err := keyscmd.IsDstSafe(filename); err != nil {
+			return err
+		}
+		if ext := filepath.Ext(filename); ext != ".json" {
+			return fmt.Errorf("expected a .json file, got %q with extension %q", filename, ext)
+		}
+		if !fv.Update {
+			if _, err := localfs.New().Stat(ctx, filename); err == nil {
+				return fmt.Errorf("%q already exists, use --update to overwrite it", filename)
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("failed to check for an existing %q: %w", filename, err)
+			}
 		}
 	}
 
@@ -70,33 +71,37 @@ func (c JWTCommand) Create(ctx context.Context, flags any, args []string) error 
 		return err
 	}
 
-	out, err := json.Marshal(info)
+	err = keyscmd.SafeWriteKeyInfoJSON(ctx, info, args[0], 0600)
 	if err != nil {
-		return fmt.Errorf("failed to marshal the new key: %w", err)
-	}
-
-	dst := localfs.New()
-	if err := dst.WriteFile(filename, out, 0600); err != nil {
-		return fmt.Errorf("failed to write the new key to %q: %w", filename, err)
+		return fmt.Errorf("failed to safely write the new key to %q: %w", args[0], err)
 	}
 
 	pkFilename := strings.TrimSuffix(filename, ".json") + ".pub.json"
-
-	fmt.Printf("Created Ed25519 JWT signing key pair:\n")
-	fmt.Printf("             file: %s\n", filename)
-	fmt.Printf("  public key file: %s\n", pkFilename)
-
-	fmt.Printf("           key ID: %s\n", fv.KeyID)
-	fmt.Printf("             user: %s\n", fv.KeyUser)
+	if keyscmd.IsStdoutStdin(filename) {
+		pkFilename = info.User + "-" + info.ID + ".pub.json"
+	}
 
 	pk := jwtutil.CloneKeyInfoForPublicKey(info)
-	out, err = json.Marshal(pk)
+	out, err := json.Marshal(pk)
 	if err != nil {
 		return fmt.Errorf("failed to marshal the public key: %w", err)
 	}
+	dst := localfs.New()
 	if err := dst.WriteFile(pkFilename, out, 0600); err != nil {
 		return fmt.Errorf("failed to write the public key to %q: %w", pkFilename, err)
 	}
+
+	o := os.Stdout
+	if keyscmd.IsStdoutStdin(filename) {
+		filename = "stdout"
+		o = os.Stderr
+	}
+
+	fmt.Fprintf(o, "Created Ed25519 JWT signing key pair:\n") //nolint:errcheck
+	fmt.Fprintf(o, "             file: %s\n", filename)       //nolint:errcheck
+	fmt.Fprintf(o, "  public key file: %s\n", pkFilename)     //nolint:errcheck
+	fmt.Fprintf(o, "           key ID: %s\n", fv.KeyID)       //nolint:errcheck
+	fmt.Fprintf(o, "             user: %s\n", fv.KeyUser)     //nolint:errcheck
 
 	return nil
 }
