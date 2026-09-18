@@ -98,6 +98,15 @@ commands:
         summary: list the VMs created by the orchestrator's configured pools
       - name: delete
         summary: delete the VMs created by the orchestrator's configured pools
+  - name: jwt
+    summary: JSON Web Token (JWT) key and authentication commands
+    commands:
+      - name: create
+        summary: create an Ed25519 signing key pair and writes it to <filename>
+        arguments:
+          - <filename>
+      - name: issue
+        summary: serve a JWT authentication cookie to trusted clients via a random URL
 `
 
 type GlobalFlags struct {
@@ -162,6 +171,11 @@ func createCLI() *subcmd.CommandSetYAML {
 	cfgCmd := ConfigCommand{}
 	cmdSet.Set("config", "show").MustRunner(cfgCmd.Show, &struct{}{})
 	cmdSet.Set("config", "describe").MustRunner(cfgCmd.Describe, &struct{}{})
+
+	jwtCmd := JWTCommand{}
+	cmdSet.Set("jwt", "create").MustRunner(jwtCmd.Create, &JWTCreateFlags{})
+	cmdSet.Set("jwt", "issue").MustRunner(jwtCmd.Issuer, &JWTIssuerFlags{})
+	cmdSet.Set("jwt", "issue").MustSetPreHooks(configPrehook, withKeysPrehook)
 
 	return cmdSet
 }

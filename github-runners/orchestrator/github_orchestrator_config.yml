@@ -5,9 +5,39 @@ logging:
   format: text
   file: "-"
 
+jwt_cookie_spec: &jwt_cookie_spec
+  name: "github-runner-orchestrator"
+  domain: "127.0.0.1"
+  path: "/"
+  duration: 240h
+  insecure: true
+
+jwt_spec: &jwt_spec
+  jwt_issuer: "github-orchestrator"
+  jwt_audience: ["github-orchestrator"]
+  jwt_subject: "github-orchestrator"
+  jwt_claims:
+    access: admin
+
 web_ui:
   enabled: true
-  listen_address: 127.0.0.1:8088
+  listen_address: 127.0.0.1:9088
+  jwt_verifier:
+    cookie:
+      <<: *jwt_cookie_spec
+    <<: *jwt_spec
+    validation_time_skew: 1m
+    jwt_verification_keys:
+      - user: cnicolaou
+        key_id: "github-orchestrator-jwt-key"
+
+jwt_issuer:
+  cookie:
+    <<: *jwt_cookie_spec
+  <<: *jwt_spec
+  jwt_signing_key:
+    key_id: github-orchestrator-jwt-key
+    user: cnicolaou
 
 global:
   tmp_dir: "github-orchestrator-*"
@@ -44,6 +74,7 @@ icloud_keychain:
     - cloudengio-github-runner
     - onyourbehalf-github-runner
     - webhook-secrets
+    - cloudengio-jwt-signing-keys
 
 runners: &runner_config
   - name_prefix: "go-macos"
