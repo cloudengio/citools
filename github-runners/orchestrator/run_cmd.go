@@ -18,9 +18,12 @@ import (
 
 	"cloudeng.io/cmdutil"
 	"cloudeng.io/cmdutil/flags"
+	"cloudeng.io/cmdutil/keys"
 	"cloudeng.io/cmdutil/subcmd"
 	"cloudeng.io/logging/ctxlog"
 	"cloudeng.io/webapp/webassets"
+	"cloudeng.io/webapp/webauth/jwtutil"
+	"cloudeng.io/webapp/websec"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/githubclient"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/githubwebhook"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/internal"
@@ -30,12 +33,12 @@ import (
 
 // startWebUI starts the management web UI / JSON API HTTP server if it is
 // enabled in the configuration, returning the server so the caller can shut it
-// down. It returns nil when the web UI is disabled. The server is started before
+// down. It returns nil, nil when the web UI is disabled. The server is started before
 // the rest of initialization completes; the backend's handler is wired in later
 // (via SetHandler) so pool/workflow data fills in as it becomes available.
-func startWebUI(ctx context.Context, cfg Config, backend *webuiBackend) *http.Server {
-	if !cfg.WebUI.Enabled || cfg.WebUI.ListenAddress == "" {
-		return nil
+func startWebUI(ctx context.Context, cfg Config, backend *webuiBackend, verifyJWT bool, cookieName string) (*http.Server, error) {
+	if cfg.WebUI.ListenAddress == "" {
+		return nil, fmt.Errorf("web UI listen address is not configured")
 	}
 	assetOpts := cfg.WebUI.Reload.Options()
 	if len(assetOpts) > 0 {
@@ -43,9 +46,26 @@ func startWebUI(ctx context.Context, cfg Config, backend *webuiBackend) *http.Se
 		ctxlog.Info(ctx, "web ui asset reloading enabled", "reload_root", cfg.WebUI.Reload.ReloadRoot)
 	}
 	server := webui.NewServer(backend, webui.WithAssets(webui.FrontendAssets(assetOpts...)))
+
+	var secOpts []websec.Option
+	secOpts = append(secOpts, websec.WithLogger(ctxlog.Logger(ctx)))
+	host, _, err := net.SplitHostPort(cfg.WebUI.ListenAddress)
+	if err == nil && host != "" {
+		secOpts = append(secOpts, websec.WithAllowedHosts("127.0.0.1", "localhost", "::1", host))
+	}
+	if verifyJWT {
+		validator, err := getJWTValidator(ctx, cfg)
+		if err != nil {
+			return nil, err
+		}
+
+		secOpts = append(secOpts, websec.WithJWTCookie(cookieName, validator))
+	}
+
+	handler := websec.NewLocalHost(server.Handler(), secOpts...)
 	srv := &http.Server{
 		Addr:              cfg.WebUI.ListenAddress,
-		Handler:           server.Handler(),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		// Derive every request context from the app context so that cancelling
 		// it (e.g. on Ctrl-C) also cancels in-flight handlers, including the
@@ -54,12 +74,42 @@ func startWebUI(ctx context.Context, cfg Config, backend *webuiBackend) *http.Se
 		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
 	go func() {
-		ctxlog.Info(ctx, "starting web ui", "address", cfg.WebUI.ListenAddress)
+		ctxlog.Info(ctx, "starting web ui", "address", cfg.WebUI.ListenAddress, "verify_jwt", verifyJWT)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			ctxlog.Error(ctx, "web ui server error", "error", err)
 		}
 	}()
-	return srv
+	return srv, nil
+}
+
+func getJWTValidator(ctx context.Context, cfg Config) (jwtutil.Validator, error) {
+	if cfg.WebUI.JWTVerification == nil {
+		return nil, fmt.Errorf("JWT verification requested, but no verification keys are configured")
+	}
+	verificationKeys, err := resolveKeyInfo(ctx, cfg.WebUI.JWTVerification.VerificationKeys)
+	if err != nil {
+		return nil, err
+	}
+	return jwtutil.ValidatorForKeys(ctx, verificationKeys...)
+}
+
+// resolveKeyInfo resolves each spec against the key store in ctx: unlike
+// jwtutil's own signer-focused helpers, ValidatorForKeys takes the resolved
+// keys.Info directly rather than looking specs up itself.
+func resolveKeyInfo(ctx context.Context, specs []keys.KeySpec) ([]keys.Info, error) {
+	store, ok := keys.KeyStoreFromContext(ctx)
+	if !ok || store == nil {
+		return nil, fmt.Errorf("%w: no verification keys available", jwtutil.ErrNoKeyStore)
+	}
+	infos := make([]keys.Info, 0, len(specs))
+	for _, spec := range specs {
+		info, ok := store.Get(spec.User, spec.ID)
+		if !ok {
+			return nil, fmt.Errorf("%w: %v", jwtutil.ErrKeyNotFound, spec)
+		}
+		infos = append(infos, info)
+	}
+	return infos, nil
 }
 
 // shutdownWebUI stops the web UI server, giving in-flight requests a short grace
@@ -84,6 +134,7 @@ type RunFlags struct {
 	CommonRunFlags
 	DeleteOrphanedVMs bool `subcmd:"delete-orphaned-vms,false,delete any orphaned VMs that are found at startup"`
 	NoMenuBar         bool `subcmd:"no-menu-bar,false,disable the macOS menu bar status item"`
+	VerifyJWT         bool `subcmd:"verify-jwt,false,enable JWT verification for the web UI server"`
 }
 
 // statusRetention returns how long completed workflow records should be kept in
@@ -139,14 +190,28 @@ func (r RunCommand) runWithUIMode(ctx context.Context, fv *RunFlags, mode ui.Mod
 		return err
 	}
 
-	// Start the web UI immediately so it is available (serving config and an
-	// empty-but-live dashboard) while the slower parts of initialization below
-	// proceed; the handler is wired in once ready and the UI fills in.
-	backend := newWebUIBackend(cfg, globalFlags.ConfigFile)
-	webUIStarted := false
-	if srv := startWebUI(ctx, cfg, backend); srv != nil {
-		webUIStarted = true
-		defer shutdownWebUI(srv)
+	var backend *webuiBackend
+	if cfg.WebUI.Enabled {
+
+		// Start the web UI immediately so it is available (serving config and an
+		// empty-but-live dashboard) while the slower parts of initialization below
+		// proceed; the handler is wired in once ready and the UI fills in.
+		backend = newWebUIBackend(cfg, globalFlags.ConfigFile)
+		cookieName := ""
+		if cfg.WebUI.JWTVerification != nil {
+			cookieName = cfg.WebUI.JWTVerification.Name
+		}
+		if cookieName == "" {
+			return fmt.Errorf("no JWT cookie name configured")
+		}
+		srv, err := startWebUI(ctx, cfg, backend, fv.VerifyJWT || cfg.WebUI.JWTVerification != nil, cookieName)
+		if err != nil {
+			return err
+		}
+		if srv != nil {
+			defer shutdownWebUI(srv)
+		}
+
 	}
 
 	if fv.DeleteOrphanedVMs {
@@ -172,7 +237,7 @@ func (r RunCommand) runWithUIMode(ctx context.Context, fv *RunFlags, mode ui.Mod
 
 	// Wire the handler into the already-running web UI; pool and workflow data
 	// now becomes available and early SSE clients are notified to refresh.
-	if webUIStarted {
+	if backend != nil {
 		backend.SetHandler(ctx, wh)
 	}
 

@@ -22,7 +22,7 @@ type ICloudKeychainConfig struct {
 }
 
 func withKeysPrehook(ctx context.Context) (context.Context, string, subcmd.PostHook, error) {
-	id := "withConfigPrehook"
+	id := "withKeysPrehook"
 	postHook := func(ctx context.Context) (string, error) { return id, nil }
 
 	ks := keys.NewInMemoryKeyStore()
