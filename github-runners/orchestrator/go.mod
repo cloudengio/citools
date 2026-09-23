@@ -9,6 +9,7 @@ require (
 	cloudeng.io/file v0.0.0-20260923165344-0acebac4c1e9
 	cloudeng.io/logging v0.0.0-20260923165344-0acebac4c1e9
 	cloudeng.io/macos v0.0.0-20260923172856-ba95212f8b7e
+	cloudeng.io/net v0.0.0-20260923165344-0acebac4c1e9
 	cloudeng.io/os v0.0.0-20260923165344-0acebac4c1e9
 	cloudeng.io/sync v0.0.12-0.20260804222138-e9281ed260ba
 	cloudeng.io/text v0.0.16-0.20260624171915-da98fe9dec2b
