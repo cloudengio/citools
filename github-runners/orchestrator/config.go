@@ -11,11 +11,14 @@ import (
 
 	"cloudeng.io/cmdutil"
 	"cloudeng.io/cmdutil/cmdyaml"
+	"cloudeng.io/cmdutil/keys"
 	"cloudeng.io/file/crawl/crawlcmd"
 	"cloudeng.io/webapi/operations"
 	"cloudeng.io/webapp/webassets"
+	"cloudeng.io/webapp/webauth/jwtutil"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/githubclient"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/vmsclient"
+	"github.com/lestrrat-go/jwx/v3/jwt"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -52,6 +55,7 @@ type Config struct {
 	VMPools        map[string]vmsclient.PoolConfig `yaml:"vm_pools" doc:"configuration for VM pools to use for runner provisioning"`
 	Webhook        WebhookConfig                   `yaml:"webhook" doc:"configuration for the GitHub webhook relay service"`
 	WebUI          WebUIConfig                     `yaml:"web_ui" doc:"configuration for the management web UI and JSON API"`
+	JWTIssuer      *JWTIssuerConfig                `yaml:"jwt_issuer" doc:"configuration for the JWT issuer used by the orchestrator"`
 }
 
 // LaunchAgentConfig configures the launchd job that the service install command
@@ -118,12 +122,106 @@ func (lc LaunchAgentConfig) RunArgsOrDefault() []string {
 	return []string{"run", "--delete-orphaned-vms"}
 }
 
+type JWTIssuerConfig struct {
+	jwtutil.JWTCookieSignerConfig `yaml:",inline"`
+	// SigningKey names the key used to sign issued JWTs. jwtutil's own
+	// signer configs carry no key material, so the spec naming the key to
+	// load from the key store in context lives here instead.
+	SigningKey keys.KeySpec `yaml:"jwt_signing_key" doc:"jwt signing key spec"`
+	Redirect   string       `yaml:"redirect" doc:"redirect,,URL to redirect to after setting the cookie"`
+}
+
+func (jc *JWTIssuerConfig) Validate() error {
+	if err := jc.JWTCookieSignerConfig.Validate(); err != nil {
+		return err
+	}
+	if err := jc.JWTCookieConfig.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// IssuerOptions returns the jwtutil.JWTIssuerOptions implied by every field on
+// jc, including those of its embedded JWTSignerConfig and JWTCookieConfig. It
+// covers the options that are genuinely static, per-deployment configuration;
+// it deliberately leaves out jwtutil.WithSubject and jwtutil.WithLogger,
+// which are dynamic, per-invocation values that JWTCommand.Issuer supplies
+// itself, as well as options (direct/JSON response mode, the redirect query
+// parameter and its allowlist) that have no corresponding field on
+// JWTIssuerConfig yet.
+func (jc *JWTIssuerConfig) IssuerOptions(issueRedirect bool) []jwtutil.JWTIssuerOption {
+	// The issued JWT's own validity (JWTSignerConfig.Duration, ie.
+	// jwt_duration in the signer config) takes priority over the cookie's
+	// lifetime; jc.Duration itself would ambiguously prefer the former (it is
+	// the shallower of the two embedded Durations), so both are named
+	// explicitly here to make the fallback clear. Validate guarantees the
+	// cookie's own duration is positive, so this is never zero.
+	tokenDuration := jc.JWTSignerConfig.Duration //nolint:staticcheck // explicit on purpose, see comment above
+	if tokenDuration <= 0 {
+		tokenDuration = jc.JWTCookieConfig.Duration
+	}
+	issuerOpts := []jwtutil.JWTIssuerOption{
+		jwtutil.WithExpiration(tokenDuration),
+	}
+	if jc.Insecure {
+		issuerOpts = append(issuerOpts, jwtutil.WithInsecureCookie(jc.Name, jc.ScopeAndDuration))
+	} else {
+		issuerOpts = append(issuerOpts, jwtutil.WithSecureCookie(jc.Name, jc.ScopeAndDuration))
+	}
+	if jc.Issuer != "" {
+		issuerOpts = append(issuerOpts, jwtutil.WithIssuer(jc.Issuer))
+	}
+	if len(jc.Audience) > 0 {
+		issuerOpts = append(issuerOpts, jwtutil.WithAudience(jc.Audience...))
+	}
+	if jc.Redirect != "" && issueRedirect {
+		issuerOpts = append(issuerOpts, jwtutil.WithRedirect(jc.Redirect))
+	}
+	if len(jc.Claims) > 0 {
+		claims := make(map[string]any, len(jc.Claims))
+		for k, v := range jc.Claims {
+			claims[k] = v
+		}
+		issuerOpts = append(issuerOpts, jwtutil.WithClaims(claims))
+	}
+	return issuerOpts
+}
+
+// ValidateOptions returns the jwt.ValidateOption values corresponding to jc:
+// that a token was issued by jc.Issuer, is intended for at least one of
+// jc.Audience, has the configured Subject (if any), and carries each of
+// jc.Claims with exactly the configured value. jc.VerifierConfig, promoted
+// from the embedded JWTCookieSignerConfig, already carries Subject and
+// Claims through from the embedded JWTSignerConfig, so this delegates to it
+// directly rather than re-deriving the claim checks. Use these to validate a
+// token issued by JWTCommand.Issuer, eg. via jwt.Validate/jwt.Parse's
+// WithValidator, or any other token that is expected to satisfy this
+// configuration.
+func (jc JWTIssuerConfig) ValidateOptions() []jwt.ValidateOption {
+	return jc.VerifierConfig().ValidateOptions()
+}
+
+// JWTValidatorConfig wraps jwtutil.JWTCookieValidatorConfig with the
+// verification key specs used to resolve the actual key material from the
+// key store in context: jwtutil's own validator configs carry no key
+// material of their own.
+type JWTValidatorConfig struct {
+	jwtutil.JWTCookieValidatorConfig `yaml:",inline"`
+	VerificationKeys                 []keys.KeySpec `yaml:"jwt_verification_keys" doc:"jwt verification key specs"`
+}
+
 // WebUIConfig configures the management web UI and its OpenAPI-specified JSON
 // API, served by the run command.
 type WebUIConfig struct {
 	Enabled       bool             `yaml:"enabled" doc:"enable the web UI and management API"`
 	ListenAddress string           `yaml:"listen_address" doc:"address for the web UI/API HTTP server, e.g. 127.0.0.1:8088"`
 	Reload        webassets.Config `yaml:"reload" doc:"optionally serve the web UI assets from the local filesystem (reload_root should point at the webui directory) so the SPA can be rebuilt without recompiling the binary"`
+	// A JWTValidatorConfig, rather than a bare jwtutil.JWTValidatorConfig,
+	// since the web UI's JWT check reads the cookie by name
+	// (JWTCookieConfig.Name) and needs the verification key specs to resolve
+	// against the context's key store; jwtutil's own validator config
+	// carries neither.
+	JWTVerification *JWTValidatorConfig `yaml:"jwt_verifier" doc:"configuration for JWT verification"`
 }
 
 type GlobalConfig struct {

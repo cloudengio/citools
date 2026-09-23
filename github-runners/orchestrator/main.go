@@ -28,6 +28,10 @@ commands:
     summary: run the orchestrator
   - name: launch
     summary: launch the orchestrator as a GUI application
+  - name: view
+    summary: view the web UI of an orchestrator running on a remote host via SSH port forwarding
+    args:
+      - <[local-port:]host[:remote-port]> (remote host running the orchestrator, with optional local and remote ports)
   - name: run-job
     summary: run a single job on a VM, useful for testing vms
   - name: github
@@ -94,6 +98,19 @@ commands:
         summary: list the VMs created by the orchestrator's configured pools
       - name: delete
         summary: delete the VMs created by the orchestrator's configured pools
+  - name: jwt
+    summary: JSON Web Token (JWT) key and authentication commands
+    commands:
+      - name: create
+        summary: |
+          create a new Ed25519 JWT signing key pair, if a <filename>
+          is specified the private key is written to <filename> in json format
+          and the public key to <filename>.pub.json. If filename is - for stdout
+          then the public key is written to <keyuser>-<keyid>.pub.json:
+        args:
+          - <filename> (the private key file, or - for stdou)
+      - name: issue
+        summary: serve a JWT authentication cookie to trusted clients via a random URL
 `
 
 type GlobalFlags struct {
@@ -137,6 +154,9 @@ func createCLI() *subcmd.CommandSetYAML {
 	launchCmd := LaunchCommand{}
 	cmdSet.Set("launch").MustRunner(launchCmd.Run, &struct{}{})
 
+	viewCmd := ViewCommand{}
+	cmdSet.Set("view").MustRunner(viewCmd.Run, &ViewFlags{})
+
 	installCmd := InstallCommand{}
 	cmdSet.Set("install").MustRunner(installCmd.Run, &InstallFlags{})
 
@@ -155,6 +175,11 @@ func createCLI() *subcmd.CommandSetYAML {
 	cfgCmd := ConfigCommand{}
 	cmdSet.Set("config", "show").MustRunner(cfgCmd.Show, &struct{}{})
 	cmdSet.Set("config", "describe").MustRunner(cfgCmd.Describe, &struct{}{})
+
+	jwtCmd := JWTCommand{}
+	cmdSet.Set("jwt", "create").MustRunner(jwtCmd.Create, &JWTCreateFlags{})
+	cmdSet.Set("jwt", "issue").MustRunner(jwtCmd.Issuer, &JWTIssuerFlags{})
+	cmdSet.Set("jwt", "issue").MustSetPreHooks(configPrehook, withKeysPrehook)
 
 	return cmdSet
 }

@@ -104,7 +104,7 @@ When the user selects **Quit** from the menu bar:
 
 The orchestrator registers a status item with variable length in the macOS Menu Extra bar displaying a runner icon or title. Clicking the icon presents a native `NSMenu` with dynamic state:
 
-- **Open Web UI:** Launches the default web browser targeting the configured Web UI listen address (`http://localhost:<port>`). Disabled if Web UI is disabled in configuration.
+- **Open Web UI:** Launches the default web browser targeting the configured Web UI listen address (`http://127.0.0.1:<port>`). Disabled if Web UI is disabled in configuration.
 - **View Logs:** Opens the service output log file using the default macOS handler (`Console.app` or default viewer).
 - *[Separator]*
 - **Service Controls (Dynamic):**
