@@ -3,19 +3,19 @@ module github.com/cloudengio/citools/runners/macos/orchestrator
 go 1.27.0
 
 require (
-	cloudeng.io/algo v0.0.0-20260909165456-ddaa2de546a0
-	cloudeng.io/cmdutil v0.0.0-20260909165456-ddaa2de546a0
+	cloudeng.io/algo v0.0.0-20260923165344-0acebac4c1e9
+	cloudeng.io/cmdutil v0.0.0-20260923165344-0acebac4c1e9
 	cloudeng.io/errors v0.0.14-0.20260312171538-61fcde6ce278
-	cloudeng.io/file v0.0.0-20260909165456-ddaa2de546a0
-	cloudeng.io/logging v0.0.0-20260909165456-ddaa2de546a0
-	cloudeng.io/macos v0.0.0-20260910023704-f66be8a74afb
-	cloudeng.io/os v0.0.0-20260909165456-ddaa2de546a0
+	cloudeng.io/file v0.0.0-20260923165344-0acebac4c1e9
+	cloudeng.io/logging v0.0.0-20260923165344-0acebac4c1e9
+	cloudeng.io/macos v0.0.0-20260923172856-ba95212f8b7e
+	cloudeng.io/os v0.0.0-20260923165344-0acebac4c1e9
 	cloudeng.io/sync v0.0.12-0.20260804222138-e9281ed260ba
 	cloudeng.io/text v0.0.16-0.20260624171915-da98fe9dec2b
-	cloudeng.io/vms v0.0.0-20260909165456-ddaa2de546a0
-	cloudeng.io/webapi/clients/github v0.0.0-20260826235630-e76ef9cbd50a
-	cloudeng.io/webapi/operations v0.0.0-20260826235630-e76ef9cbd50a
-	cloudeng.io/webapp v0.0.0-20260902210811-d83ce931b21c
+	cloudeng.io/vms v0.0.0-20260923165344-0acebac4c1e9
+	cloudeng.io/webapi/clients/github v0.0.0-20260914220715-614066f9ca28
+	cloudeng.io/webapi/operations v0.0.0-20260914220715-614066f9ca28
+	cloudeng.io/webapp v0.0.0-20260923171223-35a91d2cfd6b
 	github.com/getkin/kin-openapi v0.149.0
 	github.com/google/go-github/v89 v89.0.0
 	github.com/oapi-codegen/runtime v1.7.0
@@ -25,13 +25,13 @@ require (
 )
 
 require (
-	cloudeng.io/cicd v0.0.0-20260909165456-ddaa2de546a0 // indirect
-	cloudeng.io/encoding v0.0.0-20260909165456-ddaa2de546a0 // indirect
-	cloudeng.io/io v0.0.0-20260909165456-ddaa2de546a0 // indirect
+	cloudeng.io/cicd v0.0.0-20260923165344-0acebac4c1e9 // indirect
+	cloudeng.io/encoding v0.0.0-20260923165344-0acebac4c1e9 // indirect
+	cloudeng.io/io v0.0.0-20260923165344-0acebac4c1e9 // indirect
 	cloudeng.io/path v0.0.10-0.20260312171538-61fcde6ce278 // indirect
-	cloudeng.io/security v0.0.0-20260909165456-ddaa2de546a0 // indirect
-	cloudeng.io/sys v0.0.0-20260909165456-ddaa2de546a0 // indirect
-	cloudeng.io/types v0.0.0-20260909165456-ddaa2de546a0 // indirect
+	cloudeng.io/security v0.0.0-20260923165344-0acebac4c1e9 // indirect
+	cloudeng.io/sys v0.0.0-20260923165344-0acebac4c1e9 // indirect
+	cloudeng.io/types v0.0.0-20260923165344-0acebac4c1e9 // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/cloudengio/go-keychain v0.0.0-20251120230617-c4053f60cda7 // indirect
 	github.com/dprotaso/go-yit v0.0.0-20220510233725-9ba8df137936 // indirect
