@@ -5,5 +5,5 @@ orchestrator/cmd/orchestrator-launcher/orchestrator-launcher
 orchestrator/orchestrator
 orchestrator/orchestrator-launcher
 chrome-for-testing/chrome-for-testing
-github-runners/linux/runner-env
-github-runners/macos/runner-env
+linux/runner-env
+macos/runner-env
