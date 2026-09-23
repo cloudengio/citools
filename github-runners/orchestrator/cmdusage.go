@@ -4,6 +4,7 @@
 //
 //	         run - run the orchestrator
 //	      launch - launch the orchestrator as a GUI application
+//	        view - view the web UI of an orchestrator running on a remote host via SSH port forwarding
 //	     run-job - run a single job on a VM, useful for testing vms
 //	      github - GitHub API commands
 //	     version - print the version and git revision of this binary
