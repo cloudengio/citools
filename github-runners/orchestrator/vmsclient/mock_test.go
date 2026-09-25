@@ -124,6 +124,12 @@ func TestMockPoolsLifecycle(t *testing.T) {
 		if s.Size != wantSize {
 			t.Errorf("pool %v: size %d, want %d", name, s.Size, wantSize)
 		}
+		if s.Available != wantSize {
+			t.Errorf("pool %v: available %d, want %d", name, s.Available, wantSize)
+		}
+		if s.Acquired != 0 {
+			t.Errorf("pool %v: acquired %d, want 0", name, s.Acquired)
+		}
 		if s.Kind != "mock" {
 			t.Errorf("pool %v: kind %q, want mock", name, s.Kind)
 		}
@@ -136,6 +142,21 @@ func TestMockPoolsLifecycle(t *testing.T) {
 	}
 	if vm.ID() == "" {
 		t.Error("the acquired VM has no ID")
+	}
+
+	snapsAfterAcquire, err := pools.Status(ctx)
+	if err != nil {
+		t.Fatalf("Status after acquire: %v", err)
+	}
+	for _, s := range snapsAfterAcquire {
+		if s.Name == "fast" {
+			if s.Available != 2 {
+				t.Errorf("fast pool after acquire: available %d, want 2", s.Available)
+			}
+			if s.Acquired != 1 {
+				t.Errorf("fast pool after acquire: acquired %d, want 1", s.Acquired)
+			}
+		}
 	}
 	// Commands are recorded rather than executed, so a mock VM reports success.
 	if err := vm.Exec(ctx, io.Discard, io.Discard, "echo", "hello"); err != nil {

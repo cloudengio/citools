@@ -167,21 +167,31 @@ func (b *webuiBackend) Pools(ctx context.Context) ([]webui.PoolStatus, error) {
 		return nil, err
 	}
 	acquired := b.acquiredVMIDs()
+	cqVMs := wh.CompletionQueueVMIDs()
 	out := make([]webui.PoolStatus, 0, len(snaps))
 	for _, p := range snaps {
 		ps := webui.PoolStatus{
-			Name:  p.Name,
-			Kind:  strPtr(p.Kind),
-			Image: strPtr(p.Image),
-			Size:  p.Size,
-			Vms:   make([]webui.VMStatus, 0, len(p.VMs)),
+			Name:      p.Name,
+			Kind:      strPtr(p.Kind),
+			Image:     strPtr(p.Image),
+			Size:      p.Size,
+			Available: new(p.Available),
+			Acquired:  new(p.Acquired),
+			Pending:   new(p.Pending),
+			Vms:       make([]webui.VMStatus, 0, len(p.VMs)),
 		}
 		for _, vm := range p.VMs {
+			inCQ := cqVMs[vm.Name]
+			loc := webui.VMLocationPool
+			if inCQ {
+				loc = webui.VMLocationCompletionQueue
+			}
 			ps.Vms = append(ps.Vms, webui.VMStatus{
 				Id:        vm.Name,
 				Name:      strPtr(vm.Name),
 				Pool:      strPtr(p.Name),
-				State:     mapVMState(vm, acquired[vm.Name]),
+				Location:  &loc,
+				State:     mapVMState(vm, acquired[vm.Name], inCQ),
 				UpdatedAt: timePtr(vm.Accessed),
 				LastEvent: strPtr(vm.State),
 			})
@@ -212,19 +222,34 @@ func (b *webuiBackend) acquiredVMIDs() map[string]bool {
 	return acquired
 }
 
-// mapVMState maps the coarse "tart list" state onto the API's VMState enum,
-// using the acquired flag (derived from live workflows) to distinguish an
-// in-use VM from an idle warm one.
-func mapVMState(vm vmspool.VMInfo, acquired bool) webui.VMState {
-	switch {
-	case vm.Running && acquired:
+// mapVMState maps the backend provider VM state onto the API's VMState enum,
+// using the in-completion-queue and acquired flags to distinguish an in-use
+// VM or a closed VM retained in the completion queue from an idle warm one.
+func mapVMState(vm vmspool.VMInfo, acquired bool, inCQ bool) webui.VMState {
+	if inCQ {
+		return webui.VMStateCompletionQueue
+	}
+	if acquired {
 		return webui.VMStateAcquired
-	case vm.Running:
+	}
+	switch {
+	case vm.Running,
+		strings.EqualFold(vm.State, "running"),
+		strings.EqualFold(vm.State, "suspended"):
 		return webui.VMStateAvailable
-	case strings.EqualFold(vm.State, "suspended"):
-		return webui.VMStateStaging
 	case strings.EqualFold(vm.State, "stopped"):
 		return webui.VMStateStopped
+	case strings.EqualFold(vm.State, "cloning"),
+		strings.EqualFold(vm.State, "creating"),
+		strings.EqualFold(vm.State, "starting"),
+		strings.EqualFold(vm.State, "staging"):
+		return webui.VMStateCreating
+	case strings.EqualFold(vm.State, "deleting"),
+		strings.EqualFold(vm.State, "deleted"):
+		return webui.VMStateDeleted
+	case strings.EqualFold(vm.State, "error"),
+		strings.EqualFold(vm.State, "failed"):
+		return webui.VMStateFailed
 	default:
 		return webui.VMStateUnknown
 	}

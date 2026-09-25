@@ -8,6 +8,9 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"cloudeng.io/vms/vmspool"
+	"github.com/cloudengio/citools/runners/macos/orchestrator/webui"
 )
 
 // TestBackendServesBeforeHandlerReady verifies the web UI backend answers
@@ -58,5 +61,115 @@ func TestBackendNotifiesOnReady(t *testing.T) {
 	case <-ch:
 	case <-time.After(time.Second):
 		t.Fatal("subscriber was not notified when state became available")
+	}
+}
+
+func TestMapVMState(t *testing.T) {
+	cases := []struct {
+		name     string
+		vm       vmspool.VMInfo
+		acquired bool
+		inCQ     bool
+		want     webui.VMState
+	}{
+		{
+			name:     "in completion queue",
+			vm:       vmspool.VMInfo{State: "stopped", Running: false},
+			acquired: false,
+			inCQ:     true,
+			want:     webui.VMStateCompletionQueue,
+		},
+		{
+			name:     "in completion queue even if running",
+			vm:       vmspool.VMInfo{State: "running", Running: true},
+			acquired: false,
+			inCQ:     true,
+			want:     webui.VMStateCompletionQueue,
+		},
+		{
+			name:     "running and acquired",
+			vm:       vmspool.VMInfo{State: "running", Running: true},
+			acquired: true,
+			inCQ:     false,
+			want:     webui.VMStateAcquired,
+		},
+		{
+			name:     "suspended and acquired",
+			vm:       vmspool.VMInfo{State: "suspended", Running: false},
+			acquired: true,
+			inCQ:     false,
+			want:     webui.VMStateAcquired,
+		},
+		{
+			name:     "stopped and acquired",
+			vm:       vmspool.VMInfo{State: "stopped", Running: false},
+			acquired: true,
+			inCQ:     false,
+			want:     webui.VMStateAcquired,
+		},
+		{
+			name:     "warm running in pool (available)",
+			vm:       vmspool.VMInfo{State: "running", Running: true},
+			acquired: false,
+			inCQ:     false,
+			want:     webui.VMStateAvailable,
+		},
+		{
+			name:     "warm suspended in pool (available)",
+			vm:       vmspool.VMInfo{State: "suspended", Running: false},
+			acquired: false,
+			inCQ:     false,
+			want:     webui.VMStateAvailable,
+		},
+		{
+			name:     "warm stopped in pool (stopped)",
+			vm:       vmspool.VMInfo{State: "stopped", Running: false},
+			acquired: false,
+			inCQ:     false,
+			want:     webui.VMStateStopped,
+		},
+		{
+			name:     "creating / cloning",
+			vm:       vmspool.VMInfo{State: "cloning", Running: false},
+			acquired: false,
+			inCQ:     false,
+			want:     webui.VMStateCreating,
+		},
+		{
+			name:     "starting",
+			vm:       vmspool.VMInfo{State: "starting", Running: false},
+			acquired: false,
+			inCQ:     false,
+			want:     webui.VMStateCreating,
+		},
+		{
+			name:     "deleted",
+			vm:       vmspool.VMInfo{State: "deleted", Running: false},
+			acquired: false,
+			inCQ:     false,
+			want:     webui.VMStateDeleted,
+		},
+		{
+			name:     "failed",
+			vm:       vmspool.VMInfo{State: "failed", Running: false},
+			acquired: false,
+			inCQ:     false,
+			want:     webui.VMStateFailed,
+		},
+		{
+			name:     "unknown",
+			vm:       vmspool.VMInfo{State: "unexpected_state", Running: false},
+			acquired: false,
+			inCQ:     false,
+			want:     webui.VMStateUnknown,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mapVMState(tc.vm, tc.acquired, tc.inCQ)
+			if got != tc.want {
+				t.Errorf("mapVMState(%+v, %v, %v) = %v; want %v", tc.vm, tc.acquired, tc.inCQ, got, tc.want)
+			}
+		})
 	}
 }

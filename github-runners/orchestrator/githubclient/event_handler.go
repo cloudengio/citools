@@ -123,13 +123,26 @@ func (r *WorkflowEventHandler) PoolStatus(ctx context.Context) ([]vmsclient.Pool
 	return r.vmPools.Status(ctx)
 }
 
-// Subscribe returns a coalescing change signal that fires when either pool or
-// workflow state changes, plus a cancel function that must be called to release
-// both underlying subscriptions. The subscriptions are also released when ctx is
+// CompletionQueueVMIDs returns the set of VM IDs currently in the completion queue.
+func (r *WorkflowEventHandler) CompletionQueueVMIDs() map[string]bool {
+	if r.completeQueue == nil {
+		return nil
+	}
+	return r.completeQueue.VMIDs()
+}
+
+// Subscribe returns a coalescing change signal that fires when either pool,
+// workflow, or completion queue state changes, plus a cancel function that must be called to release
+// all underlying subscriptions. The subscriptions are also released when ctx is
 // cancelled.
 func (r *WorkflowEventHandler) Subscribe(ctx context.Context) (<-chan struct{}, func()) {
 	poolCh, poolCancel := r.vmPools.Subscribe(ctx)
 	wfCh, wfCancel := r.status.subscribe(ctx)
+	var cqCh <-chan struct{}
+	var cqCancel func()
+	if r.completeQueue != nil {
+		cqCh, cqCancel = r.completeQueue.Subscribe(ctx)
+	}
 	merged := make(chan struct{}, 1)
 	done := make(chan struct{})
 	notify := func() {
@@ -145,6 +158,8 @@ func (r *WorkflowEventHandler) Subscribe(ctx context.Context) (<-chan struct{}, 
 				notify()
 			case <-wfCh:
 				notify()
+			case <-cqCh:
+				notify()
 			case <-done:
 				return
 			}
@@ -152,8 +167,15 @@ func (r *WorkflowEventHandler) Subscribe(ctx context.Context) (<-chan struct{}, 
 	}()
 	cancel := func() {
 		close(done)
-		poolCancel()
-		wfCancel()
+		if poolCancel != nil {
+			poolCancel()
+		}
+		if wfCancel != nil {
+			wfCancel()
+		}
+		if cqCancel != nil {
+			cqCancel()
+		}
 	}
 	return merged, cancel
 }
@@ -463,12 +485,18 @@ func (r *WorkflowEventHandler) DrainCompletionQueue(ctx context.Context, waitFor
 		select {
 		case success := <-r.completeQueue.Success():
 			inst := success.Payload
+			if vm := inst.GetVM(); vm != nil {
+				r.completeQueue.Remove(vm.ID())
+			}
 			logger := inst.GetLogger(ctxlog.Logger(ctx))
 			logger.Info("job completed successfully")
 			waitForUserInput(waitForInput, fmt.Sprintf("VM %s kept for debugging; press Enter to release it and continue...", inst.GetVM().ID()))
 			inst.GetVM().Delete(ctx) //nolint:errcheck
 		case failure := <-r.completeQueue.Failure():
 			inst := failure.Payload
+			if vm := inst.GetVM(); vm != nil {
+				r.completeQueue.Remove(vm.ID())
+			}
 			logger := inst.GetLogger(ctxlog.Logger(ctx))
 			logger.Error("job failed", "error", failure.Err)
 			waitForUserInput(waitForInput, fmt.Sprintf("VM %s kept for debugging; press Enter to release it and continue...", inst.GetVM().ID()))

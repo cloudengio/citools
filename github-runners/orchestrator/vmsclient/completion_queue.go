@@ -7,6 +7,8 @@ package vmsclient
 import (
 	"context"
 	"log/slog"
+	"maps"
+	"sync"
 	"time"
 
 	"cloudeng.io/errors"
@@ -40,6 +42,10 @@ type CompletionQueue[T CompletionEventPayload] struct {
 	failureExpiration time.Duration
 	success           *patterns.FIFO[CompletionEvent[T]]
 	failure           *patterns.FIFO[CompletionEvent[T]]
+	pubsub            *patterns.PubSub[struct{}]
+
+	mu    sync.Mutex
+	vmIDs map[string]bool
 }
 
 func NewCompletionQueue[T CompletionEventPayload](ctx context.Context, capacity int, successRetention, errorRetention time.Duration) *CompletionQueue[T] {
@@ -48,6 +54,8 @@ func NewCompletionQueue[T CompletionEventPayload](ctx context.Context, capacity 
 		logger:            ctxlog.Logger(ctx),
 		successExpiration: successRetention,
 		failureExpiration: errorRetention,
+		pubsub:            patterns.New[struct{}](),
+		vmIDs:             make(map[string]bool),
 	}
 	q.success = patterns.NewFIFO(ctx, capacity,
 		patterns.WithPeriodicScan(time.Second, q.expiration))
@@ -56,14 +64,34 @@ func NewCompletionQueue[T CompletionEventPayload](ctx context.Context, capacity 
 	return q
 }
 
+func (q *CompletionQueue[T]) recordVM(e CompletionEvent[T]) {
+	if vm := e.Payload.GetVM(); vm != nil && vm.ID() != "" {
+		q.mu.Lock()
+		q.vmIDs[vm.ID()] = true
+		q.mu.Unlock()
+		q.pubsub.Publish(struct{}{})
+	}
+}
+
+func (q *CompletionQueue[T]) unrecordVM(e CompletionEvent[T]) {
+	if vm := e.Payload.GetVM(); vm != nil && vm.ID() != "" {
+		q.mu.Lock()
+		delete(q.vmIDs, vm.ID())
+		q.mu.Unlock()
+		q.pubsub.Publish(struct{}{})
+	}
+}
+
 func (q *CompletionQueue[T]) PushSuccess(event CompletionEvent[T]) {
 	event.expirationTime = time.Now().Add(q.successExpiration)
+	q.recordVM(event)
 	q.success.In() <- event
 }
 
 func (q *CompletionQueue[T]) PushFailure(event CompletionEvent[T], err error) {
 	event.Err = err
 	event.expirationTime = time.Now().Add(q.failureExpiration)
+	q.recordVM(event)
 	q.failure.In() <- event
 }
 
@@ -75,6 +103,7 @@ func (q *CompletionQueue[T]) expiration(e CompletionEvent[T]) bool {
 		} else {
 			logger.Info("completion event expired for successful job")
 		}
+		q.unrecordVM(e)
 		if vm := e.Payload.GetVM(); vm != nil {
 			if err := vm.Delete(context.Background()); err != nil {
 				logger.Error("failed to delete VM", "deletion_err", err)
@@ -93,6 +122,36 @@ func (q *CompletionQueue[T]) Failure() <-chan CompletionEvent[T] {
 	return q.failure.Out()
 }
 
+// VMIDs returns a copy of the set of VM IDs currently tracked in the completion queue.
+func (q *CompletionQueue[T]) VMIDs() map[string]bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	out := make(map[string]bool, len(q.vmIDs))
+	maps.Copy(out, q.vmIDs)
+	return out
+}
+
+// ContainsVM returns true if the specified VM ID is currently in the completion queue.
+func (q *CompletionQueue[T]) ContainsVM(vmID string) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.vmIDs[vmID]
+}
+
+// Remove unregisters the specified VM ID from the completion queue's tracking.
+func (q *CompletionQueue[T]) Remove(vmID string) {
+	q.mu.Lock()
+	delete(q.vmIDs, vmID)
+	q.mu.Unlock()
+	q.pubsub.Publish(struct{}{})
+}
+
+// Subscribe returns a change channel and cancel function for observing completion queue state changes.
+func (q *CompletionQueue[T]) Subscribe(ctx context.Context) (<-chan struct{}, func()) {
+	sub := q.pubsub.Subscribe(ctx, 1)
+	return sub.C(), func() { q.pubsub.Unsubscribe(sub) }
+}
+
 func (q *CompletionQueue[T]) Close(ctx context.Context) error {
 	var errs errors.M
 	errs.Append(q.closeCQ(ctx, "releasing vm from success queue", q.success))
@@ -106,6 +165,7 @@ const drainTimeout = 5 * time.Second
 
 // releaseVM deletes the VM an event was holding, if any.
 func (q *CompletionQueue[T]) releaseVM(ctx context.Context, msg string, e CompletionEvent[T], errs *errors.M) {
+	q.unrecordVM(e)
 	vm := e.Payload.GetVM()
 	if vm == nil {
 		return

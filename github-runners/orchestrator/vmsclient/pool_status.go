@@ -20,13 +20,16 @@ import (
 // currently backing it (the ground truth reported by the backend's Provider),
 // and the aggregate lifecycle counters accumulated from the pool's event stream.
 type PoolSnapshot struct {
-	Name     string
-	Kind     string
-	Image    string
-	Size     int
-	VMs      []vmspool.VMInfo
-	Counters map[string]int
-	Updated  time.Time
+	Name      string
+	Kind      string
+	Image     string
+	Size      int
+	Available int
+	Acquired  int
+	Pending   int
+	VMs       []vmspool.VMInfo
+	Counters  map[string]int
+	Updated   time.Time
 }
 
 // PoolStatusTracker accumulates per-pool lifecycle event counters from the
@@ -89,14 +92,25 @@ func (p *Pools) Status(ctx context.Context) ([]PoolSnapshot, error) {
 		errs.Append(err)
 		sort.Slice(vms, func(i, j int) bool { return vms[i].Name < vms[j].Name })
 		counters, updated := p.tracker.countersFor(name)
+		var stats vmspool.Stats
+		if pool := p.pools[name]; pool != nil {
+			stats = pool.Stats()
+		}
+		size := p.configs[name].Size
+		if size == 0 && stats.Size > 0 {
+			size = stats.Size
+		}
 		out = append(out, PoolSnapshot{
-			Name:     name,
-			Kind:     prov.Kind(),
-			Image:    prov.Image(),
-			Size:     p.configs[name].Size,
-			VMs:      vms,
-			Counters: counters,
-			Updated:  updated,
+			Name:      name,
+			Kind:      prov.Kind(),
+			Image:     prov.Image(),
+			Size:      size,
+			Available: stats.Available,
+			Acquired:  stats.Acquired,
+			Pending:   stats.Pending,
+			VMs:       vms,
+			Counters:  counters,
+			Updated:   updated,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })

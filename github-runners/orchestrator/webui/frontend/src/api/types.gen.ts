@@ -252,7 +252,12 @@ export interface components {
          * @description State of a VM as reported by the pool.
          * @enum {string}
          */
-        VMState: "creating" | "staging" | "available" | "acquired" | "stopped" | "deleted" | "failed" | "unknown";
+        VMState: "creating" | "staging" | "available" | "acquired" | "completion_queue" | "stopped" | "deleted" | "failed" | "unknown";
+        /**
+         * @description Location of a VM (in the pool or in the completion queue).
+         * @enum {string}
+         */
+        VMLocation: "pool" | "completion_queue";
         ConfigSummary: {
             /** @description Path to the YAML config file this orchestrator was started with. */
             config_file: string;
@@ -294,12 +299,19 @@ export interface components {
             image?: string;
             /** @description Configured pool size (target number of warm VMs). */
             size: number;
+            /** @description Number of available VMs in the pool waiting to be acquired. */
+            available?: number;
+            /** @description Number of VMs currently acquired from the pool. */
+            acquired?: number;
+            /** @description Number of VMs being created or replenished in the pool. */
+            pending?: number;
             vms: components["schemas"]["VMStatus"][];
         };
         VMStatus: {
             id: string;
             name?: string;
             pool?: string;
+            location?: components["schemas"]["VMLocation"];
             state: components["schemas"]["VMState"];
             /** Format: date-time */
             created_at?: string;

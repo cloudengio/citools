@@ -264,7 +264,7 @@ func (s *Server) pumpEvents(ctx context.Context, pw *io.PipeWriter) {
 	defer cancel()
 	defer pw.Close() //nolint:errcheck
 
-	if err := writeEvent(pw, Event{Type: Hello, Timestamp: time.Now()}); err != nil {
+	if err := writeEvent(pw, Event{Type: EventTypeHello, Timestamp: time.Now()}); err != nil {
 		return
 	}
 	if err := s.writeSnapshot(ctx, pw); err != nil {
@@ -296,7 +296,7 @@ func (s *Server) writeSnapshot(ctx context.Context, pw *io.PipeWriter) error {
 	pools, err := s.backend.Pools(ctx)
 	if err == nil {
 		for i := range pools {
-			if werr := writeEvent(pw, Event{Type: Pool, Timestamp: now, Pool: &pools[i]}); werr != nil {
+			if werr := writeEvent(pw, Event{Type: EventTypePool, Timestamp: now, Pool: &pools[i]}); werr != nil {
 				return werr
 			}
 		}
@@ -304,7 +304,7 @@ func (s *Server) writeSnapshot(ctx context.Context, pw *io.PipeWriter) error {
 	wfs, err := s.backend.Workflows(ctx)
 	if err == nil {
 		for i := range wfs {
-			if werr := writeEvent(pw, Event{Type: Workflow, Timestamp: now, Workflow: &wfs[i]}); werr != nil {
+			if werr := writeEvent(pw, Event{Type: EventTypeWorkflow, Timestamp: now, Workflow: &wfs[i]}); werr != nil {
 				return werr
 			}
 		}
