@@ -104,18 +104,36 @@ func TestMockPoolsLifecycle(t *testing.T) {
 	}()
 
 	// Each pool reports itself with its configured size and backend.
-	snaps, err := pools.Status(ctx)
-	if err != nil {
-		t.Fatalf("Status: %v", err)
+	wantSizes := map[string]int{"fast": 3, "slow": 1}
+	var byName map[string]PoolSnapshot
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		snaps, err := pools.Status(ctx)
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		byName = make(map[string]PoolSnapshot, len(snaps))
+		for _, s := range snaps {
+			byName[s.Name] = s
+		}
+		allReady := true
+		for name, wantSize := range wantSizes {
+			s, ok := byName[name]
+			if !ok || s.Available < wantSize {
+				allReady = false
+				break
+			}
+		}
+		if allReady {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for pools to reach available sizes: got %+v", byName)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	if got, want := len(snaps), 2; got != want {
-		t.Fatalf("pools: got %d, want %d", got, want)
-	}
-	byName := map[string]PoolSnapshot{}
-	for _, s := range snaps {
-		byName[s.Name] = s
-	}
-	for name, wantSize := range map[string]int{"fast": 3, "slow": 1} {
+
+	for name, wantSize := range wantSizes {
 		s, ok := byName[name]
 		if !ok {
 			t.Errorf("pool %v missing from the status", name)
