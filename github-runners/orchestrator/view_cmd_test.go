@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"cloudeng.io/algo/ratecontrol"
+	"cloudeng.io/cmdutil/subcmd"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
@@ -674,3 +676,92 @@ func TestViewCommandStrictHostKeyVerificationByDefault(t *testing.T) {
 		t.Fatalf("expected error due to strict known-hosts check rejecting untrusted host key, got nil")
 	}
 }
+
+func TestViewFlagsUnlimitedRetries(t *testing.T) {
+	// Verify default is true when parsed via subcmd.
+	var flagsDefault ViewFlags
+	fsDefault := subcmd.MustRegisteredFlagSet(&flagsDefault)
+	if err := fsDefault.FlagSet().Parse(nil); err != nil {
+		t.Fatal(err)
+	}
+	if !flagsDefault.UnlimitedRetries {
+		t.Errorf("flagsDefault.UnlimitedRetries = %v, want true", flagsDefault.UnlimitedRetries)
+	}
+
+	// Verify flag override to false.
+	var flagsDisabled ViewFlags
+	fsDisabled := subcmd.MustRegisteredFlagSet(&flagsDisabled)
+	if err := fsDisabled.FlagSet().Parse([]string{"--unlimited-retries=false"}); err != nil {
+		t.Fatal(err)
+	}
+	if flagsDisabled.UnlimitedRetries {
+		t.Errorf("flagsDisabled.UnlimitedRetries = %v, want false", flagsDisabled.UnlimitedRetries)
+	}
+
+	// Verify flag explicitly set to true.
+	var flagsEnabled ViewFlags
+	fsEnabled := subcmd.MustRegisteredFlagSet(&flagsEnabled)
+	if err := fsEnabled.FlagSet().Parse([]string{"--unlimited-retries=true"}); err != nil {
+		t.Fatal(err)
+	}
+	if !flagsEnabled.UnlimitedRetries {
+		t.Errorf("flagsEnabled.UnlimitedRetries = %v, want true", flagsEnabled.UnlimitedRetries)
+	}
+}
+
+func TestNewViewController(t *testing.T) {
+	// 1. Unlimited retries enabled (default behavior).
+	cUnlimited := newViewController(true)
+	defer cUnlimited.Stop()
+
+	bUnlimited := cUnlimited.Backoff()
+	if bUnlimited == nil {
+		t.Fatal("expected non-nil backoff")
+	}
+	if _, ok := bUnlimited.(*ratecontrol.ExponentialBackoff); !ok {
+		t.Fatalf("expected *ratecontrol.ExponentialBackoff, got %T", bUnlimited)
+	}
+	// Verify that with unlimited retries, more than 4 retries can be consumed without Done becoming true.
+	for i := 0; i < 6; i++ {
+		ch := bUnlimited.Next()
+		if ch == nil {
+			t.Fatalf("step %d: Next() returned nil channel", i)
+		}
+	}
+	if bUnlimited.Done() {
+		t.Error("bUnlimited.Done() = true, want false when WithUnlimitedRetries is enabled")
+	}
+	if got := bUnlimited.Retries(); got != 6 {
+		t.Errorf("bUnlimited.Retries() = %d, want 6", got)
+	}
+
+	// 2. Unlimited retries disabled (4 steps limit).
+	cLimited := newViewController(false)
+	defer cLimited.Stop()
+
+	bLimited := cLimited.Backoff()
+	if bLimited == nil {
+		t.Fatal("expected non-nil backoff")
+	}
+	if _, ok := bLimited.(*ratecontrol.ExponentialBackoff); !ok {
+		t.Fatalf("expected *ratecontrol.ExponentialBackoff, got %T", bLimited)
+	}
+	for i := 0; i < 4; i++ {
+		if bLimited.Done() {
+			t.Fatalf("step %d: Done() prematurely true", i)
+		}
+		_ = bLimited.Next()
+	}
+	// Calling Next() after all 4 steps have been used returns closed channel and marks Done().
+	closedCh := bLimited.Next()
+	if _, ok := <-closedCh; ok {
+		t.Error("expected closed channel on Next() after reaching step limit")
+	}
+	if !bLimited.Done() {
+		t.Error("bLimited.Done() = false, want true after reaching step limit")
+	}
+	if got := bLimited.Retries(); got != 4 {
+		t.Errorf("bLimited.Retries() = %d, want 4", got)
+	}
+}
+

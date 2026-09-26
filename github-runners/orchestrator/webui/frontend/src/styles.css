@@ -64,10 +64,13 @@ h4 { margin: 16px 0 6px; font-size: 13px; color: var(--muted); }
 .badge-running, .badge-available { background: #17402a; color: #58d68d; }
 .badge-acquired, .badge-acquiring { background: #143a4d; color: #57b6e0; }
 .badge-queued, .badge-staging, .badge-creating { background: #3d3717; color: #d9c05a; }
-.badge-vm_completed { background: #2e2450; color: #b39ddb; }
+.badge-vm_completed, .badge-completion_queue { background: #2e2450; color: #b39ddb; }
 .badge-completed { background: #17402a; color: #58d68d; }
 .badge-failed, .badge-canceled { background: #46201d; color: #e07b70; }
 .badge-stopped, .badge-deleted, .badge-unknown { background: #2a2f38; color: var(--muted); }
+
+.chip-cq { border-color: #674fa3; color: #b39ddb; background: rgba(103, 79, 163, 0.15); }
+.chip-pool { border-color: #274b33; color: #81c784; background: rgba(39, 75, 51, 0.15); }
 
 .log-links { display: flex; flex-direction: column; gap: 3px; }
 .log-item { white-space: nowrap; font-size: 12px; }

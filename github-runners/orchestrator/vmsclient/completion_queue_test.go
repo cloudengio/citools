@@ -72,3 +72,64 @@ func TestCompletionQueueCloseEmptyAfterCancel(t *testing.T) {
 
 	closeWithin(t, q, drainTimeout*4)
 }
+
+type testPayloadVM struct {
+	vm *vmspool.VM
+}
+
+func (p testPayloadVM) GetVM() *vmspool.VM                    { return p.vm }
+func (p testPayloadVM) GetLogger(l *slog.Logger) *slog.Logger { return l }
+
+func TestCompletionQueueVMTracking(t *testing.T) {
+	ctx := context.Background()
+	cfg := map[string]PoolConfig{
+		"test": mockPool(1, MockConfig{}),
+	}
+	p := cfg["test"]
+	p.StagingBehaviour = vmspool.StagingBehaviourRunning
+	cfg["test"] = p
+	pools, err := NewPools(ctx, cfg, discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = pools.Close(ctx) }()
+
+	vm, err := pools.Acquire(ctx, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	q := NewCompletionQueue[testPayloadVM](ctx, 10, time.Minute, time.Minute)
+	defer func() { _ = q.Close(ctx) }()
+
+	subCh, subCancel := q.Subscribe(ctx)
+	defer subCancel()
+
+	if q.ContainsVM(vm.ID()) {
+		t.Errorf("queue should not contain VM before push")
+	}
+
+	q.PushSuccess(CompletionEvent[testPayloadVM]{
+		Payload: testPayloadVM{vm: vm},
+	})
+
+	select {
+	case <-subCh:
+	case <-time.After(time.Second):
+		t.Fatal("expected notification on push")
+	}
+
+	if !q.ContainsVM(vm.ID()) {
+		t.Errorf("queue should contain VM %s after push", vm.ID())
+	}
+	vmIDs := q.VMIDs()
+	if !vmIDs[vm.ID()] {
+		t.Errorf("VMIDs should contain %s, got %v", vm.ID(), vmIDs)
+	}
+
+	q.Remove(vm.ID())
+	if q.ContainsVM(vm.ID()) {
+		t.Errorf("queue should not contain VM after Remove")
+	}
+}
+

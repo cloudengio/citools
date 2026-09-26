@@ -306,10 +306,17 @@ components:
         - staging
         - available
         - acquired
+        - completion_queue
         - stopped
         - deleted
         - failed
         - unknown
+    VMLocation:
+      type: string
+      description: Location of a VM (in the pool or in the completion queue).
+      enum:
+        - pool
+        - completion_queue
     ConfigSummary:
       type: object
       required: [config_file, global, repositories, pools, webhook]
@@ -393,6 +400,15 @@ components:
         size:
           type: integer
           description: Configured pool size (target number of warm VMs).
+        available:
+          type: integer
+          description: Number of available VMs in the pool waiting to be acquired.
+        acquired:
+          type: integer
+          description: Number of VMs currently acquired from the pool.
+        pending:
+          type: integer
+          description: Number of VMs being created or replenished in the pool.
         vms:
           type: array
           items:
@@ -407,6 +423,8 @@ components:
           type: string
         pool:
           type: string
+        location:
+          $ref: "#/components/schemas/VMLocation"
         state:
           $ref: "#/components/schemas/VMState"
         created_at:

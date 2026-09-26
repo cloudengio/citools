@@ -29,9 +29,15 @@ func (fakeBackend) ConfigFile(context.Context) (string, []byte, error) {
 }
 
 func (fakeBackend) Pools(context.Context) ([]PoolStatus, error) {
+	avail := 2
+	acq := 0
+	loc := VMLocationPool
 	return []PoolStatus{{
-		Name: "macos", Size: 2,
-		Vms: []VMStatus{{Id: "vm1", State: VMStateAvailable}},
+		Name:      "macos",
+		Size:      2,
+		Available: &avail,
+		Acquired:  &acq,
+		Vms:       []VMStatus{{Id: "vm1", Location: &loc, State: VMStateAvailable}},
 	}}, nil
 }
 

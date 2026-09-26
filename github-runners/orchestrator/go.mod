@@ -3,17 +3,17 @@ module github.com/cloudengio/citools/runners/macos/orchestrator
 go 1.27.0
 
 require (
-	cloudeng.io/algo v0.0.0-20260923165344-0acebac4c1e9
-	cloudeng.io/cmdutil v0.0.0-20260923165344-0acebac4c1e9
+	cloudeng.io/algo v0.0.0-20260925200243-4023f51f1ebd
+	cloudeng.io/cmdutil v0.0.0-20260925200243-4023f51f1ebd
 	cloudeng.io/errors v0.0.14-0.20260312171538-61fcde6ce278
-	cloudeng.io/file v0.0.0-20260923165344-0acebac4c1e9
-	cloudeng.io/logging v0.0.0-20260923165344-0acebac4c1e9
+	cloudeng.io/file v0.0.0-20260925200243-4023f51f1ebd
+	cloudeng.io/logging v0.0.0-20260925200243-4023f51f1ebd
 	cloudeng.io/macos v0.0.0-20260923172856-ba95212f8b7e
-	cloudeng.io/net v0.0.0-20260923165344-0acebac4c1e9
-	cloudeng.io/os v0.0.0-20260923165344-0acebac4c1e9
+	cloudeng.io/net v0.0.0-20260925200243-4023f51f1ebd
+	cloudeng.io/os v0.0.0-20260925200243-4023f51f1ebd
 	cloudeng.io/sync v0.0.12-0.20260804222138-e9281ed260ba
 	cloudeng.io/text v0.0.16-0.20260624171915-da98fe9dec2b
-	cloudeng.io/vms v0.0.0-20260923165344-0acebac4c1e9
+	cloudeng.io/vms v0.0.0-20260925200243-4023f51f1ebd
 	cloudeng.io/webapi/clients/github v0.0.0-20260914220715-614066f9ca28
 	cloudeng.io/webapi/operations v0.0.0-20260914220715-614066f9ca28
 	cloudeng.io/webapp v0.0.0-20260923171223-35a91d2cfd6b
@@ -28,19 +28,19 @@ require (
 )
 
 require (
-	cloudeng.io/cicd v0.0.0-20260923165344-0acebac4c1e9 // indirect
-	cloudeng.io/encoding v0.0.0-20260923165344-0acebac4c1e9 // indirect
-	cloudeng.io/io v0.0.0-20260923165344-0acebac4c1e9 // indirect
+	cloudeng.io/cicd v0.0.0-20260925200243-4023f51f1ebd // indirect
+	cloudeng.io/encoding v0.0.0-20260925200243-4023f51f1ebd // indirect
+	cloudeng.io/io v0.0.0-20260925200243-4023f51f1ebd // indirect
 	cloudeng.io/path v0.0.10-0.20260312171538-61fcde6ce278 // indirect
-	cloudeng.io/security v0.0.0-20260923165344-0acebac4c1e9 // indirect
-	cloudeng.io/sys v0.0.0-20260923165344-0acebac4c1e9 // indirect
-	cloudeng.io/types v0.0.0-20260923165344-0acebac4c1e9 // indirect
+	cloudeng.io/security v0.0.0-20260925200243-4023f51f1ebd // indirect
+	cloudeng.io/sys v0.0.0-20260925200243-4023f51f1ebd // indirect
+	cloudeng.io/types v0.0.0-20260925200243-4023f51f1ebd // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/cloudengio/go-keychain v0.0.0-20251120230617-c4053f60cda7 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
 	github.com/dprotaso/go-yit v0.0.0-20220510233725-9ba8df137936 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
-	github.com/go-openapi/jsonpointer v1.0.1 // indirect
+	github.com/go-openapi/jsonpointer v1.0.2 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect

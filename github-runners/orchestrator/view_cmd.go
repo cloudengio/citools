@@ -32,6 +32,7 @@ type ViewFlags struct {
 	AcceptNewHostKeys bool          `subcmd:"accept-new-host-keys,false,'accept and record new SSH host keys (strict known-host verification is used by default)'"`
 	DialTimeout       time.Duration `subcmd:"dial-timeout,30s,timeout for initial connection and web UI readiness"`
 	NoBrowser         bool          `subcmd:"no-browser,false,do not automatically open the web browser"`
+	UnlimitedRetries  bool          `subcmd:"unlimited-retries,true,continue retrying SSH connection indefinitely"`
 }
 
 var openBrowserFn = openBrowser
@@ -276,6 +277,18 @@ func checkForwardReady(ctx context.Context, port int) bool {
 	return false
 }
 
+func newViewController(unlimitedRetries bool) *ratecontrol.Controller {
+	return ratecontrol.New(
+		ratecontrol.WithBackoff(func() ratecontrol.Backoff {
+			return ratecontrol.NewExponentialBackoff(
+				500*time.Millisecond,
+				4,
+				ratecontrol.WithUnlimitedRetries(unlimitedRetries),
+			)
+		}),
+	)
+}
+
 func (v ViewCommand) Run(ctx context.Context, flags any, args []string) error {
 	fv := flags.(*ViewFlags)
 	if len(args) == 0 {
@@ -321,13 +334,12 @@ func (v ViewCommand) Run(ctx context.Context, flags any, args []string) error {
 	client := pssh.NewClient(ctx, "tcp", hostPort, psshOpts...)
 	defer client.Close()
 
-	backoffFn := func() ratecontrol.Backoff {
-		return ratecontrol.NewExponentialBackoff(500*time.Millisecond, 8)
-	}
+	controller := newViewController(fv.UnlimitedRetries)
+	defer controller.Stop()
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- client.ConnectAndWait(ctx, backoffFn)
+		errCh <- client.ConnectAndWait(ctx, controller.Backoff)
 	}()
 
 	webURL := fmt.Sprintf("http://127.0.0.1:%d", localPort)
