@@ -8,6 +8,7 @@
 #import <CoreGraphics/CoreGraphics.h>
 
 extern void goUIOpenWebUI(void);
+extern void goUIIssueJWT(void);
 extern void goUIViewLogs(void);
 extern void goUIInstallService(void);
 extern void goUIRestartService(void);
@@ -53,6 +54,11 @@ static NSStatusItem *gStatusItem = nil;
         [openWeb setTarget:self];
         [openWeb setEnabled:YES];
         [_menu addItem:openWeb];
+
+        NSMenuItem *issueJWT = [[NSMenuItem alloc] initWithTitle:@"Issue JWT" action:@selector(onIssueJWT:) keyEquivalent:@""];
+        [issueJWT setTarget:self];
+        [issueJWT setEnabled:YES];
+        [_menu addItem:issueJWT];
 
         NSMenuItem *viewLogs = [[NSMenuItem alloc] initWithTitle:@"View Logs..." action:@selector(onViewLogs:) keyEquivalent:@""];
         [viewLogs setTarget:self];
@@ -132,6 +138,10 @@ static NSStatusItem *gStatusItem = nil;
 
 - (void)onOpenWeb:(id)sender {
     goUIOpenWebUI();
+}
+
+- (void)onIssueJWT:(id)sender {
+    goUIIssueJWT();
 }
 
 - (void)onViewLogs:(id)sender {

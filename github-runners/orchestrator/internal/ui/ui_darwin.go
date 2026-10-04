@@ -141,6 +141,16 @@ func goUIOpenWebUI() {
 	}
 }
 
+//export goUIIssueJWT
+func goUIIssueJWT() {
+	activeUIMu.Lock()
+	u := activeUI
+	activeUIMu.Unlock()
+	if u != nil && u.handler != nil {
+		u.handler.OnIssueJWT()
+	}
+}
+
 //export goUIViewLogs
 func goUIViewLogs() {
 	activeUIMu.Lock()

@@ -25,6 +25,7 @@ const (
 // Handler receives user interactions from the UI (menu items, dock quit, etc.).
 type Handler interface {
 	OnOpenWebUI()
+	OnIssueJWT()
 	OnViewLogs()
 	OnInstallService()
 	OnRestartService()
