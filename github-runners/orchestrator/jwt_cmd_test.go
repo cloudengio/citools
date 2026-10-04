@@ -249,6 +249,84 @@ func TestJWTIssuer(t *testing.T) {
 	}
 }
 
+func TestJWTIssuerEmptyAddress(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	keyInfo, err := jwtutil.NewED25519KeyInfo("alice", "empty-addr-key")
+	if err != nil {
+		t.Fatalf("NewED25519KeyInfo failed: %v", err)
+	}
+	ctx = keys.ContextWithKey(ctx, keyInfo)
+
+	cfg := Config{
+		JWTIssuer: &JWTIssuerConfig{
+			JWTCookieSignerConfig: jwtutil.JWTCookieSignerConfig{
+				JWTCookieConfig: jwtutil.JWTCookieConfig{
+					Name:     "orch_jwt",
+					Insecure: true,
+					ScopeAndDuration: cookies.ScopeAndDuration{
+						Domain:   "127.0.0.1",
+						Path:     "/",
+						Duration: time.Hour,
+					},
+				},
+				JWTSignerConfig: jwtutil.JWTSignerConfig{
+					Issuer:   "github-runner-orchestrator",
+					Audience: []string{"orchestrator"},
+				},
+			},
+			SigningKey: keyInfo.KeySpec(),
+		},
+	}
+
+	flags := &JWTIssuerFlags{
+		Address:     "", // Empty address must default and normalize to 127.0.0.1:0
+		OneShot:     true,
+		OpenBrowser: true,
+	}
+
+	urlCh := make(chan string, 1)
+	origOpenBrowser := jwtOpenBrowserFn
+	defer func() { jwtOpenBrowserFn = origOpenBrowser }()
+	jwtOpenBrowserFn = func(u string) error {
+		urlCh <- u
+		return nil
+	}
+
+	serveErrCh := make(chan error, 1)
+	go func() {
+		serveErrCh <- runJWTIssuer(ctx, cfg, flags)
+	}()
+
+	select {
+	case authURL := <-urlCh:
+		if flags.Address != "127.0.0.1:0" {
+			t.Errorf("expected flags.Address to be normalized to 127.0.0.1:0, got %q", flags.Address)
+		}
+		parsed, err := url.Parse(authURL)
+		if err != nil {
+			t.Fatalf("invalid auth URL: %v", err)
+		}
+		if !strings.HasPrefix(parsed.Host, "127.0.0.1:") {
+			t.Errorf("expected loopback host starting with 127.0.0.1:, got %q", parsed.Host)
+		}
+		resp, err := http.Get(authURL)
+		if err != nil {
+			t.Fatalf("GET auth URL: %v", err)
+		}
+		_ = resp.Body.Close()
+	case err := <-serveErrCh:
+		t.Fatalf("runJWTIssuer failed: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for auth URL")
+	}
+
+	if err := <-serveErrCh; err != nil {
+		t.Fatalf("expected clean shutdown, got %v", err)
+	}
+}
+
 func TestGetJWTValidator(t *testing.T) {
 	ctx := context.Background()
 	ims := keys.NewInMemoryKeyStore()

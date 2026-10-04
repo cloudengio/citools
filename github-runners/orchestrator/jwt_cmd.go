@@ -121,11 +121,10 @@ var jwtOpenBrowserFn = func(url string) error {
 // runJWTIssuer runs a temporary HTTP server that issues a single JWT
 // authentication cookie and redirects to the configured URL.
 func runJWTIssuer(ctx context.Context, cfg Config, fv *JWTIssuerFlags) error {
-	addr := fv.Address
-	if addr == "" {
-		addr = "127.0.0.1:0"
+	if fv.Address == "" {
+		fv.Address = "127.0.0.1:0"
 	}
-	if err := validateListenAddress(addr); err != nil {
+	if err := validateListenAddress(fv.Address); err != nil {
 		return err
 	}
 
