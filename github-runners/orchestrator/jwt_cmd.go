@@ -118,20 +118,17 @@ var jwtOpenBrowserFn = func(url string) error {
 	return exec.Command("open", url).Start()
 }
 
-// Issuer serves a single JWT authentication cookie at a randomly generated
-// URL, using the jwt_issuer configuration (Config.JWTIssuer) for everything
-// but the listen address, subject and one-shot/open-browser behaviour, which
-// are specific to running this as an interactive, one-off command.
-func (c JWTCommand) Issuer(ctx context.Context, flags any, _ []string) error {
-	fv := flags.(*JWTIssuerFlags)
-	if err := validateListenAddress(fv.Address); err != nil {
+// runJWTIssuer runs a temporary HTTP server that issues a single JWT
+// authentication cookie and redirects to the configured URL.
+func runJWTIssuer(ctx context.Context, cfg Config, fv *JWTIssuerFlags) error {
+	addr := fv.Address
+	if addr == "" {
+		addr = "127.0.0.1:0"
+	}
+	if err := validateListenAddress(addr); err != nil {
 		return err
 	}
 
-	cfg, ok := ConfigFromContext(ctx)
-	if !ok {
-		return fmt.Errorf("no configuration loaded")
-	}
 	if cfg.JWTIssuer == nil {
 		return fmt.Errorf("jwt_issuer is not configured")
 	}
@@ -243,4 +240,17 @@ func (c JWTCommand) Issuer(ctx context.Context, flags any, _ []string) error {
 		fmt.Println("Authentication cookie issued. Server stopped.")
 		return nil
 	}
+}
+
+// Issuer serves a single JWT authentication cookie at a randomly generated
+// URL, using the jwt_issuer configuration (Config.JWTIssuer) for everything
+// but the listen address, subject and one-shot/open-browser behaviour, which
+// are specific to running this as an interactive, one-off command.
+func (c JWTCommand) Issuer(ctx context.Context, flags any, _ []string) error {
+	fv := flags.(*JWTIssuerFlags)
+	cfg, ok := ConfigFromContext(ctx)
+	if !ok {
+		return fmt.Errorf("no configuration loaded")
+	}
+	return runJWTIssuer(ctx, cfg, fv)
 }

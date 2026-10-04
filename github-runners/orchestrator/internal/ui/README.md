@@ -21,6 +21,7 @@ Dialogs provides native alert presentation.
 ```go
 type Handler interface {
 	OnOpenWebUI()
+	OnIssueJWT()
 	OnViewLogs()
 	OnInstallService()
 	OnRestartService()

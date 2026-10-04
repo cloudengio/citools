@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"cloudeng.io/cmdutil"
@@ -261,7 +262,10 @@ func (r RunCommand) runWithUIMode(ctx context.Context, fv *RunFlags, mode ui.Mod
 	defer runCancel()
 
 	handler := &runUIHandler{
+		ctx:     runCtx,
 		cancel:  runCancel,
+		cfg:     cfg,
+		ui:      u,
 		webURL:  webURL,
 		logPath: globalFlags.File,
 	}
@@ -284,15 +288,53 @@ func (r RunCommand) runWithUIMode(ctx context.Context, fv *RunFlags, mode ui.Mod
 }
 
 type runUIHandler struct {
-	cancel  context.CancelFunc
-	webURL  string
-	logPath string
+	ctx      context.Context
+	cancel   context.CancelFunc
+	cfg      Config
+	ui       ui.UI
+	webURL   string
+	logPath  string
+	issuerMu sync.Mutex
 }
 
 func (h *runUIHandler) OnOpenWebUI() {
 	if h.webURL != "" {
 		_ = exec.Command("open", h.webURL).Start()
 	}
+}
+
+func (h *runUIHandler) OnIssueJWT() {
+	go func() {
+		if h.cfg.JWTIssuer == nil {
+			if h.ui != nil {
+				h.ui.Notify(dialogTitle, "The JWT issuer is not configured in the orchestrator configuration.")
+			}
+			return
+		}
+		if !h.issuerMu.TryLock() {
+			if h.ui != nil {
+				h.ui.Notify(dialogTitle, "A JWT issuance session is already active.")
+			}
+			return
+		}
+		defer h.issuerMu.Unlock()
+
+		issueCtx, issueCancel := context.WithTimeout(h.ctx, 5*time.Minute)
+		defer issueCancel()
+
+		flags := &JWTIssuerFlags{
+			Address:       "127.0.0.1:0",
+			OneShot:       true,
+			OpenBrowser:   true,
+			IssueRedirect: true,
+		}
+		if err := runJWTIssuer(issueCtx, h.cfg, flags); err != nil && !errors.Is(err, context.Canceled) {
+			ctxlog.Error(h.ctx, "failed to issue JWT", "error", err)
+			if h.ui != nil {
+				h.ui.Notify(dialogTitle, "Failed to issue JWT:\n\n"+err.Error())
+			}
+		}
+	}()
 }
 
 func (h *runUIHandler) OnViewLogs() {

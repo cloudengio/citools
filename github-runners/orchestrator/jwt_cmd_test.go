@@ -18,6 +18,7 @@ import (
 	"cloudeng.io/cmdutil/keys/keyscmd"
 	"cloudeng.io/webapp/cookies"
 	"cloudeng.io/webapp/webauth/jwtutil"
+	"github.com/cloudengio/citools/runners/macos/orchestrator/internal/ui"
 	"github.com/lestrrat-go/jwx/v3/jwt"
 )
 
@@ -311,4 +312,138 @@ func signTestToken(t *testing.T, ctx context.Context, info keys.Info) ([]byte, e
 		return nil, err
 	}
 	return signer.Sign(ctx, tok)
+}
+
+type testUI struct {
+	notifyCh chan [2]string
+}
+
+func (u *testUI) Confirm(_, _ string) bool { return false }
+func (u *testUI) Notify(title, message string) {
+	if u.notifyCh != nil {
+		u.notifyCh <- [2]string{title, message}
+	}
+}
+func (u *testUI) ShowLog(_, _ string, _ []byte, _ string) {}
+func (u *testUI) Start(ctx context.Context, _ ui.Handler, _, _ string) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+func (u *testUI) Stop() {}
+func (u *testUI) IsAvailable() bool { return true }
+
+func TestRunUIHandlerOnIssueJWT(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	uiMock := &testUI{notifyCh: make(chan [2]string, 10)}
+
+	// Subtest 1: unconfigured JWTIssuer triggers a notification.
+	t.Run("unconfigured JWTIssuer notifies user", func(t *testing.T) {
+		handler := &runUIHandler{
+			ctx: ctx,
+			cfg: Config{},
+			ui:  uiMock,
+		}
+		handler.OnIssueJWT()
+		select {
+		case note := <-uiMock.notifyCh:
+			if note[0] != dialogTitle || !strings.Contains(note[1], "not configured") {
+				t.Errorf("unexpected notification: %v", note)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for notification")
+		}
+	})
+
+	// Subtest 2: configured JWTIssuer serves cookie and redirects.
+	t.Run("configured JWTIssuer serves cookie and redirects", func(t *testing.T) {
+		keyInfo, err := jwtutil.NewED25519KeyInfo("alice", "ui-jwt-key")
+		if err != nil {
+			t.Fatalf("NewED25519KeyInfo failed: %v", err)
+		}
+		ctxKey := keys.ContextWithKey(ctx, keyInfo)
+
+		cfg := Config{
+			JWTIssuer: &JWTIssuerConfig{
+				JWTCookieSignerConfig: jwtutil.JWTCookieSignerConfig{
+					JWTCookieConfig: jwtutil.JWTCookieConfig{
+						Name:     "orch_jwt",
+						Insecure: true,
+						ScopeAndDuration: cookies.ScopeAndDuration{
+							Domain:   "127.0.0.1",
+							Path:     "/",
+							Duration: time.Hour,
+						},
+					},
+					JWTSignerConfig: jwtutil.JWTSignerConfig{
+						Issuer:   "github-runner-orchestrator",
+						Audience: []string{"orchestrator"},
+					},
+				},
+				SigningKey: keyInfo.KeySpec(),
+				Redirect:   "http://127.0.0.1:8088/webui",
+			},
+		}
+
+		urlCh := make(chan string, 1)
+		origOpenBrowser := jwtOpenBrowserFn
+		defer func() { jwtOpenBrowserFn = origOpenBrowser }()
+		jwtOpenBrowserFn = func(u string) error {
+			urlCh <- u
+			return nil
+		}
+
+		handler := &runUIHandler{
+			ctx: ctxKey,
+			cfg: cfg,
+			ui:  uiMock,
+		}
+		handler.OnIssueJWT()
+
+		var authURL string
+		select {
+		case authURL = <-urlCh:
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for auth URL to open in browser")
+		}
+
+		jar, err := cookiejar.New(nil)
+		if err != nil {
+			t.Fatalf("cookiejar: %v", err)
+		}
+		client := &http.Client{
+			Jar: jar,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+			Timeout: 5 * time.Second,
+		}
+		resp, err := client.Get(authURL)
+		if err != nil {
+			t.Fatalf("GET auth URL: %v", err)
+		}
+		_ = resp.Body.Close()
+
+		if resp.StatusCode != http.StatusFound && resp.StatusCode != http.StatusSeeOther {
+			t.Errorf("expected redirect status, got %d", resp.StatusCode)
+		}
+		loc := resp.Header.Get("Location")
+		if loc != "http://127.0.0.1:8088/webui" {
+			t.Errorf("expected redirect to http://127.0.0.1:8088/webui, got %q", loc)
+		}
+
+		parsed, _ := url.Parse(authURL)
+		cookiesList := jar.Cookies(parsed)
+		found := false
+		for _, ck := range cookiesList {
+			if ck.Name == "orch_jwt" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("cookie orch_jwt was not found in cookie jar")
+		}
+	})
 }
