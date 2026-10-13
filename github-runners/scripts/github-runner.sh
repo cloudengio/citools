@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RUNNER_HOME=/home/admin/actions-runner
-OS=linux
+RUNNER_HOME="${HOME}/actions-runner"
+OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+case "$OS" in
+  darwin) GHA_OS="osx" ;;
+  linux)  GHA_OS="linux" ;;
+  *) echo "ERROR: unsupported OS $OS" >&2; exit 1 ;;
+esac
 
-# Map dpkg arch (amd64/arm64) to the actions runner arch suffix (x64/arm64).
-case "$(dpkg --print-architecture)" in
-  amd64) ARCH=x64 ;;
-  arm64) ARCH=arm64 ;;
-  *) echo "ERROR: unsupported architecture $(dpkg --print-architecture)" >&2; exit 1 ;;
+case "$(uname -m)" in
+  x86_64)        GHA_ARCH="x64" ;;
+  arm64|aarch64) GHA_ARCH="arm64" ;;
+  *) echo "ERROR: unsupported architecture $(uname -m)" >&2; exit 1 ;;
 esac
 
 echo "==> Fetching latest GitHub Actions runner version"
@@ -19,7 +23,7 @@ echo "    version: ${RUNNER_VERSION}"
 mkdir -p "$RUNNER_HOME"
 cd "$RUNNER_HOME"
 
-TARBALL="actions-runner-${OS}-${ARCH}-${RUNNER_VERSION}.tar.gz"
+TARBALL="actions-runner-${GHA_OS}-${GHA_ARCH}-${RUNNER_VERSION}.tar.gz"
 URL="https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${TARBALL}"
 
 echo "==> Downloading runner from ${URL}"
@@ -28,6 +32,6 @@ tar xzf "$TARBALL"
 rm "$TARBALL"
 
 echo "==> Installing runner dependencies"
-sudo ./bin/installdependencies.sh
+sudo ./bin/installdependencies.sh || true
 
 echo "==> GitHub Actions runner ${RUNNER_VERSION} installed at ${RUNNER_HOME}"

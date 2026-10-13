@@ -5,8 +5,13 @@ endif
 VM_NAME       ?= macos-ci
 MACOS_VERSION ?= tahoe
 VM_SSH_PUB_KEY ?=
+HOST          ?= mm-1:5001
+REGISTRY      ?= $(HOST)
+TAG           ?= latest
+IMAGE         ?= $(VM_NAME)
+CONCURRENCY   ?= 16
 
-.PHONY: init validate build clean
+.PHONY: init validate build push clean
 
 init:
 	packer init build.pkr.hcl
@@ -24,6 +29,10 @@ build: init
 	  -var "ssh_public_key=$(VM_SSH_PUB_KEY)" \
 	  build.pkr.hcl
 
+push:
+	tart push $(IMAGE) $(REGISTRY)/$(IMAGE):$(TAG) --insecure --concurrency $(CONCURRENCY)
+
 clean:
 	tart delete $(VM_NAME) || true
+
 

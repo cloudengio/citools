@@ -21,6 +21,12 @@ else
   # `brew install` aborts refusing to load softnet.
   brew tap cirruslabs/cli
   brew trust cirruslabs/cli
+  # Newer Homebrew versions disallow the legacy `depends_on :macos => :<version>` syntax.
+  # Remove deprecated macos version constraints from tapped formulas in cirruslabs/cli.
+  tap_dir="$(brew --prefix)/Library/Taps/cirruslabs/homebrew-cli"
+  if [ -d "$tap_dir" ]; then
+    sed -i '' '/depends_on :macos =>/d' "$tap_dir"/*.rb
+  fi
   brew install cirruslabs/cli/tart
 fi
 

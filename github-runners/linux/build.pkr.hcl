@@ -61,38 +61,38 @@ build {
   }
 
   provisioner "shell" {
-    script = "scripts/01-go.sh"
+    script = "../scripts/go.sh"
   }
 
   provisioner "shell" {
-    script = "scripts/02-github-runner.sh"
+    script = "../scripts/github-runner.sh"
   }
 
   provisioner "shell" {
-    script = "scripts/03-github-runner-service.sh"
+    script = "../scripts/github-runner-service.sh"
   }
 
   provisioner "shell" {
-    script = "scripts/04-ssh-keys.sh"
+    script = "../scripts/ssh-keys.sh"
     environment_vars = [
       "SSH_PUBLIC_KEY=${var.ssh_public_key}"
     ]
   }
 
   provisioner "shell" {
-    script = "scripts/05-mkcert.sh"
+    script = "../scripts/mkcert.sh"
   }
 
   provisioner "shell" {
-    script = "scripts/06-hosts.sh"
+    script = "../scripts/hosts.sh"
   }
 
   provisioner "shell" {
-    script = "scripts/07-chrome-for-testing.sh"
+    script = "../scripts/chrome-for-testing.sh"
   }
 
   provisioner "shell" {
-    script = "scripts/08-pebble-minica.sh"
+    script = "../scripts/pebble-minica.sh"
   }
 
   provisioner "shell" {

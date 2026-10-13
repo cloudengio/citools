@@ -6,17 +6,24 @@ set -euo pipefail
 GO_VERSIONS=(1.26 1.27)
 
 INSTALL_ROOT=/usr/local
-ARCH=arm64
-OS=darwin
+OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+case "$(uname -m)" in
+  x86_64)        ARCH="amd64" ;;
+  arm64|aarch64) ARCH="arm64" ;;
+  *) echo "ERROR: unsupported architecture $(uname -m)" >&2; exit 1 ;;
+esac
 
 export PATH="${INSTALL_ROOT}/bin:${PATH}"
+sudo mkdir -p "${INSTALL_ROOT}/bin"
 
-# Resolve the latest stable patch release for a given minor version.
-# Reads JSON from stdin (go.dev/dl/?mode=json&include=all).
+# latest_patch <minor>
+# Queries the official Go release JSON feed on stdin and prints the latest
+# stable release tag for the given minor version (e.g. "go1.26.2").
 latest_patch() {
   local minor="$1"
-  GO_MINOR="$minor" python3 -c "
-import sys, json, os
+  python3 -c "
+import json, sys, os
+
 data = json.load(sys.stdin)
 minor = os.environ['GO_MINOR']
 prefix = 'go' + minor + '.'
@@ -45,7 +52,7 @@ go_releases=$(curl -fsSL "https://go.dev/dl/?mode=json&include=all")
 declare -a installed_versions
 
 for minor in "${GO_VERSIONS[@]}"; do
-  version=$(echo "$go_releases" | latest_patch "$minor")
+  version=$(GO_MINOR="$minor" echo "$go_releases" | latest_patch "$minor")
   if [[ -z "$version" ]]; then
     echo "ERROR: could not resolve latest patch for Go ${minor}" >&2
     exit 1
@@ -66,7 +73,7 @@ for minor in "${GO_VERSIONS[@]}"; do
     echo "    installed at ${install_dir}"
   fi
 
-  # Versioned symlinks: go1.24, gofmt1.24, etc.
+  # Versioned symlinks: go1.26, gofmt1.26, etc.
   sudo ln -sf "${install_dir}/bin/go"    "${INSTALL_ROOT}/bin/go${minor}"
   sudo ln -sf "${install_dir}/bin/gofmt" "${INSTALL_ROOT}/bin/gofmt${minor}"
 
@@ -75,7 +82,7 @@ done
 
 # Make the latest minor version the default 'go' and 'gofmt'.
 latest_minor="${GO_VERSIONS[${#GO_VERSIONS[@]}-1]}"
-latest_version=$(echo "$go_releases" | latest_patch "$latest_minor")
+latest_version=$(GO_MINOR="$latest_minor" echo "$go_releases" | latest_patch "$latest_minor")
 latest_dir="${INSTALL_ROOT}/${latest_version}"
 
 sudo ln -sf "${latest_dir}/bin/go"    "${INSTALL_ROOT}/bin/go"

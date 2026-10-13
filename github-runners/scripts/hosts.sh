@@ -20,9 +20,8 @@ add_hosts_entry() {
   fi
 }
 
-# Ensure ::1 maps localhost (stock Ubuntu already does this). Guard on intent
-# rather than an exact string so we don't duplicate the base image's
-# "::1 localhost ip6-localhost ip6-loopback" line.
+# Ensure ::1 maps localhost. Guard on intent rather than an exact string so we
+# don't duplicate existing IPv6 localhost lines.
 if grep -Eq '^[[:space:]]*::1[[:space:]]+\blocalhost\b' /etc/hosts; then
   echo "==> ::1 already maps localhost in /etc/hosts"
 else
