@@ -32,6 +32,31 @@ sudo apt-get update -y
 sudo apt-get install -y --no-install-recommends \
   docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
+echo "==> Configuring containerd to only use overlayfs (disabling block device and other snapshotters)"
+sudo mkdir -p /etc/containerd
+cat << 'EOF' | sudo tee /etc/containerd/config.toml >/dev/null
+# Disable CRI, block device snapshotters (blockfile, devmapper), and other non-overlay snapshotters
+disabled_plugins = [
+  "cri",
+  "blockfile",
+  "btrfs",
+  "devmapper",
+  "erofs",
+  "native",
+  "zfs"
+]
+EOF
+
+echo "==> Configuring Docker daemon to use containerd overlayfs snapshotter"
+sudo mkdir -p /etc/docker
+cat << 'EOF' | sudo tee /etc/docker/daemon.json >/dev/null
+{
+  "features": {
+    "containerd-snapshotter": true
+  }
+}
+EOF
+
 echo "==> Enabling and starting docker and containerd at boot"
 # `enable --now` both creates the boot-time symlinks AND starts the units in this
 # build session, so we can smoke-test the daemon below. docker.socket must be
@@ -67,9 +92,9 @@ docker compose version || true
 # Smoke-test the daemon. admin's docker group membership isn't active in this
 # build session yet, so talk to the daemon via sudo. If the daemon didn't start,
 # this fails the build instead of shipping a dead-daemon image.
-echo "==> Verifying the docker daemon is up"
+echo "==> Verifying the docker daemon is up and using overlayfs"
 sudo systemctl is-active docker.service
-sudo docker info >/dev/null
+sudo docker info | grep -E "Storage Driver|driver-type"
 sudo docker run --rm hello-world
 
 echo "==> Docker installed and daemon running"

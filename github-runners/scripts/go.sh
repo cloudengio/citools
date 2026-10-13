@@ -22,10 +22,10 @@ sudo mkdir -p "${INSTALL_ROOT}/bin"
 latest_patch() {
   local minor="$1"
   python3 -c "
-import json, sys, os
+import json, sys
 
 data = json.load(sys.stdin)
-minor = os.environ['GO_MINOR']
+minor = sys.argv[1]
 prefix = 'go' + minor + '.'
 # Stable releases whose version starts with goX.Y.
 candidates = [
@@ -43,7 +43,7 @@ if not candidates:
 # Sort by numeric version components.
 candidates.sort(key=lambda v: [int(x) for x in v[2:].split('.')])
 print(candidates[-1])
-"
+" "$minor"
 }
 
 echo "==> Fetching Go release list"
@@ -52,7 +52,7 @@ go_releases=$(curl -fsSL "https://go.dev/dl/?mode=json&include=all")
 declare -a installed_versions
 
 for minor in "${GO_VERSIONS[@]}"; do
-  version=$(GO_MINOR="$minor" echo "$go_releases" | latest_patch "$minor")
+  version=$(echo "$go_releases" | latest_patch "$minor")
   if [[ -z "$version" ]]; then
     echo "ERROR: could not resolve latest patch for Go ${minor}" >&2
     exit 1
@@ -82,7 +82,7 @@ done
 
 # Make the latest minor version the default 'go' and 'gofmt'.
 latest_minor="${GO_VERSIONS[${#GO_VERSIONS[@]}-1]}"
-latest_version=$(GO_MINOR="$latest_minor" echo "$go_releases" | latest_patch "$latest_minor")
+latest_version=$(echo "$go_releases" | latest_patch "$latest_minor")
 latest_dir="${INSTALL_ROOT}/${latest_version}"
 
 sudo ln -sf "${latest_dir}/bin/go"    "${INSTALL_ROOT}/bin/go"
