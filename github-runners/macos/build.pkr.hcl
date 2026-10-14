@@ -35,19 +35,26 @@ variable "ssh_public_key" {
   default     = ""
 }
 
+variable "pull_concurrency" {
+  description = "Number of layers to pull concurrently when downloading the base image"
+  type        = number
+  default     = 4
+}
+
 # Base image from cirruslabs — minimal macOS with Homebrew and dev tools, no Xcode.
 # Command Line Tools (macOS SDK + clang) are installed by 00-clt.sh.
 # This is significantly smaller than the xcode variant (~50 GB vs ~140 GB disk).
 # See https://github.com/cirruslabs/macos-image-templates for available tags.
 source "tart-cli" "macos" {
-  vm_base_name = "ghcr.io/cirruslabs/macos-${var.macos_version}-base:latest"
-  vm_name      = var.vm_name
-  cpu_count    = var.cpu_count
-  memory_gb    = var.memory_gb
-  disk_size_gb = var.disk_size_gb
-  ssh_username = "admin"
-  ssh_password = "admin"
-  ssh_timeout  = "120s"
+  vm_base_name     = "ghcr.io/cirruslabs/macos-${var.macos_version}-base:latest"
+  vm_name          = var.vm_name
+  cpu_count        = var.cpu_count
+  memory_gb        = var.memory_gb
+  disk_size_gb     = var.disk_size_gb
+  pull_concurrency = var.pull_concurrency
+  ssh_username     = "admin"
+  ssh_password     = "admin"
+  ssh_timeout      = "120s"
 
   # Run the build VM without a graphical console (tart run --no-graphics).
   headless = true
