@@ -35,19 +35,26 @@ variable "ssh_public_key" {
   default     = ""
 }
 
+variable "pull_concurrency" {
+  description = "Number of layers to pull concurrently when downloading the base image"
+  type        = number
+  default     = 4
+}
+
 # Base image from cirruslabs — minimal macOS with Homebrew and dev tools, no Xcode.
 # Command Line Tools (macOS SDK + clang) are installed by 00-clt.sh.
 # This is significantly smaller than the xcode variant (~50 GB vs ~140 GB disk).
 # See https://github.com/cirruslabs/macos-image-templates for available tags.
 source "tart-cli" "macos" {
-  vm_base_name = "ghcr.io/cirruslabs/macos-${var.macos_version}-base:latest"
-  vm_name      = var.vm_name
-  cpu_count    = var.cpu_count
-  memory_gb    = var.memory_gb
-  disk_size_gb = var.disk_size_gb
-  ssh_username = "admin"
-  ssh_password = "admin"
-  ssh_timeout  = "120s"
+  vm_base_name     = "ghcr.io/cirruslabs/macos-${var.macos_version}-base:latest"
+  vm_name          = var.vm_name
+  cpu_count        = var.cpu_count
+  memory_gb        = var.memory_gb
+  disk_size_gb     = var.disk_size_gb
+  pull_concurrency = var.pull_concurrency
+  ssh_username     = "admin"
+  ssh_password     = "admin"
+  ssh_timeout      = "120s"
 
   # Run the build VM without a graphical console (tart run --no-graphics).
   headless = true
@@ -69,42 +76,46 @@ build {
   }
 
   provisioner "shell" {
-    script = "scripts/03-go.sh"
+    script = "../scripts/go.sh"
   }
 
   provisioner "shell" {
-    script = "scripts/04-github-runner.sh"
+    script = "../scripts/github-runner.sh"
   }
 
   provisioner "shell" {
-    script = "scripts/05-github-runner-service.sh"
+    script = "../scripts/github-runner-service.sh"
   }
 
   provisioner "shell" {
-    script = "scripts/06-ssh-keys.sh"
+    script = "../scripts/ssh-keys.sh"
     environment_vars = [
       "SSH_PUBLIC_KEY=${var.ssh_public_key}"
     ]
   }
 
   provisioner "shell" {
-    script = "scripts/07-mkcert.sh"
+    script = "../scripts/mkcert.sh"
   }
 
   provisioner "shell" {
-    script = "scripts/08-hosts.sh"
+    script = "../scripts/hosts.sh"
   }
 
   provisioner "shell" {
-    script = "scripts/09-chrome-for-testing.sh"
+    script = "../scripts/chrome-for-testing.sh"
   }
 
   provisioner "shell" {
-    script = "scripts/10-pebble-minica.sh"
+    script = "../scripts/pebble-minica.sh"
   }
 
   provisioner "shell" {
     script = "scripts/11-tart.sh"
+  }
+
+  provisioner "shell" {
+    script = "scripts/13-spotlight.sh"
   }
 
   #provisioner "shell" {

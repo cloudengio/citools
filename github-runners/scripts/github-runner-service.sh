@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RUNNER_HOME=/Users/admin/actions-runner
+RUNNER_HOME="${HOME}/actions-runner"
 
 echo "==> Installing job-started hook script"
 cat << 'EOF' > "${RUNNER_HOME}/job-started.sh"
@@ -21,7 +21,7 @@ OUTPUT_FILE="${RUNNER_DIR:-$SCRIPT_DIR}/job-started.json"
 
 if command -v python3 >/dev/null 2>&1; then
     python3 -c '
-import import json, os, sys
+import json, os, sys
 
 output_path = sys.argv[1]
 keys = [
@@ -52,8 +52,8 @@ chmod +x "${RUNNER_HOME}/job-started.sh"
 echo "==> Configuring .env with ACTIONS_RUNNER_HOOK_JOB_STARTED"
 echo "ACTIONS_RUNNER_HOOK_JOB_STARTED=${RUNNER_HOME}/job-started.sh" >> "${RUNNER_HOME}/.env"
 
-# Fix ownership — everything should belong to admin.
-chown -R admin:staff "$RUNNER_HOME"
+# Fix ownership — everything should belong to the runner user.
+sudo chown -R "$(id -un):$(id -gn)" "$RUNNER_HOME"
 
 echo "==> GitHub Actions runner code installed at ${RUNNER_HOME}"
 echo "==> Configuration and startup will be handled by the orchestrator via SSH."

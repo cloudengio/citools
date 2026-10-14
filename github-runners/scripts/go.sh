@@ -6,19 +6,26 @@ set -euo pipefail
 GO_VERSIONS=(1.26 1.27)
 
 INSTALL_ROOT=/usr/local
-ARCH=arm64
-OS=darwin
+OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+case "$(uname -m)" in
+  x86_64)        ARCH="amd64" ;;
+  arm64|aarch64) ARCH="arm64" ;;
+  *) echo "ERROR: unsupported architecture $(uname -m)" >&2; exit 1 ;;
+esac
 
 export PATH="${INSTALL_ROOT}/bin:${PATH}"
+sudo mkdir -p "${INSTALL_ROOT}/bin"
 
-# Resolve the latest stable patch release for a given minor version.
-# Reads JSON from stdin (go.dev/dl/?mode=json&include=all).
+# latest_patch <minor>
+# Queries the official Go release JSON feed on stdin and prints the latest
+# stable release tag for the given minor version (e.g. "go1.26.2").
 latest_patch() {
   local minor="$1"
-  GO_MINOR="$minor" python3 -c "
-import sys, json, os
+  python3 -c "
+import json, sys
+
 data = json.load(sys.stdin)
-minor = os.environ['GO_MINOR']
+minor = sys.argv[1]
 prefix = 'go' + minor + '.'
 # Stable releases whose version starts with goX.Y.
 candidates = [
@@ -36,7 +43,7 @@ if not candidates:
 # Sort by numeric version components.
 candidates.sort(key=lambda v: [int(x) for x in v[2:].split('.')])
 print(candidates[-1])
-"
+" "$minor"
 }
 
 echo "==> Fetching Go release list"
@@ -66,7 +73,7 @@ for minor in "${GO_VERSIONS[@]}"; do
     echo "    installed at ${install_dir}"
   fi
 
-  # Versioned symlinks: go1.24, gofmt1.24, etc.
+  # Versioned symlinks: go1.26, gofmt1.26, etc.
   sudo ln -sf "${install_dir}/bin/go"    "${INSTALL_ROOT}/bin/go${minor}"
   sudo ln -sf "${install_dir}/bin/gofmt" "${INSTALL_ROOT}/bin/gofmt${minor}"
 

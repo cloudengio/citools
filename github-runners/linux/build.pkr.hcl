@@ -35,19 +35,26 @@ variable "ssh_public_key" {
   default     = ""
 }
 
+variable "pull_concurrency" {
+  description = "Number of layers to pull concurrently when downloading the base image"
+  type        = number
+  default     = 4
+}
+
 # cirruslabs Ubuntu base image. On Apple Silicon hosts tart runs an arm64 guest;
 # the provisioning scripts detect the architecture at build time. Note that
 # Chrome for Testing has no linux/arm64 build, so 07-chrome-for-testing.sh is a
 # no-op on arm64 (see the script for details).
 source "tart-cli" "linux" {
-  vm_base_name = var.base_image
-  vm_name      = var.vm_name
-  cpu_count    = var.cpu_count
-  memory_gb    = var.memory_gb
-  disk_size_gb = var.disk_size_gb
-  ssh_username = "admin"
-  ssh_password = "admin"
-  ssh_timeout  = "120s"
+  vm_base_name     = var.base_image
+  vm_name          = var.vm_name
+  cpu_count        = var.cpu_count
+  memory_gb        = var.memory_gb
+  disk_size_gb     = var.disk_size_gb
+  pull_concurrency = var.pull_concurrency
+  ssh_username     = "admin"
+  ssh_password     = "admin"
+  ssh_timeout      = "120s"
 
   # Run the build VM without a graphical console (tart run --no-graphics).
   headless = true
@@ -61,38 +68,38 @@ build {
   }
 
   provisioner "shell" {
-    script = "scripts/01-go.sh"
+    script = "../scripts/go.sh"
   }
 
   provisioner "shell" {
-    script = "scripts/02-github-runner.sh"
+    script = "../scripts/github-runner.sh"
   }
 
   provisioner "shell" {
-    script = "scripts/03-github-runner-service.sh"
+    script = "../scripts/github-runner-service.sh"
   }
 
   provisioner "shell" {
-    script = "scripts/04-ssh-keys.sh"
+    script = "../scripts/ssh-keys.sh"
     environment_vars = [
       "SSH_PUBLIC_KEY=${var.ssh_public_key}"
     ]
   }
 
   provisioner "shell" {
-    script = "scripts/05-mkcert.sh"
+    script = "../scripts/mkcert.sh"
   }
 
   provisioner "shell" {
-    script = "scripts/06-hosts.sh"
+    script = "../scripts/hosts.sh"
   }
 
   provisioner "shell" {
-    script = "scripts/07-chrome-for-testing.sh"
+    script = "../scripts/chrome-for-testing.sh"
   }
 
   provisioner "shell" {
-    script = "scripts/08-pebble-minica.sh"
+    script = "../scripts/pebble-minica.sh"
   }
 
   provisioner "shell" {
