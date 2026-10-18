@@ -51,7 +51,7 @@ func TestSSEStreamStopsOnBaseContextCancel(t *testing.T) {
 		done <- err
 	}()
 	select {
-	case <-done:
+	case <-done: //nolint:errcheck
 		// Stream ended (EOF or connection closed) — success.
 	case <-time.After(3 * time.Second):
 		t.Fatal("SSE stream did not terminate within 3s of base-context cancel")

@@ -6,6 +6,7 @@ package webui
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -32,13 +33,30 @@ func (fakeBackend) Pools(context.Context) ([]PoolStatus, error) {
 	avail := 2
 	acq := 0
 	loc := VMLocationPool
+	cores := 4
+	mem := 8
+	disk := 70
 	return []PoolStatus{{
 		Name:      "macos",
 		Size:      2,
 		Available: &avail,
 		Acquired:  &acq,
-		Vms:       []VMStatus{{Id: "vm1", Location: &loc, State: VMStateAvailable}},
+		Vms: []VMStatus{{
+			Id:       "vm1",
+			Location: &loc,
+			State:    VMStateAvailable,
+			NumCores: &cores,
+			MemGib:   &mem,
+			DiskGib:  &disk,
+		}},
 	}}, nil
+}
+
+func (fakeBackend) RefreshPool(_ context.Context, name string) (int, error) {
+	if name != "macos" {
+		return 0, fmt.Errorf("no such pool: %s", name)
+	}
+	return 2, nil
 }
 
 func workflowWithLogs() WorkflowStatus {
@@ -282,5 +300,30 @@ func TestSSEHelloAndSnapshot(t *testing.T) {
 	frame := string(buf[:n])
 	if !strings.Contains(frame, "event: hello") {
 		t.Errorf("first SSE frame missing hello: %q", frame)
+	}
+}
+
+func TestRefreshPoolEndpoint(t *testing.T) {
+	ts := newTestServer(t)
+	resp, err := http.Post(ts.URL+BasePath+"/pools/macos/refresh", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), `"replaced":2`) {
+		t.Errorf("expected replaced:2, got %s", string(body))
+	}
+
+	resp404, err := http.Post(ts.URL+BasePath+"/pools/unknown/refresh", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp404.Body.Close() }()
+	if resp404.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", resp404.StatusCode)
 	}
 }

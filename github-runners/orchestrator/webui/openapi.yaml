@@ -67,6 +67,36 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/PoolStatus"
+  /pools/{name}/refresh:
+    post:
+      operationId: refreshPool
+      summary: Replace all currently available VMs in the pool with newly cloned ones
+      tags: [pools]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Available VMs have been removed and replacement clones requested.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefreshPoolResponse"
+        "404":
+          description: No such pool.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Failed to refresh pool.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /workflows:
     get:
       operationId: listWorkflows
@@ -284,6 +314,13 @@ components:
       properties:
         error:
           type: string
+    RefreshPoolResponse:
+      type: object
+      required: [replaced]
+      properties:
+        replaced:
+          type: integer
+          description: Number of available VMs removed and queued for replacement.
     WorkflowState:
       type: string
       description: >
@@ -436,6 +473,24 @@ components:
         last_event:
           type: string
           description: The most recent pool event kind observed for this VM.
+        num_cores:
+          type: integer
+          description: Number of CPU cores allocated to this VM.
+        mem_gib:
+          type: integer
+          description: Memory allocated to this VM in GiB.
+        disk_gib:
+          type: integer
+          description: Disk size allocated to this VM in GiB.
+        image:
+          type: string
+          description: Base image this VM was cloned from.
+        os:
+          type: string
+          description: Operating system of this VM.
+        runner_dir:
+          type: string
+          description: Runner directory on the guest.
     WorkflowStatus:
       type: object
       required: [name, state]

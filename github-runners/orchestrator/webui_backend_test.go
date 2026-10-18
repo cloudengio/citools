@@ -39,6 +39,9 @@ func TestBackendServesBeforeHandlerReady(t *testing.T) {
 	if _, _, err := b.WorkflowLog(ctx, "w", "job"); err == nil {
 		t.Error("WorkflowLog before ready should error (initializing)")
 	}
+	if _, err := b.RefreshPool(ctx, "macos"); err == nil {
+		t.Error("RefreshPool before ready should error (initializing)")
+	}
 
 	cs, err := b.ConfigSummary(ctx)
 	if err != nil || cs.ConfigFile != "/tmp/cfg.yml" {

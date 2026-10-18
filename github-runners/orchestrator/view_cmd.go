@@ -368,7 +368,7 @@ waitLoop:
 			return nil
 		case <-ctx.Done():
 			client.Close()
-			<-errCh
+			<-errCh //nolint:errcheck
 			return ctx.Err()
 		case <-ticker.C:
 			if checkForwardReady(ctx, localPort) {
@@ -381,7 +381,7 @@ waitLoop:
 	if !ready {
 		tunnelListening := isPortListening(localPort)
 		client.Close()
-		<-errCh
+		<-errCh //nolint:errcheck
 		if tunnelListening {
 			return fmt.Errorf("port forward to %s established, but web UI at %s did not respond within %v", hostPort, webURL, timeout)
 		}
@@ -402,7 +402,7 @@ waitLoop:
 	select {
 	case <-ctx.Done():
 		client.Close()
-		<-errCh
+		<-errCh //nolint:errcheck
 		return nil
 	case err := <-errCh:
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, pssh.ErrClientClosed) {

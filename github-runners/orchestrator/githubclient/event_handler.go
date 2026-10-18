@@ -123,6 +123,15 @@ func (r *WorkflowEventHandler) PoolStatus(ctx context.Context) ([]vmsclient.Pool
 	return r.vmPools.Status(ctx)
 }
 
+// RefreshPool removes all currently available VMs in the named pool and replaces
+// them with newly cloned ones. Acquired (busy) VMs are not affected.
+func (r *WorkflowEventHandler) RefreshPool(ctx context.Context, name string) (int, error) {
+	if r.vmPools == nil {
+		return 0, fmt.Errorf("no VM pools configured")
+	}
+	return r.vmPools.RefreshPool(ctx, name)
+}
+
 // CompletionQueueVMIDs returns the set of VM IDs currently in the completion queue.
 func (r *WorkflowEventHandler) CompletionQueueVMIDs() map[string]bool {
 	if r.completeQueue == nil {

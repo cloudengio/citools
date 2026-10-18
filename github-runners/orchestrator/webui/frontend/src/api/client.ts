@@ -12,6 +12,7 @@ export type WorkflowState = components['schemas']['WorkflowState']
 export type VMState = components['schemas']['VMState']
 export type ServiceStatus = components['schemas']['ServiceStatus']
 export type BuildInfo = components['schemas']['BuildInfo']
+export type RefreshPoolResponse = components['schemas']['RefreshPoolResponse']
 
 export const BASE = '/api/v1'
 
@@ -90,4 +91,24 @@ export async function uninstallService(): Promise<void> {
     }
     throw new Error(msg)
   }
+}
+
+// refreshPool requests removal of all currently available VMs in the named pool
+// and triggers replenishment with newly cloned VMs.
+export async function refreshPool(name: string): Promise<RefreshPoolResponse> {
+  const resp = await fetch(
+    `${BASE}/pools/${encodeURIComponent(name)}/refresh`,
+    { method: 'POST' },
+  )
+  if (!resp.ok) {
+    let msg = `${resp.status} ${resp.statusText}`
+    try {
+      const body = (await resp.json()) as { error?: string }
+      if (body?.error) msg = body.error
+    } catch {
+      /* no JSON body */
+    }
+    throw new Error(msg)
+  }
+  return (await resp.json()) as RefreshPoolResponse
 }

@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"sync"
+	"time"
 
 	"cloudeng.io/logging/ctxlog"
 	"cloudeng.io/sync/errgroup"
@@ -70,10 +72,12 @@ func (p *Pool) Name() string {
 // Pools is a set of named VM pools, each backed by its own Provider so that
 // pools using different VM technologies can run side by side.
 type Pools struct {
-	pools     map[string]*Pool
-	configs   map[string]PoolConfig
-	providers map[string]Provider
-	tracker   *PoolStatusTracker
+	pools        map[string]*Pool
+	configs      map[string]PoolConfig
+	providers    map[string]Provider
+	tracker      *PoolStatusTracker
+	detailsMu    sync.Mutex
+	detailsCache map[string]vmspool.VMDetail
 }
 
 func NewPools(ctx context.Context, cfg map[string]PoolConfig, createFile func(string) io.Writer) (*Pools, error) {
@@ -82,10 +86,11 @@ func NewPools(ctx context.Context, cfg map[string]PoolConfig, createFile func(st
 		return nil, err
 	}
 	p := &Pools{
-		pools:     make(map[string]*Pool),
-		configs:   cfg,
-		providers: providers,
-		tracker:   newPoolStatusTracker(),
+		pools:        make(map[string]*Pool),
+		configs:      cfg,
+		providers:    providers,
+		tracker:      newPoolStatusTracker(),
+		detailsCache: make(map[string]vmspool.VMDetail),
 	}
 	var g errgroup.T
 	for name, poolCfg := range cfg {
@@ -144,4 +149,43 @@ func (p *Pools) Close(ctx context.Context) error {
 		})
 	}
 	return g.Wait()
+}
+
+// RefreshPool removes all currently available VMs in the named pool and replaces
+// them with newly cloned ones. Acquired (busy) VMs are not affected.
+func (p *Pools) RefreshPool(ctx context.Context, name string) (int, error) {
+	vmp, ok := p.pools[name]
+	if !ok {
+		return 0, fmt.Errorf("vm_pool %s: no such pool", name)
+	}
+	stats := vmp.Stats()
+	if stats.Available == 0 {
+		return 0, nil
+	}
+	var acquired []*vmspool.VM
+	for i := 0; i < stats.Available; i++ {
+		acqCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+		vm, err := vmp.Acquire(acqCtx)
+		cancel()
+		if err != nil {
+			break
+		}
+		acquired = append(acquired, vm)
+	}
+	if len(acquired) == 0 {
+		return 0, nil
+	}
+	go func(toDelete []*vmspool.VM) {
+		var wg sync.WaitGroup
+		for _, vm := range toDelete {
+			v := vm
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_ = v.Delete(context.Background())
+			}()
+		}
+		wg.Wait()
+	}(acquired)
+	return len(acquired), nil
 }

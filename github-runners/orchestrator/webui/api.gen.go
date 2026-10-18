@@ -246,6 +246,12 @@ type PoolStatus struct {
 	Vms  []VMStatus `json:"vms"`
 }
 
+// RefreshPoolResponse defines model for RefreshPoolResponse.
+type RefreshPoolResponse struct {
+	// Replaced Number of available VMs removed and queued for replacement.
+	Replaced int `json:"replaced"`
+}
+
 // RepositorySummary defines model for RepositorySummary.
 type RepositorySummary struct {
 	Owner   *string          `json:"owner,omitempty"`
@@ -281,15 +287,33 @@ type VMState string
 // VMStatus defines model for VMStatus.
 type VMStatus struct {
 	CreatedAt *time.Time `json:"created_at,omitempty"`
-	Id        string     `json:"id"`
+
+	// DiskGib Disk size allocated to this VM in GiB.
+	DiskGib *int   `json:"disk_gib,omitempty"`
+	Id      string `json:"id"`
+
+	// Image Base image this VM was cloned from.
+	Image *string `json:"image,omitempty"`
 
 	// LastEvent The most recent pool event kind observed for this VM.
 	LastEvent *string `json:"last_event,omitempty"`
 
 	// Location Location of a VM (in the pool or in the completion queue).
 	Location *VMLocation `json:"location,omitempty"`
-	Name     *string     `json:"name,omitempty"`
-	Pool     *string     `json:"pool,omitempty"`
+
+	// MemGib Memory allocated to this VM in GiB.
+	MemGib *int    `json:"mem_gib,omitempty"`
+	Name   *string `json:"name,omitempty"`
+
+	// NumCores Number of CPU cores allocated to this VM.
+	NumCores *int `json:"num_cores,omitempty"`
+
+	// Os Operating system of this VM.
+	Os   *string `json:"os,omitempty"`
+	Pool *string `json:"pool,omitempty"`
+
+	// RunnerDir Runner directory on the guest.
+	RunnerDir *string `json:"runner_dir,omitempty"`
 
 	// State State of a VM as reported by the pool.
 	State     VMState    `json:"state"`
@@ -372,6 +396,9 @@ type ServerInterface interface {
 	// ListPools List VM pools and the VMs within each pool
 	// (GET /pools)
 	ListPools(w http.ResponseWriter, r *http.Request)
+	// RefreshPool Replace all currently available VMs in the pool with newly cloned ones
+	// (POST /pools/{name}/refresh)
+	RefreshPool(w http.ResponseWriter, r *http.Request, name string)
 	// GetServiceStatus Status of the launchd login service
 	// (GET /service)
 	GetServiceStatus(w http.ResponseWriter, r *http.Request)
@@ -468,6 +495,32 @@ func (siw *ServerInterfaceWrapper) ListPools(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListPools(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RefreshPool operation middleware
+func (siw *ServerInterfaceWrapper) RefreshPool(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RefreshPool(w, r, name)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -818,6 +871,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/buildinfo", wrapper.GetBuildInfo)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/config/file", wrapper.DownloadConfigFile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/pools", wrapper.ListPools)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/pools/{name}/refresh", wrapper.RefreshPool)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/workflows", wrapper.ListWorkflows)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/workflows/{name}", wrapper.GetWorkflow)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/workflows/{name}/cancel", wrapper.CancelWorkflow)
@@ -981,6 +1035,56 @@ func (response ListPools200JSONResponse) VisitListPoolsResponse(w http.ResponseW
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RefreshPoolRequestObject struct {
+	Name string `json:"name"`
+}
+
+type RefreshPoolResponseObject interface {
+	VisitRefreshPoolResponse(w http.ResponseWriter) error
+}
+
+type RefreshPool200JSONResponse RefreshPoolResponse
+
+func (response RefreshPool200JSONResponse) VisitRefreshPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RefreshPool404JSONResponse Error
+
+func (response RefreshPool404JSONResponse) VisitRefreshPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RefreshPool500JSONResponse Error
+
+func (response RefreshPool500JSONResponse) VisitRefreshPoolResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -1263,6 +1367,9 @@ type StrictServerInterface interface {
 	// ListPools List VM pools and the VMs within each pool
 	// (GET /pools)
 	ListPools(ctx context.Context, request ListPoolsRequestObject) (ListPoolsResponseObject, error)
+	// RefreshPool Replace all currently available VMs in the pool with newly cloned ones
+	// (POST /pools/{name}/refresh)
+	RefreshPool(ctx context.Context, request RefreshPoolRequestObject) (RefreshPoolResponseObject, error)
 	// GetServiceStatus Status of the launchd login service
 	// (GET /service)
 	GetServiceStatus(ctx context.Context, request GetServiceStatusRequestObject) (GetServiceStatusResponseObject, error)
@@ -1441,6 +1548,32 @@ func (sh *strictHandler) ListPools(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ListPoolsResponseObject); ok {
 		if err := validResponse.VisitListPoolsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RefreshPool operation middleware
+func (sh *strictHandler) RefreshPool(w http.ResponseWriter, r *http.Request, name string) {
+	var request RefreshPoolRequestObject
+
+	request.Name = name
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RefreshPool(ctx, request.(RefreshPoolRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RefreshPool")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RefreshPoolResponseObject); ok {
+		if err := validResponse.VisitRefreshPoolResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -1657,55 +1790,59 @@ func (sh *strictHandler) DownloadWorkflowLog(w http.ResponseWriter, r *http.Requ
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,
