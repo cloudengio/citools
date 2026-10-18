@@ -72,6 +72,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/pools/{name}/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Replace all currently available VMs in the pool with newly cloned ones */
+        post: operations["refreshPool"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workflows": {
         parameters: {
             query?: never;
@@ -243,6 +260,10 @@ export interface components {
         Error: {
             error: string;
         };
+        RefreshPoolResponse: {
+            /** @description Number of available VMs removed and queued for replacement. */
+            replaced: number;
+        };
         /**
          * @description Lifecycle state of a workflow job within the orchestrator. `vm_completed` means the job finished on the local VM but GitHub has not yet delivered the completion webhook; `completed` means GitHub acknowledged completion.
          * @enum {string}
@@ -319,6 +340,18 @@ export interface components {
             updated_at?: string;
             /** @description The most recent pool event kind observed for this VM. */
             last_event?: string;
+            /** @description Number of CPU cores allocated to this VM. */
+            num_cores?: number;
+            /** @description Memory allocated to this VM in GiB. */
+            mem_gib?: number;
+            /** @description Disk size allocated to this VM in GiB. */
+            disk_gib?: number;
+            /** @description Base image this VM was cloned from. */
+            image?: string;
+            /** @description Operating system of this VM. */
+            os?: string;
+            /** @description Runner directory on the guest. */
+            runner_dir?: string;
         };
         WorkflowStatus: {
             /** @description The runner instance name assigned by the orchestrator. */
@@ -491,6 +524,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PoolStatus"][];
+                };
+            };
+        };
+    };
+    refreshPool: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Available VMs have been removed and replacement clones requested. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RefreshPoolResponse"];
+                };
+            };
+            /** @description No such pool. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Failed to refresh pool. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
         };

@@ -27,7 +27,7 @@ type PoolSnapshot struct {
 	Available int
 	Acquired  int
 	Pending   int
-	VMs       []vmspool.VMInfo
+	VMs       []vmspool.VMDetail
 	Counters  map[string]int
 	Updated   time.Time
 }
@@ -88,15 +88,57 @@ func (p *Pools) Status(ctx context.Context) ([]PoolSnapshot, error) {
 	out := make([]PoolSnapshot, 0, len(p.providers))
 	var errs errors.M
 	for name, prov := range p.providers {
-		vms, err := prov.List(ctx)
+		infos, err := prov.List(ctx)
 		errs.Append(err)
-		sort.Slice(vms, func(i, j int) bool { return vms[i].Name < vms[j].Name })
+		sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
+
+		poolCfg := p.configs[name]
+		vms := make([]vmspool.VMDetail, len(infos))
+
+		p.detailsMu.Lock()
+		for i, info := range infos {
+			detail, ok := p.detailsCache[info.Name]
+			if !ok {
+				var getErr error
+				detail, getErr = prov.Get(ctx, info.Name)
+				if getErr != nil {
+					detail = vmspool.VMDetail{VMInfo: info}
+				}
+				// If provider returned 0 for resources, fall back to spec.
+				if poolCfg.Tart != nil {
+					if detail.NumCores == 0 && poolCfg.Tart.NumCPU > 0 {
+						detail.NumCores = poolCfg.Tart.NumCPU
+					}
+					if detail.MemGiB == 0 && poolCfg.Tart.Mem > 0 {
+						detail.MemGiB = int(poolCfg.Tart.Mem / (1024 * 1024 * 1024))
+					}
+					if detail.DiskGiB == 0 && poolCfg.Tart.Disk > 0 {
+						detail.DiskGiB = int(poolCfg.Tart.Disk / (1024 * 1024 * 1024))
+					}
+				} else if poolCfg.Mock != nil {
+					if detail.NumCores == 0 {
+						detail.NumCores = 2
+					}
+					if detail.MemGiB == 0 {
+						detail.MemGiB = 4
+					}
+					if detail.DiskGiB == 0 {
+						detail.DiskGiB = 20
+					}
+				}
+				p.detailsCache[info.Name] = detail
+			}
+			detail.VMInfo = info
+			vms[i] = detail
+		}
+		p.detailsMu.Unlock()
+
 		counters, updated := p.tracker.countersFor(name)
 		var stats vmspool.Stats
 		if pool := p.pools[name]; pool != nil {
 			stats = pool.Stats()
 		}
-		size := p.configs[name].Size
+		size := poolCfg.Size
 		if size == 0 && stats.Size > 0 {
 			size = stats.Size
 		}

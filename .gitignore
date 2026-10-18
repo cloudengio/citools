@@ -26,3 +26,7 @@ go.work
 go.work.sum
 astest/astest
 chrome-for-testing/chrome-for-testing
+.agents/
+GEMINI.md
+CLAUDE.md
+.mcp.json

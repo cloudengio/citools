@@ -170,6 +170,14 @@ func (b *webuiBackend) Pools(ctx context.Context) ([]webui.PoolStatus, error) {
 	cqVMs := wh.CompletionQueueVMIDs()
 	out := make([]webui.PoolStatus, 0, len(snaps))
 	for _, p := range snaps {
+		poolCfg := b.cfg.VMPools[p.Name]
+		osName := ""
+		if poolCfg.Tart != nil {
+			osName = poolCfg.Tart.OS
+		} else if poolCfg.Mock != nil {
+			osName = "mock"
+		}
+		runnerDir := poolCfg.RunnerDir()
 		ps := webui.PoolStatus{
 			Name:      p.Name,
 			Kind:      strPtr(p.Kind),
@@ -186,19 +194,40 @@ func (b *webuiBackend) Pools(ctx context.Context) ([]webui.PoolStatus, error) {
 			if inCQ {
 				loc = webui.VMLocationCompletionQueue
 			}
-			ps.Vms = append(ps.Vms, webui.VMStatus{
+			vmsItem := webui.VMStatus{
 				Id:        vm.Name,
 				Name:      strPtr(vm.Name),
 				Pool:      strPtr(p.Name),
 				Location:  &loc,
-				State:     mapVMState(vm, acquired[vm.Name], inCQ),
+				State:     mapVMState(vm.VMInfo, acquired[vm.Name], inCQ),
 				UpdatedAt: timePtr(vm.Accessed),
 				LastEvent: strPtr(vm.State),
-			})
+				Image:     strPtr(p.Image),
+				Os:        strPtr(osName),
+				RunnerDir: strPtr(runnerDir),
+			}
+			if vm.NumCores > 0 {
+				vmsItem.NumCores = new(vm.NumCores)
+			}
+			if vm.MemGiB > 0 {
+				vmsItem.MemGib = new(vm.MemGiB)
+			}
+			if vm.DiskGiB > 0 {
+				vmsItem.DiskGib = new(vm.DiskGiB)
+			}
+			ps.Vms = append(ps.Vms, vmsItem)
 		}
 		out = append(out, ps)
 	}
 	return out, nil
+}
+
+func (b *webuiBackend) RefreshPool(ctx context.Context, name string) (int, error) {
+	wh := b.handler()
+	if wh == nil {
+		return 0, fmt.Errorf("orchestrator is still initializing")
+	}
+	return wh.RefreshPool(ctx, name)
 }
 
 // acquiredVMIDs returns the set of VM ids that are currently backing a live

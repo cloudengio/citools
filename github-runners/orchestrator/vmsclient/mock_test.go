@@ -246,3 +246,60 @@ func TestMockPoolDeleteReportsNothing(t *testing.T) {
 		t.Errorf("a mock pool reported deleting %v", strings.Join(deleted, ", "))
 	}
 }
+
+func TestRefreshPool(t *testing.T) {
+	ctx := context.Background()
+	cfg := map[string]PoolConfig{
+		"pool1": mockPool(2, MockConfig{Image: "test-img", RunnerDir: "/runner"}),
+	}
+	pc := cfg["pool1"]
+	pc.StagingBehaviour = vmspool.StagingBehaviourRunning
+	pc.CreateBackoff.InitialDelay = time.Millisecond
+	pc.CreateBackoff.Steps = 5
+	cfg["pool1"] = pc
+
+	pools, err := NewPools(ctx, cfg, discard)
+	if err != nil {
+		t.Fatalf("NewPools: %v", err)
+	}
+	defer pools.Close(ctx)
+
+	// Wait for pool to have 2 available VMs.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		status, err := pools.Status(ctx)
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		if len(status) > 0 && status[0].Available == 2 && len(status[0].VMs) == 2 {
+			for _, vm := range status[0].VMs {
+				if vm.NumCores != 2 {
+					t.Errorf("NumCores: got %d, want 2", vm.NumCores)
+				}
+				if vm.MemGiB != 4 {
+					t.Errorf("MemGiB: got %d, want 4", vm.MemGiB)
+				}
+				if vm.DiskGiB != 20 {
+					t.Errorf("DiskGiB: got %d, want 20", vm.DiskGiB)
+				}
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for pool to reach available=2")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	replaced, err := pools.RefreshPool(ctx, "pool1")
+	if err != nil {
+		t.Fatalf("RefreshPool: %v", err)
+	}
+	if replaced != 2 {
+		t.Fatalf("RefreshPool: replaced = %d, want 2", replaced)
+	}
+
+	if _, err := pools.RefreshPool(ctx, "nonexistent"); err == nil {
+		t.Error("RefreshPool on nonexistent pool should error")
+	}
+}

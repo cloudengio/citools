@@ -36,6 +36,9 @@ type Backend interface {
 	ConfigFile(ctx context.Context) (path string, content []byte, err error)
 	// Pools returns the current state of every configured VM pool.
 	Pools(ctx context.Context) ([]PoolStatus, error)
+	// RefreshPool removes all currently available VMs in the named pool and
+	// replaces them with newly cloned ones.
+	RefreshPool(ctx context.Context, name string) (int, error)
 	// Workflows returns every running and recently-completed workflow job, with
 	// each job's log artifacts populated.
 	Workflows(ctx context.Context) ([]WorkflowStatus, error)
@@ -129,6 +132,17 @@ func (s *Server) ListPools(ctx context.Context, _ ListPoolsRequestObject) (ListP
 		return nil, err
 	}
 	return ListPools200JSONResponse(pools), nil
+}
+
+func (s *Server) RefreshPool(ctx context.Context, request RefreshPoolRequestObject) (RefreshPoolResponseObject, error) {
+	replaced, err := s.backend.RefreshPool(ctx, request.Name)
+	if err != nil {
+		if strings.Contains(err.Error(), "no such pool") {
+			return RefreshPool404JSONResponse{Error: err.Error()}, nil
+		}
+		return RefreshPool500JSONResponse{Error: err.Error()}, nil
+	}
+	return RefreshPool200JSONResponse{Replaced: replaced}, nil
 }
 
 func (s *Server) ListWorkflows(ctx context.Context, request ListWorkflowsRequestObject) (ListWorkflowsResponseObject, error) {

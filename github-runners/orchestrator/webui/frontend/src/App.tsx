@@ -55,7 +55,7 @@ export default function App() {
       </header>
       {error && <div className="error">{error}</div>}
       <main>
-        <PoolsView pools={pools} />
+        <PoolsView pools={pools} onRefresh={refresh} />
         <WorkflowsView workflows={workflows} />
         <ConfigView config={config} buildInfo={buildInfo} />
       </main>
