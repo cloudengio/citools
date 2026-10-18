@@ -262,7 +262,7 @@ func TestRefreshPool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPools: %v", err)
 	}
-	defer pools.Close(ctx)
+	defer pools.Close(ctx) //nolint:errcheck
 
 	// Wait for pool to have 2 available VMs.
 	deadline := time.Now().Add(5 * time.Second)
