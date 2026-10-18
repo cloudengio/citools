@@ -22,10 +22,9 @@ import (
 
 const waitTimeout = 2 * time.Second
 
-// fakeRelay is a minimal stand-in for a webhooks.Relay polling endpoint. Each
-// GET performs a "hanging read": it blocks until a delivery is queued (or the
-// request is cancelled) and then writes the payload with the forwarded
-// X-GitHub-Event header, mirroring the real relay.
+// fakeRelay is a minimal stand-in for a webhooks.Relay streaming endpoint. It
+// expects stream=1 and streams JSON-encoded deliveries with forwarded headers
+// and payloads, mirroring the real relay streaming protocol.
 type fakeRelay struct {
 	server     *httptest.Server
 	deliveries chan relayDelivery
@@ -56,29 +55,61 @@ func newFakeRelay(t *testing.T) *fakeRelay {
 
 func (f *fakeRelay) serve(w http.ResponseWriter, r *http.Request) {
 	f.requests.Add(1)
-	select {
-	case d := <-f.deliveries:
-		if d.status != 0 {
-			w.WriteHeader(d.status)
+	if r.URL.Query().Get("stream") != "1" {
+		http.Error(w, "stream=1 required", http.StatusBadRequest)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "flusher not supported", http.StatusInternalServerError)
+		return
+	}
+	enc := json.NewEncoder(w)
+	first := true
+	for {
+		select {
+		case d := <-f.deliveries:
+			if d.status != 0 {
+				w.WriteHeader(d.status)
+				return
+			}
+			if len(d.body) == 0 {
+				if first {
+					w.WriteHeader(http.StatusOK)
+				}
+				return
+			}
+			if first {
+				w.Header().Set("Content-Type", "application/json")
+				first = false
+			}
+			h := http.Header{}
+			if d.eventType != "" {
+				h.Set("X-GitHub-Event", d.eventType)
+			}
+			type streamDelivery struct {
+				Headers http.Header     `json:"headers"`
+				Payload json.RawMessage `json:"payload"`
+			}
+			if err := enc.Encode(streamDelivery{Headers: h, Payload: d.body}); err != nil {
+				return
+			}
+			flusher.Flush()
+		case <-r.Context().Done():
+			return
+		case <-f.done:
 			return
 		}
-		if d.eventType != "" {
-			w.Header().Set("X-GitHub-Event", d.eventType)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(d.body)
-	case <-r.Context().Done():
-	case <-f.done:
 	}
 }
 
-// deliver queues a delivery for the next hanging read. An empty body simulates
+// deliver queues a delivery for the stream. An empty body simulates
 // the relay closing the connection without an event (a clean shutdown).
 func (f *fakeRelay) deliver(eventType string, body []byte) {
 	f.deliveries <- relayDelivery{eventType: eventType, body: body}
 }
 
-// deliverStatus queues an error response for the next hanging read.
+// deliverStatus queues an error response for the stream.
 func (f *fakeRelay) deliverStatus(status int) {
 	f.deliveries <- relayDelivery{status: status}
 }
