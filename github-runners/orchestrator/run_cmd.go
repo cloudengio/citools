@@ -395,31 +395,13 @@ func formatWebURL(listenAddr string) string {
 	return "http://" + listenAddr
 }
 
+// isCleanShutdown reports whether err is a clean shutdown for this command,
+// ie. a cancellation or interrupt as per cmdutil.IsCleanShutdown. Every error
+// must be clean, since githubwebhook.Listen aggregates ctx.Err() with whatever
+// its webhook handlers returned and a run that was both interrupted and
+// genuinely broken must still report the failure.
 func isCleanShutdown(err error) bool {
-	if err == nil {
-		return true
-	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, cmdutil.ErrInterrupt) {
-		type multiUnwrap interface {
-			Unwrap() []error
-		}
-		if u, ok := err.(multiUnwrap); ok {
-			for _, e := range u.Unwrap() {
-				if !isCleanShutdown(e) {
-					return false
-				}
-			}
-			return true
-		}
-		type singleUnwrap interface {
-			Unwrap() error
-		}
-		if u, ok := err.(singleUnwrap); ok {
-			return isCleanShutdown(u.Unwrap())
-		}
-		return true
-	}
-	return false
+	return cmdutil.IsCleanShutdown(err, false)
 }
 
 type RunJobFlags struct {
