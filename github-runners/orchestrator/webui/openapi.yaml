@@ -423,6 +423,8 @@ components:
       properties:
         relay_url:
           type: string
+        streaming:
+          type: boolean
     PoolStatus:
       type: object
       required: [name, size, vms]

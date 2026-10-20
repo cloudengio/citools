@@ -287,6 +287,13 @@ func (r *WorkflowEventHandler) Close(ctx context.Context) error
 
 
 ```go
+func (r *WorkflowEventHandler) CompletionQueueVMIDs() map[string]bool
+```
+CompletionQueueVMIDs returns the set of VM IDs currently in the completion
+queue.
+
+
+```go
 func (r *WorkflowEventHandler) DrainCompletionQueue(ctx context.Context, waitForInput bool)
 ```
 
@@ -303,6 +310,13 @@ PoolStatus returns a snapshot of every configured VM pool and its VMs.
 
 
 ```go
+func (r *WorkflowEventHandler) RefreshPool(ctx context.Context, name string) (int, error)
+```
+RefreshPool removes all currently available VMs in the named pool and
+replaces them with newly cloned ones. Acquired (busy) VMs are not affected.
+
+
+```go
 func (r *WorkflowEventHandler) RunJob(ctx context.Context, owner, repo string, labels []string, waitForUserInput bool) error
 ```
 
@@ -310,10 +324,10 @@ func (r *WorkflowEventHandler) RunJob(ctx context.Context, owner, repo string, l
 ```go
 func (r *WorkflowEventHandler) Subscribe(ctx context.Context) (<-chan struct{}, func())
 ```
-Subscribe returns a coalescing change signal that fires when either pool
-or workflow state changes, plus a cancel function that must be called to
-release both underlying subscriptions. The subscriptions are also released
-when ctx is cancelled.
+Subscribe returns a coalescing change signal that fires when either pool,
+workflow, or completion queue state changes, plus a cancel function that
+must be called to release all underlying subscriptions. The subscriptions
+are also released when ctx is cancelled.
 
 
 ```go

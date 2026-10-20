@@ -109,6 +109,13 @@ func (q *CompletionQueue[T]) Close(ctx context.Context) error
 
 
 ```go
+func (q *CompletionQueue[T]) ContainsVM(vmID string) bool
+```
+ContainsVM returns true if the specified VM ID is currently in the
+completion queue.
+
+
+```go
 func (q *CompletionQueue[T]) Failure() <-chan CompletionEvent[T]
 ```
 
@@ -124,8 +131,28 @@ func (q *CompletionQueue[T]) PushSuccess(event CompletionEvent[T])
 
 
 ```go
+func (q *CompletionQueue[T]) Remove(vmID string)
+```
+Remove unregisters the specified VM ID from the completion queue's tracking.
+
+
+```go
+func (q *CompletionQueue[T]) Subscribe(ctx context.Context) (<-chan struct{}, func())
+```
+Subscribe returns a change channel and cancel function for observing
+completion queue state changes.
+
+
+```go
 func (q *CompletionQueue[T]) Success() <-chan CompletionEvent[T]
 ```
+
+
+```go
+func (q *CompletionQueue[T]) VMIDs() map[string]bool
+```
+VMIDs returns a copy of the set of VM IDs currently tracked in the
+completion queue.
 
 
 
@@ -205,13 +232,16 @@ that its required settings are present.
 ### Type PoolSnapshot
 ```go
 type PoolSnapshot struct {
-	Name     string
-	Kind     string
-	Image    string
-	Size     int
-	VMs      []vmspool.VMInfo
-	Counters map[string]int
-	Updated  time.Time
+	Name      string
+	Kind      string
+	Image     string
+	Size      int
+	Available int
+	Acquired  int
+	Pending   int
+	VMs       []vmspool.VMDetail
+	Counters  map[string]int
+	Updated   time.Time
 }
 ```
 PoolSnapshot is a point-in-time view of a single pool: its backend, the VMs
@@ -263,6 +293,13 @@ func (p *Pools) Close(ctx context.Context) error
 ```go
 func (p *Pools) ClosePool(ctx context.Context, name string) error
 ```
+
+
+```go
+func (p *Pools) RefreshPool(ctx context.Context, name string) (int, error)
+```
+RefreshPool removes all currently available VMs in the named pool and
+replaces them with newly cloned ones. Acquired (busy) VMs are not affected.
 
 
 ```go

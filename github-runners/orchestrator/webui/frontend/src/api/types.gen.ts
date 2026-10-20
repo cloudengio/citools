@@ -312,6 +312,7 @@ export interface components {
         };
         WebhookSummary: {
             relay_url?: string;
+            streaming?: boolean;
         };
         PoolStatus: {
             name: string;

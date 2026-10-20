@@ -7,7 +7,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,6 +68,11 @@ func TestLogDirOrDefault(t *testing.T) {
 	}
 }
 
+// TestIsCleanShutdown covers this command's delegation to
+// cmdutil.IsCleanShutdown rather than the predicate itself, which cmdutil
+// tests: that the default sentinels apply and, above all, that every error is
+// required to be clean, so that a run which was interrupted and also failed is
+// still reported as a failure.
 func TestIsCleanShutdown(t *testing.T) {
 	if !isCleanShutdown(nil) {
 		t.Errorf("isCleanShutdown(nil) = false, want true")
@@ -82,17 +86,6 @@ func TestIsCleanShutdown(t *testing.T) {
 		t.Errorf("isCleanShutdown(cmdutil.ErrInterrupt) = false, want true")
 	}
 
-	wrapped := fmt.Errorf("wrapped: %w", context.Canceled)
-	if !isCleanShutdown(wrapped) {
-		t.Errorf("isCleanShutdown(wrapped context.Canceled) = false, want true")
-	}
-
-	var m cerrors.M
-	m.Append(context.Canceled)
-	if !isCleanShutdown(m.Err()) {
-		t.Errorf("isCleanShutdown(errors.M with context.Canceled) = false, want true")
-	}
-
 	realErr := errors.New("something crashed")
 	if isCleanShutdown(realErr) {
 		t.Errorf("isCleanShutdown(realErr) = true, want false")
@@ -102,7 +95,6 @@ func TestIsCleanShutdown(t *testing.T) {
 	mixed.Append(realErr)
 	mixed.Append(context.Canceled)
 	if isCleanShutdown(mixed.Err()) {
-		t.Errorf("isCleanShutdown(mixed) = true, want false")
+		t.Errorf("isCleanShutdown(a failure alongside a cancellation) = true, want false")
 	}
 }
-

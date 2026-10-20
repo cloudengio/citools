@@ -316,6 +316,7 @@ func ConfigFromContext(ctx context.Context) (Config, bool) {
 type WebhookConfig struct {
 	RelayURL    string               `yaml:"relay_url" doc:"the URL to which GitHub will send webhook events"`
 	RateControl crawlcmd.RateControl `yaml:"rate_control" doc:"rate control settings for the webhook relay service"`
+	Streaming   bool                 `yaml:"streaming" doc:"use the streaming webhook API instead of polling"`
 }
 
 func (wc WebhookConfig) Options() ([]operations.Option, error) {
