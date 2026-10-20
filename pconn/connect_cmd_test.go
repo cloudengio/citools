@@ -87,7 +87,7 @@ func newTestKey(t *testing.T) (ed25519.PrivateKey, ssh.Signer) {
 func serveTestAgent(t *testing.T, key ed25519.PrivateKey) {
 	t.Helper()
 	keyring := agent.NewKeyring()
-	if err := keyring.Add(agent.AddedKey{PrivateKey: key}); err != nil {
+	if err := keyring.Add(agent.AddedKey{PrivateKey: key, Comment: "test-key"}); err != nil {
 		t.Fatal(err)
 	}
 	dir, err := os.MkdirTemp("", "sshpcon")
@@ -281,10 +281,12 @@ func TestConnectCommandIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	logPath := filepath.Join(tmpDir, "pconn.log")
 	cfgContent := fmt.Sprintf(`
 logging:
-  level: 1
+  level: 2
   format: text
+  file: %s
 connections:
   - name: test-conn
     host: %s
@@ -294,7 +296,7 @@ connections:
     forwards:
       - local_port: %d
         remote_port: %d
-`, srv.addr(), user, knownHostsPath, localForwardPort, remoteEchoPort)
+`, logPath, srv.addr(), user, knownHostsPath, localForwardPort, remoteEchoPort)
 
 	cfgPath := filepath.Join(tmpDir, "sshpcon.yaml")
 	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0600); err != nil {
@@ -332,6 +334,14 @@ connections:
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for dispatch to complete after cancel")
+	}
+
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("failed to read log file: %v", err)
+	}
+	if !strings.Contains(string(logBytes), "key=test-key") {
+		t.Errorf("expected log output to contain key=test-key, got:\n%s", string(logBytes))
 	}
 }
 
