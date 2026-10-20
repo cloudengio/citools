@@ -242,7 +242,7 @@ func (r RunCommand) runWithUIMode(ctx context.Context, fv *RunFlags, mode ui.Mod
 		backend.SetHandler(ctx, wh)
 	}
 
-	h := githubwebhook.New(cfg.Webhook.RelayURL, wh.HandleWebhooks)
+	h := githubwebhook.New(cfg.Webhook.RelayURL, wh.HandleWebhooks, githubwebhook.WithStreaming(cfg.Webhook.Streaming))
 
 	u := ui.New(mode)
 	if fv.NoMenuBar || !u.IsAvailable() {

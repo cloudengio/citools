@@ -63,6 +63,7 @@ export function ConfigView({
             <div><span className="muted">success retention</span><div className="mono">{g.successful_vm_retention_period ?? '—'}</div></div>
             <div><span className="muted">failed retention</span><div className="mono">{g.failed_vm_retention_period ?? '—'}</div></div>
             <div><span className="muted">webhook relay</span><div className="mono">{config.webhook?.relay_url ?? '—'}</div></div>
+            <div><span className="muted">webhook streaming</span><div className="mono">{config.webhook?.streaming ? 'enabled' : 'disabled'}</div></div>
           </div>
 
           <h4>Repositories</h4>

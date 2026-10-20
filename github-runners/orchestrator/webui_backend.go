@@ -96,6 +96,10 @@ func timePtr(t time.Time) *time.Time {
 	return &t
 }
 
+func boolPtr(b bool) *bool {
+	return &b
+}
+
 func (b *webuiBackend) Subscribe(ctx context.Context) (<-chan struct{}, func()) {
 	sub := b.changes.Subscribe(ctx, 1)
 	return sub.C(), func() { b.changes.Unsubscribe(sub) }
@@ -122,7 +126,10 @@ func (b *webuiBackend) ConfigSummary(_ context.Context) (webui.ConfigSummary, er
 			FailedVmRetentionPeriod:     strPtr(g.FailedVMRetentionPeriod.String()),
 			SuccessfulVmRetentionPeriod: strPtr(g.SuccessfulVMRetentionPeriod.String()),
 		},
-		Webhook: webui.WebhookSummary{RelayUrl: strPtr(b.cfg.Webhook.RelayURL)},
+		Webhook: webui.WebhookSummary{
+			RelayUrl:  strPtr(b.cfg.Webhook.RelayURL),
+			Streaming: boolPtr(b.cfg.Webhook.Streaming),
+		},
 	}
 	for _, repo := range b.cfg.Repositories {
 		rs := webui.RepositorySummary{

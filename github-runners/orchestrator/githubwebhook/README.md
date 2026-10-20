@@ -25,7 +25,7 @@ type Listener struct {
 ### Functions
 
 ```go
-func New(relayURL string, handler Handler) *Listener
+func New(relayURL string, handler Handler, opts ...Option) *Listener
 ```
 
 
@@ -42,16 +42,33 @@ It can be used to wait for the listener to stop.
 ```go
 func (l *Listener) Listen(ctx context.Context, opts []operations.Option) error
 ```
-Listen starts listening for workflow_job events from the relay using the
-streaming webhook API. It will block until the context is cancelled,
-the listener is stopped, or the relay closes cleanly. For each workflow_job
-event received, the handler function is called in a separate goroutine.
+Listen starts listening for workflow_job events from the relay. It will
+block until the context is cancelled, the listener is stopped, or the relay
+closes cleanly. For each workflow_job event received, the handler function
+is called in a separate goroutine.
 
 
 ```go
 func (l *Listener) Stop()
 ```
 Stop stops the listener. It is safe to call Stop multiple times.
+
+
+
+
+### Type Option
+```go
+type Option func(*Listener)
+```
+Option configures a Listener.
+
+### Functions
+
+```go
+func WithStreaming(streaming bool) Option
+```
+WithStreaming configures whether the listener uses the streaming webhook API
+(stream=1) instead of polling hanging GET requests.
 
 
 

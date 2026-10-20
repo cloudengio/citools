@@ -22,9 +22,9 @@ import (
 
 const waitTimeout = 2 * time.Second
 
-// fakeRelay is a minimal stand-in for a webhooks.Relay streaming endpoint. It
-// expects stream=1 and streams JSON-encoded deliveries with forwarded headers
-// and payloads, mirroring the real relay streaming protocol.
+// fakeRelay is a minimal stand-in for a webhooks.Relay endpoint. It supports
+// both the streaming protocol (when stream=1 is requested) and the long-polling
+// protocol (when stream=1 is omitted).
 type fakeRelay struct {
 	server     *httptest.Server
 	deliveries chan relayDelivery
@@ -55,10 +55,31 @@ func newFakeRelay(t *testing.T) *fakeRelay {
 
 func (f *fakeRelay) serve(w http.ResponseWriter, r *http.Request) {
 	f.requests.Add(1)
-	if r.URL.Query().Get("stream") != "1" {
-		http.Error(w, "stream=1 required", http.StatusBadRequest)
+	if r.URL.Query().Get("stream") == "1" {
+		f.serveStream(w, r)
 		return
 	}
+	f.servePoll(w, r)
+}
+
+func (f *fakeRelay) servePoll(w http.ResponseWriter, r *http.Request) {
+	select {
+	case d := <-f.deliveries:
+		if d.status != 0 {
+			w.WriteHeader(d.status)
+			return
+		}
+		if d.eventType != "" {
+			w.Header().Set("X-GitHub-Event", d.eventType)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(d.body)
+	case <-r.Context().Done():
+	case <-f.done:
+	}
+}
+
+func (f *fakeRelay) serveStream(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "flusher not supported", http.StatusInternalServerError)
@@ -103,13 +124,13 @@ func (f *fakeRelay) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// deliver queues a delivery for the stream. An empty body simulates
-// the relay closing the connection without an event (a clean shutdown).
+// deliver queues a delivery for the stream or next hanging read. An empty body
+// simulates the relay closing the connection without an event (a clean shutdown).
 func (f *fakeRelay) deliver(eventType string, body []byte) {
 	f.deliveries <- relayDelivery{eventType: eventType, body: body}
 }
 
-// deliverStatus queues an error response for the stream.
+// deliverStatus queues an error response for the stream or next hanging read.
 func (f *fakeRelay) deliverStatus(status int) {
 	f.deliveries <- relayDelivery{status: status}
 }
@@ -127,12 +148,12 @@ func workflowJobBody(t *testing.T, action string, id int64) []byte {
 
 // newListener returns a Listener whose handler forwards received events onto the
 // returned channel.
-func newListener(relayURL string) (*githubwebhook.Listener, <-chan *gogithub.WorkflowJobEvent) {
+func newListener(relayURL string, opts ...githubwebhook.Option) (*githubwebhook.Listener, <-chan *gogithub.WorkflowJobEvent) {
 	received := make(chan *gogithub.WorkflowJobEvent, 8)
 	l := githubwebhook.New(relayURL, func(_ context.Context, ev *gogithub.WorkflowJobEvent) error {
 		received <- ev
 		return nil
-	})
+	}, opts...)
 	return l, received
 }
 
@@ -159,145 +180,169 @@ func mustReturn(t *testing.T, errCh <-chan error, want error) {
 	}
 }
 
+func testModes(t *testing.T, fn func(t *testing.T, opts ...githubwebhook.Option)) {
+	t.Helper()
+	t.Run("polling", func(t *testing.T) {
+		fn(t, githubwebhook.WithStreaming(false))
+	})
+	t.Run("streaming", func(t *testing.T) {
+		fn(t, githubwebhook.WithStreaming(true))
+	})
+}
+
 func TestListenReceivesEvent(t *testing.T) {
-	relay := newFakeRelay(t)
-	l, received := newListener(relay.server.URL)
-	relay.deliver("workflow_job", workflowJobBody(t, "requested", 42))
+	testModes(t, func(t *testing.T, opts ...githubwebhook.Option) {
+		relay := newFakeRelay(t)
+		l, received := newListener(relay.server.URL, opts...)
+		relay.deliver("workflow_job", workflowJobBody(t, "requested", 42))
 
-	errCh := runListen(context.Background(), l)
+		errCh := runListen(context.Background(), l)
 
-	select {
-	case ev := <-received:
-		if got, want := ev.GetWorkflowJob().GetID(), int64(42); got != want {
-			t.Errorf("WorkflowJob.ID: got %d, want %d", got, want)
+		select {
+		case ev := <-received:
+			if got, want := ev.GetWorkflowJob().GetID(), int64(42); got != want {
+				t.Errorf("WorkflowJob.ID: got %d, want %d", got, want)
+			}
+			if got, want := ev.GetAction(), "requested"; got != want {
+				t.Errorf("Action: got %q, want %q", got, want)
+			}
+		case <-time.After(waitTimeout):
+			t.Fatal("timed out waiting for event")
 		}
-		if got, want := ev.GetAction(), "requested"; got != want {
-			t.Errorf("Action: got %q, want %q", got, want)
-		}
-	case <-time.After(waitTimeout):
-		t.Fatal("timed out waiting for event")
-	}
 
-	l.Stop()
-	mustReturn(t, errCh, nil)
+		l.Stop()
+		mustReturn(t, errCh, nil)
+	})
 }
 
 func TestListenMultipleEvents(t *testing.T) {
-	relay := newFakeRelay(t)
-	l, received := newListener(relay.server.URL)
-	relay.deliver("workflow_job", workflowJobBody(t, "requested", 1))
-	relay.deliver("workflow_job", workflowJobBody(t, "completed", 2))
+	testModes(t, func(t *testing.T, opts ...githubwebhook.Option) {
+		relay := newFakeRelay(t)
+		l, received := newListener(relay.server.URL, opts...)
+		relay.deliver("workflow_job", workflowJobBody(t, "requested", 1))
+		relay.deliver("workflow_job", workflowJobBody(t, "completed", 2))
 
-	errCh := runListen(context.Background(), l)
+		errCh := runListen(context.Background(), l)
 
-	// Handlers run in separate goroutines, so collect by id rather than order.
-	got := map[int64]bool{}
-	for len(got) < 2 {
-		select {
-		case ev := <-received:
-			got[ev.GetWorkflowJob().GetID()] = true
-		case <-time.After(waitTimeout):
-			t.Fatalf("timed out; received ids %v", got)
+		// Handlers run in separate goroutines, so collect by id rather than order.
+		got := map[int64]bool{}
+		for len(got) < 2 {
+			select {
+			case ev := <-received:
+				got[ev.GetWorkflowJob().GetID()] = true
+			case <-time.After(waitTimeout):
+				t.Fatalf("timed out; received ids %v", got)
+			}
 		}
-	}
-	if !got[1] || !got[2] {
-		t.Errorf("received ids %v, want 1 and 2", got)
-	}
+		if !got[1] || !got[2] {
+			t.Errorf("received ids %v, want 1 and 2", got)
+		}
 
-	l.Stop()
-	mustReturn(t, errCh, nil)
+		l.Stop()
+		mustReturn(t, errCh, nil)
+	})
 }
 
 func TestListenSkipsUnexpectedEvent(t *testing.T) {
-	relay := newFakeRelay(t)
-	l, received := newListener(relay.server.URL)
-	// A non-workflow_job delivery must be skipped, and the reader must carry on
-	// to the following workflow_job event.
-	relay.deliver("workflow_run", []byte(`{"action":"requested"}`))
-	relay.deliver("workflow_job", workflowJobBody(t, "queued", 7))
+	testModes(t, func(t *testing.T, opts ...githubwebhook.Option) {
+		relay := newFakeRelay(t)
+		l, received := newListener(relay.server.URL, opts...)
+		// A non-workflow_job delivery must be skipped, and the reader must carry on
+		// to the following workflow_job event.
+		relay.deliver("workflow_run", []byte(`{"action":"requested"}`))
+		relay.deliver("workflow_job", workflowJobBody(t, "queued", 7))
 
-	errCh := runListen(context.Background(), l)
+		errCh := runListen(context.Background(), l)
 
-	select {
-	case ev := <-received:
-		if got, want := ev.GetWorkflowJob().GetID(), int64(7); got != want {
-			t.Errorf("WorkflowJob.ID: got %d, want %d", got, want)
+		select {
+		case ev := <-received:
+			if got, want := ev.GetWorkflowJob().GetID(), int64(7); got != want {
+				t.Errorf("WorkflowJob.ID: got %d, want %d", got, want)
+			}
+		case <-time.After(waitTimeout):
+			t.Fatal("timed out waiting for workflow_job event")
 		}
-	case <-time.After(waitTimeout):
-		t.Fatal("timed out waiting for workflow_job event")
-	}
 
-	// The skipped workflow_run event must not reach the handler.
-	select {
-	case ev := <-received:
-		t.Errorf("handler called for unexpected event: %+v", ev)
-	case <-time.After(200 * time.Millisecond):
-	}
+		// The skipped workflow_run event must not reach the handler.
+		select {
+		case ev := <-received:
+			t.Errorf("handler called for unexpected event: %+v", ev)
+		case <-time.After(200 * time.Millisecond):
+		}
 
-	l.Stop()
-	mustReturn(t, errCh, nil)
+		l.Stop()
+		mustReturn(t, errCh, nil)
+	})
 }
 
 func TestListenRetriesTransientErrors(t *testing.T) {
-	relay := newFakeRelay(t)
-	l, received := newListener(relay.server.URL)
-	// The relay fails twice before delivering; the reader should retry and
-	// still surface the event.
-	relay.deliverStatus(http.StatusInternalServerError)
-	relay.deliverStatus(http.StatusBadGateway)
-	relay.deliver("workflow_job", workflowJobBody(t, "requested", 99))
+	testModes(t, func(t *testing.T, opts ...githubwebhook.Option) {
+		relay := newFakeRelay(t)
+		l, received := newListener(relay.server.URL, opts...)
+		// The relay fails twice before delivering; the reader should retry and
+		// still surface the event.
+		relay.deliverStatus(http.StatusInternalServerError)
+		relay.deliverStatus(http.StatusBadGateway)
+		relay.deliver("workflow_job", workflowJobBody(t, "requested", 99))
 
-	errCh := runListen(context.Background(), l)
+		errCh := runListen(context.Background(), l)
 
-	select {
-	case ev := <-received:
-		if got, want := ev.GetWorkflowJob().GetID(), int64(99); got != want {
-			t.Errorf("WorkflowJob.ID: got %d, want %d", got, want)
+		select {
+		case ev := <-received:
+			if got, want := ev.GetWorkflowJob().GetID(), int64(99); got != want {
+				t.Errorf("WorkflowJob.ID: got %d, want %d", got, want)
+			}
+		case <-time.After(waitTimeout):
+			t.Fatal("timed out waiting for event after transient errors")
 		}
-	case <-time.After(waitTimeout):
-		t.Fatal("timed out waiting for event after transient errors")
-	}
 
-	// Two failed reads plus the successful one.
-	if got := relay.requests.Load(); got < 3 {
-		t.Errorf("relay requests: got %d, want >= 3", got)
-	}
+		// Two failed reads plus the successful one.
+		if got := relay.requests.Load(); got < 3 {
+			t.Errorf("relay requests: got %d, want >= 3", got)
+		}
 
-	l.Stop()
-	mustReturn(t, errCh, nil)
+		l.Stop()
+		mustReturn(t, errCh, nil)
+	})
 }
 
 func TestListenRelayClosed(t *testing.T) {
-	relay := newFakeRelay(t)
-	l, _ := newListener(relay.server.URL)
-	// An empty body signals a clean relay shutdown; Listen should return nil.
-	relay.deliver("", nil)
+	testModes(t, func(t *testing.T, opts ...githubwebhook.Option) {
+		relay := newFakeRelay(t)
+		l, _ := newListener(relay.server.URL, opts...)
+		// An empty body signals a clean relay shutdown; Listen should return nil.
+		relay.deliver("", nil)
 
-	errCh := runListen(context.Background(), l)
-	mustReturn(t, errCh, nil)
+		errCh := runListen(context.Background(), l)
+		mustReturn(t, errCh, nil)
+	})
 }
 
 func TestListenStop(t *testing.T) {
-	relay := newFakeRelay(t)
-	l, _ := newListener(relay.server.URL)
+	testModes(t, func(t *testing.T, opts ...githubwebhook.Option) {
+		relay := newFakeRelay(t)
+		l, _ := newListener(relay.server.URL, opts...)
 
-	errCh := runListen(context.Background(), l)
-	l.Stop()
-	mustReturn(t, errCh, nil)
+		errCh := runListen(context.Background(), l)
+		l.Stop()
+		mustReturn(t, errCh, nil)
 
-	select {
-	case <-l.DoneCh():
-	default:
-		t.Error("DoneCh not closed after Stop")
-	}
+		select {
+		case <-l.DoneCh():
+		default:
+			t.Error("DoneCh not closed after Stop")
+		}
+	})
 }
 
 func TestListenContextCancelled(t *testing.T) {
-	relay := newFakeRelay(t)
-	l, _ := newListener(relay.server.URL)
+	testModes(t, func(t *testing.T, opts ...githubwebhook.Option) {
+		relay := newFakeRelay(t)
+		l, _ := newListener(relay.server.URL, opts...)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	errCh := runListen(ctx, l)
-	cancel()
-	mustReturn(t, errCh, context.Canceled)
+		ctx, cancel := context.WithCancel(context.Background())
+		errCh := runListen(ctx, l)
+		cancel()
+		mustReturn(t, errCh, context.Canceled)
+	})
 }

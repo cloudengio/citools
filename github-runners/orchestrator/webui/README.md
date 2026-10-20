@@ -119,6 +119,9 @@ type Backend interface {
 	ConfigFile(ctx context.Context) (path string, content []byte, err error)
 	// Pools returns the current state of every configured VM pool.
 	Pools(ctx context.Context) ([]PoolStatus, error)
+	// RefreshPool removes all currently available VMs in the named pool and
+	// replaces them with newly cloned ones.
+	RefreshPool(ctx context.Context, name string) (int, error)
 	// Workflows returns every running and recently-completed workflow job, with
 	// each job's log artifacts populated.
 	Workflows(ctx context.Context) ([]WorkflowStatus, error)
@@ -405,11 +408,11 @@ type EventType string
 EventType defines model for Event.Type.
 
 ### Constants
-### Hello, Pool, Workflow
+### EventTypeHello, EventTypePool, EventTypeWorkflow
 ```go
-Hello EventType = "hello"
-Pool EventType = "pool"
-Workflow EventType = "workflow"
+EventTypeHello EventType = "hello"
+EventTypePool EventType = "pool"
+EventTypeWorkflow EventType = "workflow"
 
 ```
 Defines values for EventType.
@@ -744,11 +747,19 @@ PoolConfigSummary defines model for PoolConfigSummary.
 ### Type PoolStatus
 ```go
 type PoolStatus struct {
-	Image *string `json:"image,omitempty"`
+	// Acquired Number of VMs currently acquired from the pool.
+	Acquired *int `json:"acquired,omitempty"`
+
+	// Available Number of available VMs in the pool waiting to be acquired.
+	Available *int    `json:"available,omitempty"`
+	Image     *string `json:"image,omitempty"`
 
 	// Kind The VM backend kind for this pool, e.g. "tart".
 	Kind *string `json:"kind,omitempty"`
 	Name string  `json:"name"`
+
+	// Pending Number of VMs being created or replenished in the pool.
+	Pending *int `json:"pending,omitempty"`
 
 	// Size Configured pool size (target number of warm VMs).
 	Size int        `json:"size"`
@@ -756,6 +767,74 @@ type PoolStatus struct {
 }
 ```
 PoolStatus defines model for PoolStatus.
+
+
+### Type RefreshPool200JSONResponse
+```go
+type RefreshPool200JSONResponse RefreshPoolResponse
+```
+
+### Methods
+
+```go
+func (response RefreshPool200JSONResponse) VisitRefreshPoolResponse(w http.ResponseWriter) error
+```
+
+
+
+
+### Type RefreshPool404JSONResponse
+```go
+type RefreshPool404JSONResponse Error
+```
+
+### Methods
+
+```go
+func (response RefreshPool404JSONResponse) VisitRefreshPoolResponse(w http.ResponseWriter) error
+```
+
+
+
+
+### Type RefreshPool500JSONResponse
+```go
+type RefreshPool500JSONResponse Error
+```
+
+### Methods
+
+```go
+func (response RefreshPool500JSONResponse) VisitRefreshPoolResponse(w http.ResponseWriter) error
+```
+
+
+
+
+### Type RefreshPoolRequestObject
+```go
+type RefreshPoolRequestObject struct {
+	Name string `json:"name"`
+}
+```
+
+
+### Type RefreshPoolResponse
+```go
+type RefreshPoolResponse struct {
+	// Replaced Number of available VMs removed and queued for replacement.
+	Replaced int `json:"replaced"`
+}
+```
+RefreshPoolResponse defines model for RefreshPoolResponse.
+
+
+### Type RefreshPoolResponseObject
+```go
+type RefreshPoolResponseObject interface {
+	VisitRefreshPoolResponse(w http.ResponseWriter) error
+}
+```
 
 
 ### Type RepositorySummary
@@ -959,6 +1038,11 @@ func (s *Server) ListWorkflows(ctx context.Context, request ListWorkflowsRequest
 
 
 ```go
+func (s *Server) RefreshPool(ctx context.Context, request RefreshPoolRequestObject) (RefreshPoolResponseObject, error)
+```
+
+
+```go
 func (s *Server) RestartService(ctx context.Context, _ RestartServiceRequestObject) (RestartServiceResponseObject, error)
 ```
 
@@ -993,6 +1077,9 @@ type ServerInterface interface {
 	// ListPools List VM pools and the VMs within each pool
 	// (GET /pools)
 	ListPools(w http.ResponseWriter, r *http.Request)
+	// RefreshPool Replace all currently available VMs in the pool with newly cloned ones
+	// (POST /pools/{name}/refresh)
+	RefreshPool(w http.ResponseWriter, r *http.Request, name string)
 	// GetServiceStatus Status of the launchd login service
 	// (GET /service)
 	GetServiceStatus(w http.ResponseWriter, r *http.Request)
@@ -1105,6 +1192,12 @@ ListWorkflowLogs operation middleware
 func (siw *ServerInterfaceWrapper) ListWorkflows(w http.ResponseWriter, r *http.Request)
 ```
 ListWorkflows operation middleware
+
+
+```go
+func (siw *ServerInterfaceWrapper) RefreshPool(w http.ResponseWriter, r *http.Request)
+```
+RefreshPool operation middleware
 
 
 ```go
@@ -1242,6 +1335,9 @@ type StrictServerInterface interface {
 	// ListPools List VM pools and the VMs within each pool
 	// (GET /pools)
 	ListPools(ctx context.Context, request ListPoolsRequestObject) (ListPoolsResponseObject, error)
+	// RefreshPool Replace all currently available VMs in the pool with newly cloned ones
+	// (POST /pools/{name}/refresh)
+	RefreshPool(ctx context.Context, request RefreshPoolRequestObject) (RefreshPoolResponseObject, error)
 	// GetServiceStatus Status of the launchd login service
 	// (GET /service)
 	GetServiceStatus(ctx context.Context, request GetServiceStatusRequestObject) (GetServiceStatusResponseObject, error)
@@ -1376,6 +1472,33 @@ func (e *UnmarshalingParamError) Unwrap() error
 
 
 
+### Type VMLocation
+```go
+type VMLocation string
+```
+VMLocation Location of a VM (in the pool or in the completion queue).
+
+### Constants
+### VMLocationCompletionQueue, VMLocationPool
+```go
+VMLocationCompletionQueue VMLocation = "completion_queue"
+VMLocationPool VMLocation = "pool"
+
+```
+Defines values for VMLocation.
+
+
+
+### Methods
+
+```go
+func (e VMLocation) Valid() bool
+```
+Valid indicates whether the value is a known member of the VMLocation enum.
+
+
+
+
 ### Type VMState
 ```go
 type VMState string
@@ -1383,10 +1506,11 @@ type VMState string
 VMState State of a VM as reported by the pool.
 
 ### Constants
-### VMStateAcquired, VMStateAvailable, VMStateCreating, VMStateDeleted, VMStateFailed, VMStateStaging, VMStateStopped, VMStateUnknown
+### VMStateAcquired, VMStateAvailable, VMStateCompletionQueue, VMStateCreating, VMStateDeleted, VMStateFailed, VMStateStaging, VMStateStopped, VMStateUnknown
 ```go
 VMStateAcquired VMState = "acquired"
 VMStateAvailable VMState = "available"
+VMStateCompletionQueue VMState = "completion_queue"
 VMStateCreating VMState = "creating"
 VMStateDeleted VMState = "deleted"
 VMStateFailed VMState = "failed"
@@ -1413,12 +1537,33 @@ Valid indicates whether the value is a known member of the VMState enum.
 ```go
 type VMStatus struct {
 	CreatedAt *time.Time `json:"created_at,omitempty"`
-	Id        string     `json:"id"`
+
+	// DiskGib Disk size allocated to this VM in GiB.
+	DiskGib *int   `json:"disk_gib,omitempty"`
+	Id      string `json:"id"`
+
+	// Image Base image this VM was cloned from.
+	Image *string `json:"image,omitempty"`
 
 	// LastEvent The most recent pool event kind observed for this VM.
 	LastEvent *string `json:"last_event,omitempty"`
-	Name      *string `json:"name,omitempty"`
-	Pool      *string `json:"pool,omitempty"`
+
+	// Location Location of a VM (in the pool or in the completion queue).
+	Location *VMLocation `json:"location,omitempty"`
+
+	// MemGib Memory allocated to this VM in GiB.
+	MemGib *int    `json:"mem_gib,omitempty"`
+	Name   *string `json:"name,omitempty"`
+
+	// NumCores Number of CPU cores allocated to this VM.
+	NumCores *int `json:"num_cores,omitempty"`
+
+	// Os Operating system of this VM.
+	Os   *string `json:"os,omitempty"`
+	Pool *string `json:"pool,omitempty"`
+
+	// RunnerDir Runner directory on the guest.
+	RunnerDir *string `json:"runner_dir,omitempty"`
 
 	// State State of a VM as reported by the pool.
 	State     VMState    `json:"state"`
@@ -1431,7 +1576,8 @@ VMStatus defines model for VMStatus.
 ### Type WebhookSummary
 ```go
 type WebhookSummary struct {
-	RelayUrl *string `json:"relay_url,omitempty"`
+	RelayUrl  *string `json:"relay_url,omitempty"`
+	Streaming *bool   `json:"streaming,omitempty"`
 }
 ```
 WebhookSummary defines model for WebhookSummary.
