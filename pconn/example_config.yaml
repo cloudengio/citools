@@ -1,0 +1,26 @@
+# Example pconn configuration file
+logging:
+  level: 1 # 0=error, 1=warn, 2=info, 3=debug
+  format: text # text or json
+
+connections:
+  - name: dev-web
+    type: ssh # connection type; defaults to ssh if omitted
+    host: web.dev.example.com # if omitted, defaults to name
+    port: 22
+    user: admin
+    dial_timeout: 30s
+    groups: [dev, frontend]
+    forwards: [8080:80, 8443:443]
+
+  - name: db.dev.example.com:2222 # host is omitted, so name is used as the host
+    type: ssh
+    dial_timeout: 15s
+    groups: [dev, backend]
+    forwards: [5432:5432]
+
+  - name: shared-cache
+    type: ssh
+    host: redis.internal.example.com
+    groups: [backend, staging]
+    forwards: [6379:6379]
