@@ -94,13 +94,13 @@ func serveTestAgent(t *testing.T, key ed25519.PrivateKey) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 
 	l, err := net.Listen("unix", filepath.Join(dir, "s"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { l.Close() })
+	t.Cleanup(func() { _ = l.Close() })
 	go func() {
 		for {
 			conn, err := l.Accept()
@@ -169,8 +169,8 @@ func newTestSSHServer(t *testing.T, hostSigner, userSigner ssh.Signer, user stri
 						}
 						go ssh.DiscardRequests(requests)
 						go func(ch ssh.Channel) {
-							defer ch.Close()
-							io.Copy(ch, ch) // echo
+							defer func() { _ = ch.Close() }()
+							_, _ = io.Copy(ch, ch) // echo
 						}(channel)
 					}
 				}()
@@ -186,11 +186,11 @@ func newTestSSHServer(t *testing.T, hostSigner, userSigner ssh.Signer, user stri
 }
 
 func (s *testSSHServer) close() {
-	s.listener.Close()
+	_ = s.listener.Close()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, c := range s.conns {
-		c.Close()
+		_ = c.Close()
 	}
 }
 
@@ -213,7 +213,7 @@ func freePort(t *testing.T) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	return l.Addr().(*net.TCPAddr).Port
 }
 
@@ -223,7 +223,7 @@ func echoServer(t *testing.T) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { l.Close() })
+	t.Cleanup(func() { _ = l.Close() })
 	go func() {
 		for {
 			conn, err := l.Accept()
@@ -231,8 +231,8 @@ func echoServer(t *testing.T) int {
 				return
 			}
 			go func(c net.Conn) {
-				defer c.Close()
-				io.Copy(c, c)
+				defer func() { _ = c.Close() }()
+				_, _ = io.Copy(c, c)
 			}(conn)
 		}
 	}()
@@ -245,11 +245,11 @@ func echoCheck(t *testing.T, port int, msg string) {
 	for time.Now().Before(deadline) {
 		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond)
 		if err == nil {
-			conn.SetDeadline(time.Now().Add(2 * time.Second))
+			_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
 			_, wErr := io.WriteString(conn, msg)
 			buf := make([]byte, len(msg))
 			_, rErr := io.ReadFull(conn, buf)
-			conn.Close()
+			_ = conn.Close()
 			if wErr == nil && rErr == nil && string(buf) == msg {
 				return
 			}
