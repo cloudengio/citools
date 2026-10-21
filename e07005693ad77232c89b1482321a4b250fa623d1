@@ -1,0 +1,17 @@
+  * -- Overview
+Introduces pconn, a command-line tool for managing persistent SSH connections and local TCP port forwards with automatic exponential backoff reconnection. Connections and forwarding rules are defined via YAML configuration with support for group-based filtering and port collision detection.
+
+  * -- Key Changes
+  * Configuration & Validation (config.go):
+  * Added Config, ConnectionConfig, and ForwardConfig structures supporting both <local>:<remote> string syntax and map syntax.
+  * Implemented connection grouping, target resolution (all, specific groups, or specific connection names), and local port conflict validation.
+  * Connection Management & CLI (connect_cmd.go, main.go):
+  * Built the connect command to concurrently establish and maintain SSH connections and port forwarding tunnels using pssh and errgroup.
+  * Added exponential backoff retry control (ratecontrol), --fail-fast support, and signal handling for clean shutdown.
+  * Wired CLI flags, YAML prehooks, and contextual logging using subcmd and ctxlog.
+  * Testing & Documentation:
+  * Added unit and integration tests covering configuration validation, group filtering, SSH connection lifecycle, port forwarding, and shutdown semantics (config_test.go, connect_cmd_test.go).
+  * Added CLI docs, configuration reference (config.md), README.md, and sample configuration fixtures (example_config.yaml, testdata/pconn.yaml).
+
+  * -- Breaking Changes
+None
