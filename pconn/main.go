@@ -34,7 +34,7 @@ commands:
 `
 
 type GlobalFlags struct {
-	ConfigFile string `subcmd:"config,pconn.yaml,path to YAML configuration file" doc:"path to YAML configuration file"`
+	ConfigFile string `subcmd:"config,config.yaml,path to YAML configuration file" doc:"path to YAML configuration file"`
 	cmdutil.LoggingFlags
 	Verbose bool `subcmd:"verbose,false,enable verbose logging" doc:"enable verbose logging"`
 }
@@ -60,14 +60,9 @@ func configPrehook(ctx context.Context) (context.Context, string, subcmd.PostHoo
 	}
 
 	configFile := globalFlags.ConfigFile
-	if fl := fs.FlagSet().Lookup("config"); fl != nil && fl.Value.String() != "" {
-		configFile = fl.Value.String()
-	} else if configFile == "pconn.yaml" {
-		if _, err := os.Stat("pconn.yaml"); os.IsNotExist(err) {
-			if _, err := os.Stat("sshpcon.yaml"); err == nil {
-				configFile = "sshpcon.yaml"
-			}
-		}
+	configFile = cmdyaml.LocateConfigFileInDir(configFile, "pconn")
+	if configFile == "" {
+		return ctx, id, postHook, fmt.Errorf("configuration %q file not found", globalFlags.ConfigFile)
 	}
 
 	var cfg Config
