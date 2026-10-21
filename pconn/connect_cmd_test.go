@@ -90,7 +90,7 @@ func serveTestAgent(t *testing.T, key ed25519.PrivateKey) {
 	if err := keyring.Add(agent.AddedKey{PrivateKey: key, Comment: "test-key"}); err != nil {
 		t.Fatal(err)
 	}
-	dir, err := os.MkdirTemp("", "sshpcon")
+	dir, err := os.MkdirTemp("", "pconn")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,6 +259,30 @@ func echoCheck(t *testing.T, port int, msg string) {
 	t.Fatalf("port forward on port %d did not echo expected %q within deadline", port, msg)
 }
 
+// newTestCLI returns the pconn CLI wired up as main wires it, ie. with the
+// package level globalFlags that configPrehook reads, rather than a separate
+// struct whose values the pre-hook would never see. globalFlags is reset
+// first, so tests using this must not run in parallel with each other.
+func newTestCLI(t *testing.T) *subcmd.CommandSetYAML {
+	t.Helper()
+	globalFlags = GlobalFlags{}
+	cli := createCLI()
+	cli.WithGlobalFlags(subcmd.NewFlagSet().MustRegisterFlagStruct(&globalFlags, nil, nil))
+	return cli
+}
+
+// writeTestConfig writes content to pconn.yaml in dir and returns its path.
+// Tests that need live ports or host keys must generate their configuration;
+// testdata/pconn.yaml covers the example as written.
+func writeTestConfig(t *testing.T, dir, content string) string {
+	t.Helper()
+	path := filepath.Join(dir, "pconn.yaml")
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatalf("write %v: %v", path, err)
+	}
+	return path
+}
+
 func TestConnectCommandIntegration(t *testing.T) {
 	userPriv, userSigner := newTestKey(t)
 	_, hostSigner := newTestKey(t)
@@ -298,21 +322,14 @@ connections:
         remote_port: %d
 `, logPath, srv.addr(), user, knownHostsPath, localForwardPort, remoteEchoPort)
 
-	cfgPath := filepath.Join(tmpDir, "sshpcon.yaml")
-	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0600); err != nil {
-		t.Fatal(err)
-	}
+	cfgPath := writeTestConfig(t, tmpDir, cfgContent)
 
 	ctx, cancel := context.WithCancel(t.Context())
-	cli := createCLI()
-	var testFlags GlobalFlags
-	testFlags.ConfigFile = cfgPath
-	fs := subcmd.NewFlagSet().MustRegisterFlagStruct(&testFlags, nil, nil)
-	cli.WithGlobalFlags(fs)
+	cli := newTestCLI(t)
 
 	dispatchDone := make(chan error, 1)
 	go func() {
-		dispatchDone <- cli.DispatchWithArgs(ctx, "sshpcon", "--config="+cfgPath, "connect")
+		dispatchDone <- cli.DispatchWithArgs(ctx, "pconn", "--config="+cfgPath, "connect")
 	}()
 
 	select {
@@ -322,7 +339,7 @@ connections:
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for SSH connection")
 	}
-	echoCheck(t, localForwardPort, "ping-sshpcon")
+	echoCheck(t, localForwardPort, "ping-pconn")
 
 	// Cancel context to initiate clean shutdown
 	cancel()
@@ -381,24 +398,17 @@ connections:
       - %s
 `, srv1.addr(), user, knownHostsPath, srv2.addr(), user, knownHostsPath)
 
-	cfgPath := filepath.Join(tmpDir, "sshpcon.yaml")
-	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0600); err != nil {
-		t.Fatal(err)
-	}
+	cfgPath := writeTestConfig(t, tmpDir, cfgContent)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	cli := createCLI()
-	var testFlags GlobalFlags
-	testFlags.ConfigFile = cfgPath
-	fs := subcmd.NewFlagSet().MustRegisterFlagStruct(&testFlags, nil, nil)
-	cli.WithGlobalFlags(fs)
+	cli := newTestCLI(t)
 
 	dispatchDone := make(chan error, 1)
 	go func() {
 		// Run connect only for conn1
-		dispatchDone <- cli.DispatchWithArgs(ctx, "sshpcon", "--config="+cfgPath, "connect", "conn1")
+		dispatchDone <- cli.DispatchWithArgs(ctx, "pconn", "--config="+cfgPath, "connect", "conn1")
 	}()
 
 	srv1.waitForConnection(t)
@@ -425,18 +435,11 @@ connections:
   - name: conn1
     host: 127.0.0.1:22
 `
-	cfgPath := filepath.Join(tmpDir, "sshpcon.yaml")
-	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0600); err != nil {
-		t.Fatal(err)
-	}
+	cfgPath := writeTestConfig(t, tmpDir, cfgContent)
 
-	cli := createCLI()
-	var testFlags GlobalFlags
-	testFlags.ConfigFile = cfgPath
-	fs := subcmd.NewFlagSet().MustRegisterFlagStruct(&testFlags, nil, nil)
-	cli.WithGlobalFlags(fs)
+	cli := newTestCLI(t)
 
-	err := cli.DispatchWithArgs(t.Context(), "sshpcon", "--config="+cfgPath, "connect", "nonexistent")
+	err := cli.DispatchWithArgs(t.Context(), "pconn", "--config="+cfgPath, "connect", "nonexistent")
 	if err == nil || (!strings.Contains(err.Error(), "connection(s) not found: nonexistent") && !strings.Contains(err.Error(), "group \"nonexistent\" not found")) {
 		t.Fatalf("expected unknown connection/group error, got: %v", err)
 	}
@@ -492,24 +495,17 @@ connections:
       - analytics
 `, srvWeb.addr(), user, knownHostsPath, srvDb.addr(), user, knownHostsPath, srvAnalytics.addr(), user, knownHostsPath)
 
-	cfgPath := filepath.Join(tmpDir, "sshpcon.yaml")
-	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0600); err != nil {
-		t.Fatal(err)
-	}
+	cfgPath := writeTestConfig(t, tmpDir, cfgContent)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	cli := createCLI()
-	var testFlags GlobalFlags
-	testFlags.ConfigFile = cfgPath
-	fs := subcmd.NewFlagSet().MustRegisterFlagStruct(&testFlags, nil, nil)
-	cli.WithGlobalFlags(fs)
+	cli := newTestCLI(t)
 
 	dispatchDone := make(chan error, 1)
 	go func() {
 		// Connect to the 'dev' group (which should connect both web and db, but NOT analytics)
-		dispatchDone <- cli.DispatchWithArgs(ctx, "sshpcon", "--config="+cfgPath, "connect", "dev")
+		dispatchDone <- cli.DispatchWithArgs(ctx, "pconn", "--config="+cfgPath, "connect", "dev")
 	}()
 
 	// Both web and db must be connected as part of group 'dev'
@@ -571,24 +567,17 @@ connections:
       - prod
 `, srvWeb.addr(), user, knownHostsPath, srvDb.addr(), user, knownHostsPath)
 
-	cfgPath := filepath.Join(tmpDir, "sshpcon.yaml")
-	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0600); err != nil {
-		t.Fatal(err)
-	}
+	cfgPath := writeTestConfig(t, tmpDir, cfgContent)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	cli := createCLI()
-	var testFlags GlobalFlags
-	testFlags.ConfigFile = cfgPath
-	fs := subcmd.NewFlagSet().MustRegisterFlagStruct(&testFlags, nil, nil)
-	cli.WithGlobalFlags(fs)
+	cli := newTestCLI(t)
 
 	dispatchDone := make(chan error, 1)
 	go func() {
 		// Use --group=prod flag
-		dispatchDone <- cli.DispatchWithArgs(ctx, "sshpcon", "--config="+cfgPath, "connect", "--group=prod")
+		dispatchDone <- cli.DispatchWithArgs(ctx, "pconn", "--config="+cfgPath, "connect", "--group=prod")
 	}()
 
 	srvDb.waitForConnection(t)
@@ -617,18 +606,11 @@ connections:
       - dev
       - staging
 `
-	cfgPath := filepath.Join(tmpDir, "sshpcon.yaml")
-	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0600); err != nil {
-		t.Fatal(err)
-	}
+	cfgPath := writeTestConfig(t, tmpDir, cfgContent)
 
-	cli := createCLI()
-	var testFlags GlobalFlags
-	testFlags.ConfigFile = cfgPath
-	fs := subcmd.NewFlagSet().MustRegisterFlagStruct(&testFlags, nil, nil)
-	cli.WithGlobalFlags(fs)
+	cli := newTestCLI(t)
 
-	err := cli.DispatchWithArgs(t.Context(), "sshpcon", "--config="+cfgPath, "connect", "nonexistent")
+	err := cli.DispatchWithArgs(t.Context(), "pconn", "--config="+cfgPath, "connect", "nonexistent")
 	if err == nil || !strings.Contains(err.Error(), "group \"nonexistent\" not found in configuration (available groups: dev, staging)") {
 		t.Fatalf("expected unknown group error listing dev, staging; got: %v", err)
 	}
@@ -676,20 +658,13 @@ connections:
     groups: [g3]
 `, srv1.addr(), user, knownHostsPath, srv2.addr(), user, knownHostsPath, srv3.addr(), user, knownHostsPath)
 
-	cfgPath := filepath.Join(tmpDir, "pconn.yaml")
-	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0600); err != nil {
-		t.Fatal(err)
-	}
+	cfgPath := writeTestConfig(t, tmpDir, cfgContent)
 
 	t.Run("multiple groups", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
-		cli := createCLI()
-		var testFlags GlobalFlags
-		testFlags.ConfigFile = cfgPath
-		fs := subcmd.NewFlagSet().MustRegisterFlagStruct(&testFlags, nil, nil)
-		cli.WithGlobalFlags(fs)
+		cli := newTestCLI(t)
 
 		dispatchDone := make(chan error, 1)
 		go func() {
@@ -715,11 +690,7 @@ connections:
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
-		cli := createCLI()
-		var testFlags GlobalFlags
-		testFlags.ConfigFile = cfgPath
-		fs := subcmd.NewFlagSet().MustRegisterFlagStruct(&testFlags, nil, nil)
-		cli.WithGlobalFlags(fs)
+		cli := newTestCLI(t)
 
 		dispatchDone := make(chan error, 1)
 		go func() {

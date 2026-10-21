@@ -1,0 +1,43 @@
+# Example pconn configuration file.
+#
+# Copy it to pconn.yaml in the directory you run pconn from, or to
+# pconn/pconn.yaml within your user configuration directory, and edit it to
+# suit. See config.md for the full set of options.
+#
+# This file is also the fixture used by the tests, so that the example cannot
+# drift from what pconn actually accepts.
+
+logging:
+  level: 1 # 0=error, 1=warn, 2=info, 3=debug
+  format: text # text or json
+
+connections:
+  # A fully specified connection: nothing is left to default.
+  - name: dev-web
+    type: ssh # connection type; defaults to ssh if omitted
+    host: web.dev.example.com
+    port: 22
+    user: admin
+    dial_timeout: 30s
+    accept_new_host_keys: true # accept and record host keys not yet known
+    groups: [dev, frontend]
+    forwards: [8080:80, 8443:443] # <local>:<remote>
+
+  # host is omitted, so the name is used as the host; it carries the port.
+  - name: db.dev.example.com:2222
+    user: dba
+    dial_timeout: 15s
+    known_hosts: [/etc/ssh/ssh_known_hosts]
+    unlimited_retries: false # give up once the retries are exhausted
+    groups: [dev, backend]
+    forwards:
+      # A forward may also be written as a mapping. local/remote are accepted
+      # as aliases for local_port/remote_port.
+      - local_port: 5432
+        remote_port: 5432
+
+  # A minimal connection: type, port, user and dial_timeout all default.
+  - name: shared-cache
+    host: redis.internal.example.com
+    groups: [backend, staging]
+    forwards: [6379:6379]

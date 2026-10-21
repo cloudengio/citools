@@ -8,6 +8,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -385,48 +386,136 @@ connections:
 	}
 }
 
-func TestDefaultConfigFile(t *testing.T) {
+// exampleConfigFile is the example configuration shipped with pconn. The
+// tests parse it so that the example cannot drift from what the parser and
+// validator actually accept.
+const exampleConfigFile = "testdata/pconn.yaml"
+
+// parseExampleConfig parses and validates the example configuration,
+// requiring it to be accepted in strict mode, ie. with no field in it that
+// Config does not define.
+func parseExampleConfig(t *testing.T) Config {
+	t.Helper()
 	var cfg Config
-	if err := cmdyaml.ParseConfigFilesStrict(t.Context(), &cfg, "pconn.yaml"); err != nil {
-		t.Fatalf("failed to parse pconn.yaml: %v", err)
+	if err := cmdyaml.ParseConfigFilesStrict(t.Context(), &cfg, exampleConfigFile); err != nil {
+		t.Fatalf("failed to parse %v: %v", exampleConfigFile, err)
 	}
 	if err := cfg.Validate(); err != nil {
-		t.Fatalf("pconn.yaml failed validation: %v", err)
+		t.Fatalf("%v failed validation: %v", exampleConfigFile, err)
 	}
-	if len(cfg.Connections) != 3 {
-		t.Fatalf("expected 3 connections, got %d", len(cfg.Connections))
+	return cfg
+}
+
+func testExampleConfigConnections(t *testing.T) {
+	cfg := parseExampleConfig(t)
+	if got, want := len(cfg.Connections), 3; got != want {
+		t.Fatalf("got %v connections, want %v", got, want)
 	}
-	ciConns, err := cfg.ConnectionsForGroup("ci")
-	if err != nil || len(ciConns) != 1 || ciConns[0].Name != "mm-1" {
-		t.Fatalf("expected mm-1 in group ci, got %v, err: %v", ciConns, err)
-	}
-	if ciConns[0].Type != "ssh" {
-		t.Fatalf("expected mm-1 type ssh, got %q", ciConns[0].Type)
-	}
-	sparkConns, err := cfg.ConnectionsForGroup("spark")
-	if err != nil || len(sparkConns) != 2 {
-		t.Fatalf("expected 2 connections in group spark, got %v, err: %v", sparkConns, err)
-	}
-	if sparkConns[0].Name != "spark-1" || sparkConns[1].Name != "spark-2" {
-		t.Fatalf("unexpected spark connections: %v", sparkConns)
-	}
-	if got, want := sparkConns[0].HostPort(), "spark-1:22"; got != want {
-		t.Errorf("spark-1 HostPort: got %q, want %q", got, want)
-	}
-	if got, want := sparkConns[1].HostPort(), "spark-2:22"; got != want {
-		t.Errorf("spark-2 HostPort: got %q, want %q", got, want)
-	}
-	if len(sparkConns[0].Forwards) != 1 || sparkConns[0].Forwards[0].LocalPort != 11001 || sparkConns[0].Forwards[0].RemotePort != 11000 {
-		t.Errorf("spark-1 unexpected forwards: %v", sparkConns[0].Forwards)
-	}
-	if len(sparkConns[1].Forwards) != 1 || sparkConns[1].Forwards[0].LocalPort != 11002 || sparkConns[1].Forwards[0].RemotePort != 11000 {
-		t.Errorf("spark-2 unexpected forwards: %v", sparkConns[1].Forwards)
-	}
-	for _, sc := range sparkConns {
-		if sc.Type != "ssh" {
-			t.Fatalf("expected connection %q type ssh, got %q", sc.Name, sc.Type)
+	for i, tc := range []struct {
+		name, hostPort, user string
+		dialTimeout          time.Duration
+		forwards             []string
+	}{
+		{"dev-web", "web.dev.example.com:22", "admin", 30 * time.Second, []string{"8080:80", "8443:443"}},
+		// host is taken from the name, which also supplies the port.
+		{"db.dev.example.com:2222", "db.dev.example.com:2222", "dba", 15 * time.Second, []string{"5432:5432"}},
+		// type, port and dial_timeout are all defaulted.
+		{"shared-cache", "redis.internal.example.com:22", "", pssh.DefaultDialTimeout, []string{"6379:6379"}},
+	} {
+		conn := cfg.Connections[i]
+		if got, want := conn.Name, tc.name; got != want {
+			t.Errorf("connection #%d: got name %q, want %q", i+1, got, want)
+		}
+		if got, want := conn.HostPort(), tc.hostPort; got != want {
+			t.Errorf("%v: got %q, want %q", tc.name, got, want)
+		}
+		// Every connection defaults to, or states, the only supported type.
+		if got, want := conn.Type, "ssh"; got != want {
+			t.Errorf("%v: got type %q, want %q", tc.name, got, want)
+		}
+		if got, want := conn.DialTimeout, tc.dialTimeout; got != want {
+			t.Errorf("%v: got dial timeout %v, want %v", tc.name, got, want)
+		}
+		// A connection that names no user inherits the one running pconn,
+		// so only an explicit user can be checked for.
+		if tc.user != "" {
+			if got, want := conn.ParsedUser(), tc.user; got != want {
+				t.Errorf("%v: got user %q, want %q", tc.name, got, want)
+			}
+		}
+		var forwards []string
+		for _, f := range conn.Forwards {
+			forwards = append(forwards, f.String())
+		}
+		if !slices.Equal(forwards, tc.forwards) {
+			t.Errorf("%v: got forwards %v, want %v", tc.name, forwards, tc.forwards)
 		}
 	}
+}
+
+func testExampleConfigGroups(t *testing.T) {
+	cfg := parseExampleConfig(t)
+	if got, want := cfg.Groups(), []string{"backend", "dev", "frontend", "staging"}; !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	for _, tc := range []struct {
+		group string
+		want  []string
+	}{
+		{"dev", []string{"dev-web", "db.dev.example.com:2222"}},
+		{"frontend", []string{"dev-web"}},
+		{"backend", []string{"db.dev.example.com:2222", "shared-cache"}},
+		{"staging", []string{"shared-cache"}},
+		// Every connection in the example belongs to a group, so "all"
+		// selects them all and none are left ungrouped.
+		{"all", []string{"dev-web", "db.dev.example.com:2222", "shared-cache"}},
+	} {
+		conns, err := cfg.ConnectionsForGroup(tc.group)
+		if err != nil {
+			t.Errorf("%v: %v", tc.group, err)
+			continue
+		}
+		var names []string
+		for _, c := range conns {
+			names = append(names, c.Name)
+		}
+		if !slices.Equal(names, tc.want) {
+			t.Errorf("%v: got %v, want %v", tc.group, names, tc.want)
+		}
+	}
+	if got := cfg.ConnectionsWithoutGroup(); len(got) != 0 {
+		t.Errorf("got %v, want no ungrouped connections", got)
+	}
+}
+
+func testExampleConfigPortsAndRetries(t *testing.T) {
+	cfg := parseExampleConfig(t)
+	// Validate has already checked for conflicts within each group; the
+	// example's forwards are distinct across every connection.
+	if port, first, second, conflict := cfg.HasConflictingPortsAcrossAll(); conflict {
+		t.Errorf("port %v is forwarded by both %v and %v", port, first, second)
+	}
+	// unlimited_retries is unset for dev-web, so it follows the default
+	// either way, and explicitly false for the second connection, which
+	// overrides the default.
+	devWeb, db := cfg.Connections[0], cfg.Connections[1]
+	for _, dflt := range []bool{true, false} {
+		if got, want := devWeb.ShouldUnlimitedRetries(dflt), dflt; got != want {
+			t.Errorf("%v: with default %v: got %v, want %v", devWeb.Name, dflt, got, want)
+		}
+		if got := db.ShouldUnlimitedRetries(dflt); got {
+			t.Errorf("%v: with default %v: got %v, want false", db.Name, dflt, got)
+		}
+	}
+}
+
+// TestExampleConfig covers the example configuration file, which doubles as
+// documentation: it must parse in strict mode, validate, and resolve to the
+// values its comments claim for it.
+func TestExampleConfig(t *testing.T) {
+	t.Run("connections", testExampleConfigConnections)
+	t.Run("groups", testExampleConfigGroups)
+	t.Run("ports and retries", testExampleConfigPortsAndRetries)
 }
 
 func TestConnectionGroups(t *testing.T) {
