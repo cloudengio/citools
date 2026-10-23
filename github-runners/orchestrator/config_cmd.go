@@ -19,11 +19,19 @@ func (c ConfigCommand) Show(ctx context.Context, _ any, _ []string) error {
 	if !ok {
 		return fmt.Errorf("no config in context")
 	}
+	files, _ := ConfigFilesFromContext(ctx)
+	if len(files) == 0 {
+		fmt.Println("# Configuration file: none")
+	} else {
+		for _, f := range files {
+			fmt.Printf("# Configuration file: %s\n", f)
+		}
+	}
 	out, err := yaml.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("error formatting config to yaml: %v", err)
 	}
-	fmt.Println(string(out))
+	fmt.Print(string(out))
 	return nil
 }
 

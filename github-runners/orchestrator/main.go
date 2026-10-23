@@ -18,6 +18,7 @@ import (
 	"cloudeng.io/macos/macosutils"
 	"cloudeng.io/webapi/clients/github/githubcmd"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/githubclient"
+	"github.com/cloudengio/citools/runners/macos/orchestrator/internal"
 )
 
 const CmdSpecYAML = `
@@ -211,13 +212,23 @@ func configPrehook(ctx context.Context) (context.Context, string, subcmd.PostHoo
 		return ctx, id, postHook, fmt.Errorf("global flagset not in context")
 	}
 
-	var cfg Config
-	if err := cmdyaml.ParseConfigFilesStrict(ctx, &cfg, globalFlags.ConfigFile); err != nil {
-		return ctx, id, postHook, fmt.Errorf("failed to read the configuration file %q: %v\nedit that file to correct it", globalFlags.ConfigFile, err)
+	configFile := cmdyaml.LocateConfigFileInDir(globalFlags.ConfigFile, internal.ConfigDir)
+	if configFile == "" {
+		configFile = cmdyaml.LocateConfigFileInDir(globalFlags.ConfigFile, "github_orchestrator")
+	}
+	if configFile == "" {
+		configFile = cmdyaml.LocateConfigFileInDir(globalFlags.ConfigFile, "citools")
+	}
+	if configFile == "" {
+		configFile = globalFlags.ConfigFile
+	}
 
+	var cfg Config
+	if err := cmdyaml.ParseConfigFilesStrict(ctx, &cfg, configFile); err != nil {
+		return ctx, id, postHook, fmt.Errorf("failed to read the configuration file %q: %v\nedit that file to correct it", configFile, err)
 	}
 	if err := cfg.Validate(); err != nil {
-		return ctx, id, postHook, fmt.Errorf("the configuration file %q is invalid: %v\nedit that file to correct it", globalFlags.ConfigFile, err)
+		return ctx, id, postHook, fmt.Errorf("the configuration file %q is invalid: %v\nedit that file to correct it", configFile, err)
 	}
 
 	loggerConfig := cfg.Logging.WithFlagOverrides(
@@ -229,6 +240,7 @@ func configPrehook(ctx context.Context) (context.Context, string, subcmd.PostHoo
 
 	ctx = ctxlog.WithLogger(ctx, logger.Logger)
 	ctx = ContextWithConfig(ctx, cfg)
+	ctx = ContextWithConfigFile(ctx, configFile)
 	postHook = func(ctx context.Context) (string, error) {
 		if err := logger.Close(); err != nil {
 			return id, fmt.Errorf("error closing logger: %v", err)
