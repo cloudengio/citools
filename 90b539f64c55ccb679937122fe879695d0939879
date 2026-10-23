@@ -1,0 +1,14 @@
+--- Overview
+Adds ghpr, a new standalone Go module in citools that provides a CLI for managing GitHub pull requests, including generated PR summaries.
+
+--- Key Changes
+  * ghpr command (new module)
+    * Has CLI subcommands with usage docs (main.go, commands.go, cmdusage.go, README.md).
+    * Wraps the gh CLI for PR operations (gh.go) and git for branch and diff inspection (git.go), both run through a shared command runner (runner.go).
+    * Generates PR summaries from diffs and formats them as Markdown (summary.go, markdown.go).
+    * Reads its settings from a YAML config file and has a config subcommand (config.go, config_cmd.go, example_config.yaml).
+  * Tests
+    * Unit tests cover the commands, config, gh, git, markdown, runner and summary code, using fakes in fake_test.go.
+
+--- Breaking Changes
+None
