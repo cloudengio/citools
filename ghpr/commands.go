@@ -23,8 +23,9 @@ type App struct {
 	Base       string
 	Stdout     io.Writer
 	Stdin      io.Reader
-	AssumeYes  bool
-	DryRun     bool
+	AssumeYes          bool
+	DryRun             bool
+	ShowSummaryCommand bool
 
 	// reader buffers Stdin across confirmations. It has to be kept: a
 	// reader made per question buffers what it did not use and discards it,
@@ -86,6 +87,15 @@ func (a *App) CreatePR(ctx context.Context, title string, draft, push bool) erro
 			existing.Number, branch, existing.URL)
 	case !errors.Is(err, ErrNoPR):
 		return err
+	}
+
+	if a.ShowSummaryCommand {
+		cmd, err := a.Summarizer.Command(ctx, a.Base, branch)
+		if err != nil {
+			return err
+		}
+		a.printf("%v\n", cmd)
+		return nil
 	}
 
 	if err := a.ensurePushed(ctx, branch, push); err != nil {
@@ -170,6 +180,15 @@ func (a *App) UpdateSummary(ctx context.Context, target string) error {
 			return fmt.Errorf("pull request #%v is merged and its head commit %v is not in this repository: %w",
 				pr.Number, shortSHA(ref), err)
 		}
+	}
+
+	if a.ShowSummaryCommand {
+		cmd, err := a.Summarizer.Command(ctx, a.Base, ref)
+		if err != nil {
+			return err
+		}
+		a.printf("%v\n", cmd)
+		return nil
 	}
 
 	summary, err := a.Summarizer.Summarize(ctx, a.Base, ref)

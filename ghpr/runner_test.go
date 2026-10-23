@@ -99,3 +99,47 @@ func TestDryRunner(t *testing.T) {
 		t.Errorf("got %v, want the command to be announced", announced)
 	}
 }
+
+func TestFormatCommand(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		stdin []byte
+		cmd   string
+		args  []string
+		want  string
+	}{
+		{
+			name: "no stdin",
+			cmd:  "git",
+			args: []string{"status", "--short"},
+			want: "git status --short",
+		},
+		{
+			name:  "with stdin",
+			stdin: []byte("prompt text\n"),
+			cmd:   "claude",
+			args:  []string{"-p", "--allowedTools", ""},
+			want:  "claude -p --allowedTools \"\" << 'EOF'\nprompt text\nEOF",
+		},
+		{
+			name:  "with stdin no trailing newline",
+			stdin: []byte("prompt text"),
+			cmd:   "claude",
+			args:  []string{"-p"},
+			want:  "claude -p << 'EOF'\nprompt text\nEOF",
+		},
+		{
+			name:  "with stdin containing EOF",
+			stdin: []byte("line1\nEOF\nline2\n"),
+			cmd:   "claude",
+			args:  []string{"-p"},
+			want:  "claude -p << 'GHPR_DIFF_EOF'\nline1\nEOF\nline2\nGHPR_DIFF_EOF",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := formatCommand(tc.stdin, tc.cmd, tc.args...); got != tc.want {
+				t.Errorf("got:\n%s\nwant:\n%s", got, tc.want)
+			}
+		})
+	}
+}

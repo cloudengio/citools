@@ -39,6 +39,34 @@ func TestConfigValidation(t *testing.T) {
 			cfg:     Config{Prompt: "   \n\t  "},
 			wantErr: "prompt must not be empty",
 		},
+		{
+			name: "valid prompts map only",
+			cfg: Config{
+				Prompts: map[string]string{
+					"claude": "claude prompt",
+					"agy":    "agy prompt",
+				},
+			},
+		},
+		{
+			name: "empty prompt for tool in map",
+			cfg: Config{
+				Prompts: map[string]string{
+					"claude": "   ",
+				},
+			},
+			wantErr: `prompt for "claude" must not be empty`,
+		},
+		{
+			name: "valid prompt and prompts map",
+			cfg: Config{
+				Prompt: "default prompt",
+				Prompts: map[string]string{
+					"claude": "claude prompt",
+				},
+			},
+			wantP: "default prompt",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := tc.cfg
@@ -60,13 +88,13 @@ func TestConfigValidation(t *testing.T) {
 }
 
 func TestConfigContext(t *testing.T) {
-	if _, ok := ConfigFromContext(nil); ok {
+	if _, ok := ConfigFromContext(nil); ok { //nolint:staticcheck // testing nil context handling explicitly
 		t.Errorf("got ok=true for nil context")
 	}
 	if _, ok := ConfigFromContext(context.Background()); ok {
 		t.Errorf("got ok=true for context without config")
 	}
-	if _, ok := ConfigFilesFromContext(nil); ok {
+	if _, ok := ConfigFilesFromContext(nil); ok { //nolint:staticcheck // testing nil context handling explicitly
 		t.Errorf("got ok=true for nil context on ConfigFilesFromContext")
 	}
 	if _, ok := ConfigFilesFromContext(context.Background()); ok {
@@ -126,6 +154,88 @@ unknown_field: true
 	}
 }
 
+func TestConfigPromptFor(t *testing.T) {
+	cfg := Config{
+		Prompt: "default prompt",
+		Prompts: map[string]string{
+			"claude": "claude specific prompt",
+		},
+	}
+	if got, want := cfg.PromptFor("claude"), "claude specific prompt"; got != want {
+		t.Errorf("claude: got %q, want %q", got, want)
+	}
+	if got, want := cfg.PromptFor("agy"), "default prompt"; got != want {
+		t.Errorf("agy: got %q, want %q", got, want)
+	}
+
+	emptyCfg := Config{}
+	if got, want := emptyCfg.PromptFor("claude"), defaultInstructions; got != want {
+		t.Errorf("empty config: got %q, want defaultInstructions", got)
+	}
+}
+
+func TestParseConfigFileWithPrompts(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.yaml")
+	content := `
+prompt: default prompt
+prompts:
+  claude: claude prompt
+  agy: agy prompt
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	var cfg Config
+	if err := cmdyaml.ParseConfigFilesStrict(t.Context(), &cfg, cfgPath); err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+	if got, want := cfg.Prompt, "default prompt"; got != want {
+		t.Errorf("got Prompt %q, want %q", got, want)
+	}
+	if got, want := cfg.Prompts["claude"], "claude prompt"; got != want {
+		t.Errorf("got claude prompt %q, want %q", got, want)
+	}
+	if got, want := cfg.Prompts["agy"], "agy prompt"; got != want {
+		t.Errorf("got agy prompt %q, want %q", got, want)
+	}
+}
+
+func TestParseConfigFileWithAnchor(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.yaml")
+	content := `
+common_prompt: &common_prompt |-
+  Shared instructions across tools.
+
+prompts:
+  claude: *common_prompt
+  agy: *common_prompt
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	var cfg Config
+	if err := cmdyaml.ParseConfigFilesStrict(t.Context(), &cfg, cfgPath); err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+	want := "Shared instructions across tools."
+	if got := cfg.Prompts["claude"]; got != want {
+		t.Errorf("claude: got %q, want %q", got, want)
+	}
+	if got := cfg.Prompts["agy"]; got != want {
+		t.Errorf("agy: got %q, want %q", got, want)
+	}
+}
+
 func TestConfigPrehook(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "my_prompt.yaml")
@@ -182,6 +292,10 @@ func TestConfigPrehook(t *testing.T) {
 
 	// 3. Unset config when no default file exists -> succeeds with default prompt
 	t.Run("unset config", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("HOME", tmpDir)
+		t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
 		var gf GlobalFlags
 		fs := subcmd.NewFlagSet().MustRegisterFlagStruct(&gf, nil, nil)
 		if err := fs.FlagSet().Parse([]string{}); err != nil {

@@ -101,7 +101,11 @@ func diffPathFromPrompt(t *testing.T, cmd string) string {
 	if i < 0 {
 		t.Fatalf("%v does not name a diff file", cmd)
 	}
-	return strings.TrimSuffix(strings.TrimSpace(cmd[i+len(marker):]), `"`)
+	rest := cmd[i+len(marker):]
+	if end := strings.Index(rest, `"`); end >= 0 {
+		return strings.TrimSpace(rest[:end])
+	}
+	return strings.TrimSpace(rest)
 }
 
 func TestSummarizeWithCustomPrompt(t *testing.T) {
@@ -149,6 +153,32 @@ func TestSummarizeWithCustomPrompt(t *testing.T) {
 		}
 		if strings.Contains(cmd, "senior software engineer") {
 			t.Errorf("default instructions unexpectedly present: %q", cmd)
+		}
+		run.assertNoUnexpected()
+	})
+
+	t.Run("tool-specific prompts override default prompt", func(t *testing.T) {
+		run := newFakeRunner(t)
+		scriptMergeBaseAndDiff(run, "diff --git a/x b/x\n+added\n").
+			expect(`claude -p --allowedTools ""`, "summary\n", nil)
+
+		s := newTestSummarizer(run, "claude", "")
+		s.prompt = "Default fallback prompt."
+		s.prompts = map[string]string{
+			"claude": "Claude specific prompt.",
+			"agy":    "Agy specific prompt.",
+		}
+		summary := must(s.Summarize(t.Context(), "main", "my-feature"))
+		if got, want := summary, "summary"; got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+
+		stdin := run.stdinFor("claude")
+		if !strings.Contains(stdin, "Claude specific prompt.") {
+			t.Errorf("expected claude specific prompt: %q", stdin)
+		}
+		if strings.Contains(stdin, "Default fallback prompt.") {
+			t.Errorf("default fallback prompt was unexpectedly used: %q", stdin)
 		}
 		run.assertNoUnexpected()
 	})
@@ -280,4 +310,55 @@ func TestEngineDescription(t *testing.T) {
 	if got, want := newTestSummarizer(nil, "agy", "opus").engineDescription(), "agy (opus)"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
+}
+
+func TestSummarizerCommandClaude(t *testing.T) {
+	run := newFakeRunner(t)
+	scriptMergeBaseAndDiff(run, "diff --git a/x b/x\n+added\n")
+
+	s := newTestSummarizer(run, "claude", "claude-sonnet-4")
+	cmd, err := s.Command(t.Context(), "main", "my-feature")
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
+	if !strings.HasPrefix(cmd, `claude -p --allowedTools "" --model claude-sonnet-4 << 'EOF'`) {
+		t.Errorf("unexpected command line prefix: %v", cmd)
+	}
+	if !strings.Contains(cmd, "+added") {
+		t.Errorf("command does not contain diff content: %v", cmd)
+	}
+	if !strings.Contains(cmd, "senior software engineer") {
+		t.Errorf("command does not contain instructions: %v", cmd)
+	}
+	if !strings.HasSuffix(cmd, "\nEOF") {
+		t.Errorf("command does not end with EOF: %v", cmd)
+	}
+	run.assertNoUnexpected()
+}
+
+func TestSummarizerCommandAgy(t *testing.T) {
+	run := newFakeRunner(t)
+	scriptMergeBaseAndDiff(run, "diff --git a/x b/x\n+added\n")
+
+	s := newTestSummarizer(run, "agy", "gemini-3-pro")
+	cmd, err := s.Command(t.Context(), "main", "my-feature")
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
+	if !strings.HasPrefix(cmd, "agy -p ") {
+		t.Errorf("expected agy command to start with agy -p: %v", cmd)
+	}
+	if !strings.Contains(cmd, "--model gemini-3-pro") {
+		t.Errorf("expected agy command to include model: %v", cmd)
+	}
+	path := diffPathFromPrompt(t, cmd)
+	t.Cleanup(func() { _ = os.Remove(path) })
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading temp diff: %v", err)
+	}
+	if !strings.Contains(string(content), "+added") {
+		t.Errorf("temp diff file did not contain diff content")
+	}
+	run.assertNoUnexpected()
 }

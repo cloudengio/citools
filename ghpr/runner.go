@@ -62,6 +62,24 @@ func commandLine(name string, args []string) string {
 	return sb.String()
 }
 
+// formatCommand renders a command along with any standard input that would be
+// fed to it, formatted as a shell command.
+func formatCommand(stdin []byte, name string, args ...string) string {
+	cmd := commandLine(name, args)
+	if len(stdin) == 0 {
+		return cmd
+	}
+	in := string(stdin)
+	if !strings.HasSuffix(in, "\n") {
+		in += "\n"
+	}
+	eof := "EOF"
+	if strings.Contains(in, "\nEOF") {
+		eof = "GHPR_DIFF_EOF"
+	}
+	return fmt.Sprintf("%v << '%s'\n%s%s", cmd, eof, in, eof)
+}
+
 // dryRunner reports what would be run without running it, and is used for
 // --dry-run. Commands that only read are still run, since a dry run has to
 // be able to say what it would have done: it is the Runner handed to the

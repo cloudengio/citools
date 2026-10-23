@@ -10,8 +10,9 @@ Usage of `ghpr`
          post-note - attach the description of a merged pull request to the commit it created on the base branch
             config - config related commands
 
-global flags: [--base=main --config= --dry-run=false --engine=claude
---max-diff-lines=3000 --model= --verbose=false --yes=false]
+global flags: [--base=main --config= --dry-run=false
+--engine=claude --max-diff-lines=3000 --model= --show-command=false
+--show-summary-command=false --verbose=false --yes=false]
 
     -base string
       branch that pull requests are merged into (default "main")
@@ -27,6 +28,10 @@ global flags: [--base=main --config= --dry-run=false --engine=claude
       0 for no limit (default 3000)
     -model string
       model for the agent to use; the agent's own default if unset
+    -show-command
+      show the command that would be run to generate the summary
+    -show-summary-command
+      show the command that would be run to generate the summary
     -verbose
       explain what is being done
     -yes

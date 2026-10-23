@@ -69,6 +69,32 @@ func TestCreatePRDraft(t *testing.T) {
 	}
 }
 
+func TestCreatePRShowCommand(t *testing.T) {
+	run := newFakeRunner(t)
+	onFeatureBranch(run).
+		expect(viewCmd("my-feature"), "", errors.New(noPRErr)).
+		expect("git merge-base my-feature origin/main", "mergebase\n", nil).
+		expect(diffCmd("mergebase", "my-feature"), "a diff\n", nil)
+
+	app, out := testApp(t, run, "")
+	app.ShowSummaryCommand = true
+	if err := app.CreatePR(t.Context(), "t", false, true); err != nil {
+		t.Fatalf("CreatePR: %v", err)
+	}
+
+	if !strings.Contains(out.String(), `claude -p --allowedTools "" << 'EOF'`) {
+		t.Errorf("expected command to be output, got:\n%v", out)
+	}
+	if !strings.Contains(out.String(), "a diff") {
+		t.Errorf("expected output to contain diff, got:\n%v", out)
+	}
+	// The agent must NOT be invoked, nor anything created or pushed.
+	if run.ranPrefix("claude") || run.ranPrefix("gh pr create") || run.ranPrefix("git push") {
+		t.Errorf("unexpected commands were run: %v", run.ranCommands())
+	}
+	run.assertNoUnexpected()
+}
+
 func TestCreatePROnBaseBranch(t *testing.T) {
 	// Nothing to describe: the base branch is not a change.
 	run := newFakeRunner(t).expect("git rev-parse --abbrev-ref HEAD", "main\n", nil)
@@ -192,6 +218,33 @@ func TestUpdateSummary(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "updated the description of #7") {
 		t.Errorf("the output does not confirm the update:\n%v", out)
+	}
+	run.assertNoUnexpected()
+}
+
+func TestUpdateSummaryShowCommand(t *testing.T) {
+	run := newFakeRunner(t)
+	openPR := `{"number":7,"state":"OPEN","body":"old summary","url":"u","headRefName":"my-feature"}`
+	onFeatureBranch(run).
+		expect(viewCmd("my-feature"), openPR, nil).
+		expect("git merge-base my-feature origin/main", "mergebase\n", nil).
+		expect(diffCmd("mergebase", "my-feature"), "a diff\n", nil)
+
+	app, out := testApp(t, run, "")
+	app.ShowSummaryCommand = true
+	if err := app.UpdateSummary(t.Context(), ""); err != nil {
+		t.Fatalf("UpdateSummary: %v", err)
+	}
+
+	if !strings.Contains(out.String(), `claude -p --allowedTools "" << 'EOF'`) {
+		t.Errorf("expected command to be output, got:\n%v", out)
+	}
+	if !strings.Contains(out.String(), "a diff") {
+		t.Errorf("expected output to contain diff, got:\n%v", out)
+	}
+	// The agent must NOT be invoked, nor the PR updated.
+	if run.ranPrefix("claude") || run.ranPrefix("gh pr edit") {
+		t.Errorf("unexpected commands were run: %v", run.ranCommands())
 	}
 	run.assertNoUnexpected()
 }

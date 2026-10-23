@@ -57,6 +57,12 @@ commands:
         summary: describe the configuration spec
 `
 
+// SummaryCommandFlags are flags for showing the command that would be run to generate the summary.
+type SummaryCommandFlags struct {
+	ShowSummaryCommand bool `subcmd:"show-summary-command,false,show the command that would be run to generate the summary"`
+	ShowCommand        bool `subcmd:"show-command,false,show the command that would be run to generate the summary"`
+}
+
 // GlobalFlags are the flags common to every command.
 type GlobalFlags struct {
 	ConfigFile   string `subcmd:"config,,'path to YAML configuration file; if unset, config.yaml or ghpr.yaml is searched in standard locations'"`
@@ -66,7 +72,8 @@ type GlobalFlags struct {
 	MaxDiffLines int    `subcmd:"max-diff-lines,3000,summarize the diff stat instead of the diff once it is longer than this; 0 for no limit"`
 	Yes          bool   `subcmd:"yes,false,answer yes to every confirmation"`
 	DryRun       bool   `subcmd:"dry-run,false,report what would be changed without changing it"`
-	Verbose      bool   `subcmd:"verbose,false,explain what is being done"`
+	SummaryCommandFlags
+	Verbose bool `subcmd:"verbose,false,explain what is being done"`
 }
 
 var globalFlags GlobalFlags
@@ -75,6 +82,7 @@ var globalFlags GlobalFlags
 type CreateFlags struct {
 	Draft bool `subcmd:"draft,false,create the pull request as a draft"`
 	Push  bool `subcmd:"push,true,push the branch to origin if it is not there yet"`
+	SummaryCommandFlags
 }
 
 // PostNoteFlags are the flags for post-note.
@@ -84,9 +92,10 @@ type PostNoteFlags struct {
 	DeleteRemote bool `subcmd:"delete-remote,false,delete the feature branch from origin too; requires --delete-branch"`
 }
 
-// UpdateFlags are the flags for update-summary. It has none of its own, and
-// exists so that the command still reports the global ones.
-type UpdateFlags struct{}
+// UpdateFlags are the flags for update-summary.
+type UpdateFlags struct {
+	SummaryCommandFlags
+}
 
 func configPrehook(ctx context.Context) (context.Context, string, subcmd.PostHook, error) {
 	id := "withConfigPrehook"
@@ -170,12 +179,14 @@ func newApp(ctx context.Context) *App {
 			model:        globalFlags.Model,
 			maxDiffLines: globalFlags.MaxDiffLines,
 			prompt:       cfg.Prompt,
+			prompts:      cfg.Prompts,
 			log:          logf,
 		},
-		Stdout:    os.Stdout,
-		Stdin:     os.Stdin,
-		AssumeYes: globalFlags.Yes,
-		DryRun:    globalFlags.DryRun,
+		Stdout:             os.Stdout,
+		Stdin:              os.Stdin,
+		AssumeYes:          globalFlags.Yes,
+		DryRun:             globalFlags.DryRun,
+		ShowSummaryCommand: globalFlags.ShowSummaryCommand || globalFlags.ShowCommand,
 	}
 }
 
@@ -184,10 +195,14 @@ func createPR(ctx context.Context, flags any, args []string) error {
 		return fmt.Errorf("create-pr takes the title of the pull request as its only argument")
 	}
 	cf := flags.(*CreateFlags)
-	return newApp(ctx).CreatePR(ctx, args[0], cf.Draft, cf.Push)
+	app := newApp(ctx)
+	if cf.ShowSummaryCommand || cf.ShowCommand {
+		app.ShowSummaryCommand = true
+	}
+	return app.CreatePR(ctx, args[0], cf.Draft, cf.Push)
 }
 
-func updateSummary(ctx context.Context, _ any, args []string) error {
+func updateSummary(ctx context.Context, flags any, args []string) error {
 	if len(args) > 1 {
 		return fmt.Errorf("update-summary takes at most one branch or pull request number")
 	}
@@ -195,7 +210,12 @@ func updateSummary(ctx context.Context, _ any, args []string) error {
 	if len(args) == 1 {
 		target = args[0]
 	}
-	return newApp(ctx).UpdateSummary(ctx, target)
+	uf := flags.(*UpdateFlags)
+	app := newApp(ctx)
+	if uf.ShowSummaryCommand || uf.ShowCommand {
+		app.ShowSummaryCommand = true
+	}
+	return app.UpdateSummary(ctx, target)
 }
 
 func postNote(ctx context.Context, flags any, args []string) error {

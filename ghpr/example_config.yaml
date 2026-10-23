@@ -14,3 +14,11 @@ prompt: |
   (State 'None' if applicable)
 
   Output raw Markdown only. Do not wrap in outer code blocks. Do not attempt to run tools.
+
+# Tool-specific prompts keyed by the tool name (e.g. claude, agy).
+# When set, these override the default prompt for that specific tool.
+prompts:
+  claude: |
+    You are a senior software engineer. Generate a tight, minimal GitHub Pull Request description based ONLY on the provided git diff.
+  agy: |
+    You are a senior software engineer. Generate a tight, minimal GitHub Pull Request description based ONLY on the provided git diff.

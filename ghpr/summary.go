@@ -52,10 +52,16 @@ type Summarizer struct {
 	model        string
 	maxDiffLines int
 	prompt       string
+	prompts      map[string]string
 	log          func(string, ...any)
 }
 
 func (s *Summarizer) instructions() string {
+	if s.prompts != nil {
+		if p, ok := s.prompts[s.engine]; ok && strings.TrimSpace(p) != "" {
+			return p
+		}
+	}
 	if strings.TrimSpace(s.prompt) != "" {
 		return s.prompt
 	}
@@ -115,11 +121,7 @@ func (s *Summarizer) diff(ctx context.Context, base, ref string) (string, error)
 	return diff, nil
 }
 
-// generate runs the agent. claude is given the diff on its standard input,
-// with tools denied, so that it summarizes what it was handed and nothing
-// else. agy is given the path of a file holding the diff, which is how it
-// takes input that does not fit on a command line.
-func (s *Summarizer) generate(ctx context.Context, diff string) (string, error) {
+func (s *Summarizer) command(diff string) (stdin []byte, name string, args []string, cleanup func(), err error) {
 	switch s.engine {
 	case "claude":
 		args := []string{"-p", "--allowedTools", ""}
@@ -127,22 +129,47 @@ func (s *Summarizer) generate(ctx context.Context, diff string) (string, error) 
 			args = append(args, "--model", s.model)
 		}
 		prompt := s.instructions() + "\n\n### Diff:\n" + diff
-		out, err := s.run.Run(ctx, []byte(prompt), "claude", args...)
-		return string(out), err
+		return []byte(prompt), "claude", args, func() {}, nil
 	case "agy":
 		path, cleanup, err := writeTempDiff(diff)
 		if err != nil {
-			return "", err
+			return nil, "", nil, nil, err
 		}
-		defer cleanup()
 		args := []string{"-p", s.instructions() + "\n\nThe diff to summarize is in the file: " + path}
 		if s.model != "" {
 			args = append(args, "--model", s.model)
 		}
-		out, err := s.run.Run(ctx, nil, "agy", args...)
-		return string(out), err
+		return nil, "agy", args, cleanup, nil
 	}
-	return "", fmt.Errorf("unsupported engine %q: use claude or agy", s.engine)
+	return nil, "", nil, nil, fmt.Errorf("unsupported engine %q: use claude or agy", s.engine)
+}
+
+// Command returns the command line that would be run to generate the summary
+// for ref relative to base.
+func (s *Summarizer) Command(ctx context.Context, base, ref string) (string, error) {
+	diff, err := s.diff(ctx, base, ref)
+	if err != nil {
+		return "", err
+	}
+	stdin, name, args, _, err := s.command(diff)
+	if err != nil {
+		return "", err
+	}
+	return formatCommand(stdin, name, args...), nil
+}
+
+// generate runs the agent. claude is given the diff on its standard input,
+// with tools denied, so that it summarizes what it was handed and nothing
+// else. agy is given the path of a file holding the diff, which is how it
+// takes input that does not fit on a command line.
+func (s *Summarizer) generate(ctx context.Context, diff string) (string, error) {
+	stdin, name, args, cleanup, err := s.command(diff)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+	out, err := s.run.Run(ctx, stdin, name, args...)
+	return string(out), err
 }
 
 // writeTempDiff writes the diff to a file for an agent that reads its input
