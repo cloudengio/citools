@@ -1,0 +1,32 @@
+--- Overview
+Adds diagnostics to pconn connect for connections that have not yet been established. Until now, pssh retried failed attempts without reporting anything. This PR also adds an opt-in --interface-recovery flag that is passed through to pssh.
+
+--- Key Changes
+pconn/status.go (new)
+  * connWaiter tracks each connection's state: when the wait started, failed attempts, the last error, and how many times it has been established.
+    * Logs every failed attempt at WARN, with the attempt number, the error and whether it is retryable. The hook is pssh.WithOnAttemptFailed.
+    * Logs "connection established" at INFO when it comes up before any pending report, or at WARN when a pending report was already logged. Includes the wait time and failed-attempt count.
+    * Logs every establishment after the first as "connection re-established" at WARN, with an establishments count.
+  * statusReporter runs on a ticker and logs "connection not yet established" for each pending connection. Each line includes user, wait time, dial timeout, retry policy, forwards, attempt count and last error. When more than one connection is pending it also logs a summary line.
+
+pconn/connect_cmd.go
+  * New flags:
+    * --status-interval (default 15s; 0 disables).
+    * --interface-recovery (default false; passed to pssh.WithInterfaceRecovery).
+  * maintainConnections now takes *ConnectFlags instead of separate booleans.
+  * Each runner gets a connWaiter. The waiter now logs the "connection established" message that OnConnect used to log.
+  * The status reporter runs for as long as runCtx does.
+  * The per-connection startup log now also includes user, dial timeout, unlimited retries and interface recovery.
+
+Tests
+  * status_test.go: unit tests for waiter state changes, log levels and attributes, reporter summaries, running until cancelled, and turning reporting off.
+  * connect_cmd_test.go: an end-to-end test of the pending diagnostics against a refused port, a test that the --interface-recovery flag parses, and a test that a reachable host connects normally with recovery turned on.
+
+Docs
+  * README.md and cmdusage.go now give the default config path as config.yaml.
+
+Dependencies
+  * Bumped cloudeng.io/{algo,cmdutil,logging,net,file,sys,types}.
+
+--- Breaking Changes
+None. The format of the "connection established" log line has changed, though: it no longer has a host attribute and now uses the connection logger's ssh.addr/ssh.network attributes.
