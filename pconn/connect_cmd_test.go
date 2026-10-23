@@ -707,3 +707,180 @@ connections:
 		}
 	})
 }
+
+// waitForLog waits for the log file at path to contain want.
+func waitForLog(t *testing.T, path, want string) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if data, err := os.ReadFile(path); err == nil && strings.Contains(string(data), want) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	data, _ := os.ReadFile(path)
+	t.Fatalf("timed out waiting for %q in %v, log contains:\n%s", want, path, data)
+}
+
+// TestConnectCommandPendingDiagnostics covers the diagnostics for a
+// connection that has not been established. pssh retries silently, so these
+// reports are the only indication that pconn is still working on it rather
+// than having hung. The configured logging level is 1, ie. warn, so the test
+// also pins that they are visible at the level the example configuration
+// uses.
+func TestConnectCommandPendingDiagnostics(t *testing.T) {
+	userPriv, _ := newTestKey(t)
+	serveTestAgent(t, userPriv)
+
+	// Nothing listens on this port, so connecting to it is refused, which
+	// pssh retries, leaving the connection pending for as long as the test
+	// needs it to be.
+	deadPort := freePort(t)
+
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "pconn.log")
+	knownHostsPath := filepath.Join(tmpDir, "known_hosts")
+	if err := os.WriteFile(knownHostsPath, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfgContent := fmt.Sprintf(`
+logging:
+  level: 1
+  format: text
+  file: %s
+connections:
+  - name: unreachable
+    host: 127.0.0.1:%d
+    user: testuser
+    dial_timeout: 2s
+    known_hosts: [%s]
+    forwards: [%d:80]
+`, logPath, deadPort, knownHostsPath, freePort(t))
+	cfgPath := writeTestConfig(t, tmpDir, cfgContent)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	cli := newTestCLI(t)
+
+	dispatchDone := make(chan error, 1)
+	go func() {
+		dispatchDone <- cli.DispatchWithArgs(ctx, "pconn", "--config="+cfgPath,
+			"connect", "--status-interval=50ms")
+	}()
+
+	// Each failed attempt is reported as it happens, and carries the address
+	// that was dialled, which is what identifies a host that resolves to
+	// something unreachable.
+	waitForLog(t, logPath, "connection attempt failed")
+	waitForLog(t, logPath, "connection not yet established")
+
+	// The report must identify the connection and say what it is waiting for,
+	// for how long, and that it will keep trying.
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"level=WARN",
+		"connection=unreachable",
+		fmt.Sprintf("ssh.addr=127.0.0.1:%d", deadPort),
+		"user=testuser",
+		"waiting_for=",
+		"dial_timeout=2s",
+		"unlimited_retries=true",
+		"forwards=127.0.0.1:",
+		"failed_attempts=",
+		// Why it cannot connect, which pssh only reports through the
+		// WithOnAttemptFailed hook: it does not return the error from an
+		// attempt that it will retry.
+		"last_error=",
+		"connection refused",
+		"attempt=1",
+		"retryable=true",
+		// The dialled address, which the error from the dialler carries.
+		fmt.Sprintf("127.0.0.1:%d: connect", deadPort),
+	} {
+		if !strings.Contains(string(logged), want) {
+			t.Errorf("log does not contain %q:\n%s", want, logged)
+		}
+	}
+
+	cancel()
+	select {
+	case err := <-dispatchDone:
+		if !isCleanShutdown(err) {
+			t.Fatalf("expected clean shutdown, got: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for dispatch to complete after cancel")
+	}
+}
+
+// TestConnectFlagsInterfaceRecovery covers the flag's registration, since a
+// mistake in the struct tag is only visible at run time.
+func TestConnectFlagsInterfaceRecovery(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want bool
+	}{
+		{nil, false}, // off unless asked for
+		{[]string{"--interface-recovery"}, true},
+		{[]string{"--interface-recovery=true"}, true},
+		{[]string{"--interface-recovery=false"}, false},
+	} {
+		var cf ConnectFlags
+		fs := subcmd.NewFlagSet().MustRegisterFlagStruct(&cf, nil, nil)
+		if err := fs.FlagSet().Parse(tc.args); err != nil {
+			t.Errorf("%v: %v", tc.args, err)
+			continue
+		}
+		if got := cf.InterfaceRecovery; got != tc.want {
+			t.Errorf("%v: got %v, want %v", tc.args, got, tc.want)
+		}
+	}
+}
+
+// TestConnectCommandInterfaceRecovery runs a connection with the recovery
+// enabled, which must change nothing for a host that is reachable: the
+// recovery only runs for one that is not.
+func TestConnectCommandInterfaceRecovery(t *testing.T) {
+	userPriv, userSigner := newTestKey(t)
+	_, hostSigner := newTestKey(t)
+	serveTestAgent(t, userPriv)
+
+	user := "testuser"
+	srv := newTestSSHServer(t, hostSigner, userSigner, user)
+	tmpDir := t.TempDir()
+	knownHostsPath := filepath.Join(tmpDir, "known_hosts")
+	knownHostsLine := fmt.Sprintf("[%s]:%s %s\n",
+		srv.listener.Addr().(*net.TCPAddr).IP.String(),
+		srv.listener.Addr().String()[strings.LastIndex(srv.listener.Addr().String(), ":")+1:],
+		ssh.MarshalAuthorizedKey(hostSigner.PublicKey()))
+	if err := os.WriteFile(knownHostsPath, []byte(knownHostsLine), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfgContent := fmt.Sprintf(`
+connections:
+  - name: recovered
+    host: %s
+    user: %s
+    known_hosts: [%s]
+`, srv.addr(), user, knownHostsPath)
+	cfgPath := writeTestConfig(t, tmpDir, cfgContent)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	cli := newTestCLI(t)
+
+	dispatchDone := make(chan error, 1)
+	go func() {
+		dispatchDone <- cli.DispatchWithArgs(ctx, "pconn", "--config="+cfgPath,
+			"connect", "--interface-recovery", "recovered")
+	}()
+
+	srv.waitForConnection(t)
+	cancel()
+	if err := <-dispatchDone; !isCleanShutdown(err) {
+		t.Fatalf("expected clean shutdown, got: %v", err)
+	}
+}
