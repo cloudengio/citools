@@ -8,12 +8,16 @@ Usage of `ghpr`
          create-pr - create a pull request for the current branch, with a description generated from its diff
     update-summary - regenerate the description of a pull request from what its branch now changes
          post-note - attach the description of a merged pull request to the commit it created on the base branch
+            config - config related commands
 
-global flags: [--base=main --dry-run=false --engine=claude
+global flags: [--base=main --config= --dry-run=false --engine=claude
 --max-diff-lines=3000 --model= --verbose=false --yes=false]
 
     -base string
       branch that pull requests are merged into (default "main")
+    -config string
+      path to YAML configuration file; if unset, config.yaml or `ghpr`.yaml is
+      searched in standard locations
     -dry-run
       report what would be changed without changing it
     -engine string

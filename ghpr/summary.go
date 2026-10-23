@@ -25,11 +25,12 @@ var excludedPaths = []string{
 	":!*.min.js",
 }
 
-// instructions is what the agent is asked to do. It asks for the shape of
-// description this workflow wants and says not to use tools, since the diff
-// is supplied and reading the repository would only invite a summary of
-// something other than the change.
-const instructions = `You are a senior software engineer. Generate a tight, minimal GitHub Pull Request description based ONLY on the provided git diff.
+// defaultInstructions is what the agent is asked to do by default when no
+// custom prompt is configured. It asks for the shape of description this
+// workflow wants and says not to use tools, since the diff is supplied and
+// reading the repository would only invite a summary of something other
+// than the change.
+const defaultInstructions = `You are a senior software engineer. Generate a tight, minimal GitHub Pull Request description based ONLY on the provided git diff.
 
 Format:
 ## Overview
@@ -50,7 +51,15 @@ type Summarizer struct {
 	engine       string
 	model        string
 	maxDiffLines int
+	prompt       string
 	log          func(string, ...any)
+}
+
+func (s *Summarizer) instructions() string {
+	if strings.TrimSpace(s.prompt) != "" {
+		return s.prompt
+	}
+	return defaultInstructions
 }
 
 // Summarize returns a description of what ref changes relative to the base
@@ -117,7 +126,7 @@ func (s *Summarizer) generate(ctx context.Context, diff string) (string, error) 
 		if s.model != "" {
 			args = append(args, "--model", s.model)
 		}
-		prompt := instructions + "\n\n### Diff:\n" + diff
+		prompt := s.instructions() + "\n\n### Diff:\n" + diff
 		out, err := s.run.Run(ctx, []byte(prompt), "claude", args...)
 		return string(out), err
 	case "agy":
@@ -126,7 +135,7 @@ func (s *Summarizer) generate(ctx context.Context, diff string) (string, error) 
 			return "", err
 		}
 		defer cleanup()
-		args := []string{"-p", instructions + "\n\nThe diff to summarize is in the file: " + path}
+		args := []string{"-p", s.instructions() + "\n\nThe diff to summarize is in the file: " + path}
 		if s.model != "" {
 			args = append(args, "--model", s.model)
 		}

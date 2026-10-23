@@ -29,6 +29,7 @@ import (
 	"syscall"
 
 	"cloudeng.io/cmdutil"
+	"cloudeng.io/cmdutil/cmdyaml"
 	"cloudeng.io/cmdutil/subcmd"
 )
 
@@ -47,10 +48,18 @@ commands:
     summary: attach the description of a merged pull request to the commit it created on the base branch
     args:
       - "<branch> - the feature branch whose pull request was merged"
+  - name: config
+    summary: config related commands
+    commands:
+      - name: show
+        summary: show the current configuration
+      - name: describe
+        summary: describe the configuration spec
 `
 
 // GlobalFlags are the flags common to every command.
 type GlobalFlags struct {
+	ConfigFile   string `subcmd:"config,,'path to YAML configuration file; if unset, config.yaml or ghpr.yaml is searched in standard locations'"`
 	Engine       string `subcmd:"engine,claude,'agent used to generate descriptions: claude or agy'"`
 	Model        string `subcmd:"model,,model for the agent to use; the agent's own default if unset"`
 	Base         string `subcmd:"base,main,branch that pull requests are merged into"`
@@ -79,7 +88,59 @@ type PostNoteFlags struct {
 // exists so that the command still reports the global ones.
 type UpdateFlags struct{}
 
-func newApp() *App {
+func configPrehook(ctx context.Context) (context.Context, string, subcmd.PostHook, error) {
+	id := "withConfigPrehook"
+	postHook := func(ctx context.Context) (string, error) { return id, nil }
+	fs := subcmd.GlobalFlagSetFromContext(ctx)
+	if fs == nil {
+		return ctx, id, postHook, fmt.Errorf("global flagset not in context")
+	}
+
+	configFile := globalFlags.ConfigFile
+	explicitlySet := fs.IsExplicitlySet("config")
+
+	var foundFile string
+	if explicitlySet {
+		foundFile = cmdyaml.LocateConfigFileInDir(configFile, "ghpr")
+		if foundFile == "" {
+			return ctx, id, postHook, fmt.Errorf("configuration file %q not found", configFile)
+		}
+	} else {
+		if configFile != "" {
+			foundFile = cmdyaml.LocateConfigFileInDir(configFile, "ghpr")
+		}
+		if foundFile == "" {
+			foundFile = cmdyaml.LocateConfigFileInDir("config", "ghpr")
+		}
+		if foundFile == "" {
+			foundFile = cmdyaml.LocateConfigFileInDir("ghpr", "ghpr")
+		}
+	}
+
+	if foundFile == "" {
+		cfg := Config{Prompt: defaultInstructions}
+		ctx = ContextWithConfig(ctx, cfg)
+		return ctx, id, postHook, nil
+	}
+
+	if globalFlags.Verbose {
+		fmt.Fprintf(os.Stderr, "ghpr: using configuration file %v\n", foundFile)
+	}
+
+	var cfg Config
+	if err := cmdyaml.ParseConfigFilesStrict(ctx, &cfg, foundFile); err != nil {
+		return ctx, id, postHook, fmt.Errorf("failed to read configuration file %q: %w\nedit that file to correct it", foundFile, err)
+	}
+	if err := cfg.Validate(); err != nil {
+		return ctx, id, postHook, fmt.Errorf("configuration file %q is invalid: %w\nedit that file to correct it", foundFile, err)
+	}
+
+	ctx = ContextWithConfig(ctx, cfg)
+	ctx = ContextWithConfigFile(ctx, foundFile)
+	return ctx, id, postHook, nil
+}
+
+func newApp(ctx context.Context) *App {
 	run := Runner(execRunner{})
 	logf := func(string, ...any) {}
 	if globalFlags.Verbose {
@@ -97,6 +158,7 @@ func newApp() *App {
 		announce := func(cmd string) { fmt.Printf("would run: %v\n", cmd) }
 		git, gh = git.DryRun(announce), gh.DryRun(announce)
 	}
+	cfg, _ := ConfigFromContext(ctx)
 	return &App{
 		Git:  git,
 		GH:   gh,
@@ -107,6 +169,7 @@ func newApp() *App {
 			engine:       globalFlags.Engine,
 			model:        globalFlags.Model,
 			maxDiffLines: globalFlags.MaxDiffLines,
+			prompt:       cfg.Prompt,
 			log:          logf,
 		},
 		Stdout:    os.Stdout,
@@ -121,7 +184,7 @@ func createPR(ctx context.Context, flags any, args []string) error {
 		return fmt.Errorf("create-pr takes the title of the pull request as its only argument")
 	}
 	cf := flags.(*CreateFlags)
-	return newApp().CreatePR(ctx, args[0], cf.Draft, cf.Push)
+	return newApp(ctx).CreatePR(ctx, args[0], cf.Draft, cf.Push)
 }
 
 func updateSummary(ctx context.Context, _ any, args []string) error {
@@ -132,7 +195,7 @@ func updateSummary(ctx context.Context, _ any, args []string) error {
 	if len(args) == 1 {
 		target = args[0]
 	}
-	return newApp().UpdateSummary(ctx, target)
+	return newApp(ctx).UpdateSummary(ctx, target)
 }
 
 func postNote(ctx context.Context, flags any, args []string) error {
@@ -143,14 +206,22 @@ func postNote(ctx context.Context, flags any, args []string) error {
 	if pf.DeleteRemote && !pf.DeleteBranch {
 		return fmt.Errorf("--delete-remote needs --delete-branch: it deletes the branch from origin as well, not instead")
 	}
-	return newApp().PostNote(ctx, args[0], pf.PushNotes, pf.DeleteBranch, pf.DeleteRemote)
+	return newApp(ctx).PostNote(ctx, args[0], pf.PushNotes, pf.DeleteBranch, pf.DeleteRemote)
 }
 
 func createCLI() *subcmd.CommandSetYAML {
 	cmdSet := subcmd.MustFromYAML(cmdSpec)
 	cmdSet.Set("create-pr").MustRunner(createPR, &CreateFlags{})
+	cmdSet.Set("create-pr").MustSetPreHooks(configPrehook)
 	cmdSet.Set("update-summary").MustRunner(updateSummary, &UpdateFlags{})
+	cmdSet.Set("update-summary").MustSetPreHooks(configPrehook)
 	cmdSet.Set("post-note").MustRunner(postNote, &PostNoteFlags{})
+	cmdSet.Set("post-note").MustSetPreHooks(configPrehook)
+
+	cfgCmd := ConfigCommand{}
+	cmdSet.Set("config", "show").MustRunner(cfgCmd.Show, &struct{}{})
+	cmdSet.Set("config", "describe").MustRunner(cfgCmd.Describe, &struct{}{})
+	cmdSet.Set("config").MustSetPreHooks(configPrehook)
 	return cmdSet
 }
 

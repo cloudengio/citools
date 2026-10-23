@@ -104,6 +104,56 @@ func diffPathFromPrompt(t *testing.T, cmd string) string {
 	return strings.TrimSuffix(strings.TrimSpace(cmd[i+len(marker):]), `"`)
 }
 
+func TestSummarizeWithCustomPrompt(t *testing.T) {
+	t.Run("claude", func(t *testing.T) {
+		run := newFakeRunner(t)
+		scriptMergeBaseAndDiff(run, "diff --git a/x b/x\n+added\n").
+			expect(`claude -p --allowedTools ""`, "summary\n", nil)
+
+		s := newTestSummarizer(run, "claude", "")
+		s.prompt = "My custom PR prompt."
+		summary := must(s.Summarize(t.Context(), "main", "my-feature"))
+		if got, want := summary, "summary"; got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+
+		stdin := run.stdinFor("claude")
+		if !strings.Contains(stdin, "My custom PR prompt.") {
+			t.Errorf("prompt was not in stdin: %q", stdin)
+		}
+		if strings.Contains(stdin, "senior software engineer") {
+			t.Errorf("default instructions unexpectedly present: %q", stdin)
+		}
+		run.assertNoUnexpected()
+	})
+
+	t.Run("agy", func(t *testing.T) {
+		run := newFakeRunner(t)
+		scriptMergeBaseAndDiff(run, "a diff\n").
+			expectPrefix("agy -p ", "summary", nil)
+
+		s := newTestSummarizer(run, "agy", "")
+		s.prompt = "My custom PR prompt."
+		if _, err := s.Summarize(t.Context(), "main", "my-feature"); err != nil {
+			t.Fatalf("Summarize: %v", err)
+		}
+
+		var cmd string
+		for _, c := range run.ranCommands() {
+			if strings.HasPrefix(c, "agy") {
+				cmd = c
+			}
+		}
+		if !strings.Contains(cmd, "My custom PR prompt.") {
+			t.Errorf("prompt was not in command: %q", cmd)
+		}
+		if strings.Contains(cmd, "senior software engineer") {
+			t.Errorf("default instructions unexpectedly present: %q", cmd)
+		}
+		run.assertNoUnexpected()
+	})
+}
+
 func TestSummarizeUnknownEngine(t *testing.T) {
 	run := newFakeRunner(t)
 	scriptMergeBaseAndDiff(run, "a diff\n")
