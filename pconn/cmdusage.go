@@ -4,10 +4,10 @@
 //
 //	connect - create and maintain persistent connections for one or more groups or all configured connections
 //
-// global flags: [--config=pconn.yaml --log-file= --log-format=json --log-level=0 --log-source-code=false --verbose=false]
+// global flags: [--config=config.yaml --log-file= --log-format=json --log-level=0 --log-source-code=false --verbose=false]
 //
 //	-config string
-//	  path to YAML configuration file (default "pconn.yaml")
+//	  path to YAML configuration file (default "config.yaml")
 //	-log-file string
 //	  log file path. If not specified logs are written to stderr, if set to -
 //	  logs are written to stdout
