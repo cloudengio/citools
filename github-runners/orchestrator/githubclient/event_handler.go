@@ -398,6 +398,13 @@ func (r *WorkflowEventHandler) handleQueuedEvent(ctx context.Context, event *gog
 	defer cancel()
 
 	inst := r.workflowManager.newInstance(ctx, runner, pool, event)
+	// Released here rather than after the acquire below: from this point the
+	// instance holds a slot in the manager and two open log files, and a
+	// failure to acquire a VM or a registration token has to give them back
+	// as well. The status record is kept separately and outlives it, so the
+	// failure remains visible in the ui.
+	defer r.workflowManager.deleteInstance(ctx, inst.Name)
+
 	logger := LoggerWithWorkflowInstance(ctxlog.Logger(ctx), inst)
 	ctx = ctxlog.WithLogger(ctx, logger)
 
@@ -416,8 +423,6 @@ func (r *WorkflowEventHandler) handleQueuedEvent(ctx context.Context, event *gog
 		})
 		return err
 	}
-
-	defer r.workflowManager.deleteInstance(ctx, inst.Name)
 
 	r.status.upsert(inst.Name, func(rec *WorkflowSnapshot) {
 		snapshotFromInstance(inst)(rec)

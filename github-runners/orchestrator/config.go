@@ -303,6 +303,7 @@ func (cfg Config) validateVMPoolNames() error {
 }
 
 type contextConfigKey struct{}
+type contextConfigFileKey struct{}
 
 func ContextWithConfig(ctx context.Context, cfg Config) context.Context {
 	return context.WithValue(ctx, contextConfigKey{}, cfg)
@@ -311,6 +312,25 @@ func ContextWithConfig(ctx context.Context, cfg Config) context.Context {
 func ConfigFromContext(ctx context.Context) (Config, bool) {
 	cfg, ok := ctx.Value(contextConfigKey{}).(Config)
 	return cfg, ok
+}
+
+// ContextWithConfigFile returns a context carrying the path of the configuration file read.
+func ContextWithConfigFile(ctx context.Context, file string) context.Context {
+	return context.WithValue(ctx, contextConfigFileKey{}, []string{file})
+}
+
+// ContextWithConfigFiles returns a context carrying the paths of the configuration files read.
+func ContextWithConfigFiles(ctx context.Context, files ...string) context.Context {
+	return context.WithValue(ctx, contextConfigFileKey{}, files)
+}
+
+// ConfigFilesFromContext extracts the configuration file paths from the context.
+func ConfigFilesFromContext(ctx context.Context) ([]string, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	files, ok := ctx.Value(contextConfigFileKey{}).([]string)
+	return files, ok
 }
 
 type WebhookConfig struct {

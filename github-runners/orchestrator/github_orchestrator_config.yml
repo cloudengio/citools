@@ -110,6 +110,8 @@ repositories:
     <<: *cloudeng_repos
   - repo: "go.macos"
     <<: *cloudeng_repos
+  - repo: "go.linux"
+    <<: *cloudeng_repos
   - repo: "citools"
     <<: *cloudeng_repos
   - owner: "onyourbehalf"

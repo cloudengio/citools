@@ -18,6 +18,7 @@ sudo apt-get install -y --no-install-recommends \
   git \
   gnupg \
   jq \
+  keyutils \
   python3 \
   tar \
   unzip \
