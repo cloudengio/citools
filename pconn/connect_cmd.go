@@ -26,10 +26,13 @@ type ConnectCommand struct{}
 
 // ConnectFlags defines flags for the connect subcommand.
 type ConnectFlags struct {
-	ConfigFile       string `subcmd:"config,,path to YAML configuration file (overrides global --config)"`
-	Group            string `subcmd:"group,,comma-separated list of groups of connections to connect"`
-	UnlimitedRetries bool   `subcmd:"unlimited-retries,true,continue retrying connections indefinitely"`
-	FailFast         bool   `subcmd:"fail-fast,false,exit immediately if any connection fails permanently"`
+	ConfigFile       string        `subcmd:"config,,path to YAML configuration file (overrides global --config)"`
+	Group            string        `subcmd:"group,,comma-separated list of groups of connections to connect"`
+	UnlimitedRetries bool          `subcmd:"unlimited-retries,true,continue retrying connections indefinitely"`
+	FailFast         bool          `subcmd:"fail-fast,false,exit immediately if any connection fails permanently"`
+	StatusInterval   time.Duration `subcmd:"status-interval,15s,how often to report on connections that have not yet been established; 0 disables"`
+	//nolint:lll // The usage has to say when this is worth using.
+	InterfaceRecovery bool `subcmd:"interface-recovery,false,'retry a connection that cannot be routed to by way of each local interface in turn; only of use when this host is attached to the target subnet more than once, such as over both ethernet and wi-fi'"`
 }
 
 func newBackoffController(unlimitedRetries bool) *ratecontrol.Controller {
@@ -144,7 +147,7 @@ func (c ConnectCommand) Run(ctx context.Context, flags any, args []string) error
 
 	logger := ctxlog.Logger(ctx)
 	logger.Info("starting persistent connection management", "target", targetDesc)
-	return maintainConnections(ctx, logger, connsToMaintain, cf.UnlimitedRetries, cf.FailFast)
+	return maintainConnections(ctx, logger, connsToMaintain, cf)
 }
 
 func filterConnections(conns []ConnectionConfig, names []string) ([]ConnectionConfig, error) {
@@ -182,28 +185,34 @@ type connRunner struct {
 	conn       ConnectionConfig
 	client     *pssh.Client
 	controller *ratecontrol.Controller
+	waiter     *connWaiter
 }
 
 func maintainConnections(
 	ctx context.Context,
 	logger *slog.Logger,
 	conns []ConnectionConfig,
-	defaultUnlimitedRetries bool,
-	failFast bool,
+	cf *ConnectFlags,
 ) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	reporter := newStatusReporter(logger, cf.StatusInterval)
 	runners := make([]*connRunner, len(conns))
 	for i, conn := range conns {
 		switch conn.Type {
 		case "ssh":
 			hostPort := conn.HostPort()
-			connLogger := logger.With("connection", conn.Name, "type", conn.Type, "ssh.addr", hostPort)
+			connLogger := logger.With("connection", conn.Name, "type", conn.Type)
+			unlimited := conn.ShouldUnlimitedRetries(cf.UnlimitedRetries)
+			// pssh adds ssh.network and ssh.addr to the logger it is given,
+			// so only the waiter's own lines need the address adding.
+			waiter := reporter.add(connLogger.With("ssh.addr", hostPort), conn, unlimited)
 
 			var psshOpts []pssh.Option
 			psshOpts = append(psshOpts,
 				pssh.WithDialTimeout(conn.DialTimeout),
+				pssh.WithInterfaceRecovery(cf.InterfaceRecovery),
 				pssh.WithLogger(connLogger),
 				pssh.WithOnConnect(func(c *pssh.Client) {
 					key, comment := c.AuthKey()
@@ -211,13 +220,14 @@ func maintainConnections(
 					if keyName == "" && key != nil {
 						keyName = ssh.FingerprintSHA256(key)
 					}
-					logger.Info("connection established",
-						"connection", conn.Name,
-						"type", conn.Type,
-						"host", hostPort,
-						"key", keyName,
-					)
+					// The waiter logs this, so that a connection which was
+					// reported as pending is reported as established at the
+					// same level, and a reconnection as a reconnection.
+					waiter.established(keyName)
 				}),
+				// Without this the reason a connection cannot be made is
+				// never reported: pssh retries, so it does not return it.
+				pssh.WithOnAttemptFailed(waiter.attemptFailed),
 			)
 			if conn.parsedUser != "" {
 				psshOpts = append(psshOpts, pssh.WithUser(conn.parsedUser))
@@ -233,13 +243,13 @@ func maintainConnections(
 			}
 
 			client := pssh.NewClient(runCtx, "tcp", hostPort, psshOpts...)
-			unlimited := conn.ShouldUnlimitedRetries(defaultUnlimitedRetries)
 			controller := newBackoffController(unlimited)
 
 			runners[i] = &connRunner{
 				conn:       conn,
 				client:     client,
 				controller: controller,
+				waiter:     waiter,
 			}
 		default:
 			return fmt.Errorf("connection %q: unsupported connection type %q", conn.Name, conn.Type)
@@ -247,7 +257,7 @@ func maintainConnections(
 	}
 
 	var g *errgroup.T
-	if failFast {
+	if cf.FailFast {
 		// WithCancel cancels runCtx as soon as one connection fails, which is
 		// what --fail-fast asks for.
 		g = errgroup.WithCancel(cancel)
@@ -256,6 +266,12 @@ func maintainConnections(
 		// of their errors.
 		g = &errgroup.T{}
 	}
+
+	// Whilst a connection is being retried the reporter is the only thing
+	// that says anything at all, so it runs for as long as the connections
+	// do. runCtx is always cancelled by the deferred cancel above, so this
+	// goroutine never outlives the call.
+	go reporter.run(runCtx)
 
 	for _, r := range runners {
 		g.Go(func() error {
@@ -266,9 +282,14 @@ func maintainConnections(
 				"connection", r.conn.Name,
 				"type", r.conn.Type,
 				"host", hostPort,
+				"user", r.conn.ParsedUser(),
+				"dial_timeout", r.conn.DialTimeout,
+				"unlimited_retries", r.conn.ShouldUnlimitedRetries(cf.UnlimitedRetries),
+				"interface_recovery", cf.InterfaceRecovery,
 				"forwards", formatForwards(r.conn.Forwards),
 			)
 
+			r.waiter.connecting()
 			err := r.client.ConnectAndWait(runCtx, r.controller.Backoff)
 			// The errors.Is accepts ErrClientClosed anywhere in err, whereas
 			// isCleanShutdown requires every error to be clean.
