@@ -1,0 +1,22 @@
+--- Overview
+Fixes a resource leak in the orchestrator: a queued workflow whose VM or token acquisition failed left its instance and log files open. It also adds config file lookup across standard directories and shows the resolved config file path in config show.
+
+--- Key Changes
+  * githubclient/event_handler.go
+    * handleQueuedEvent now defers deleteInstance as soon as the instance is created, not after acquisition succeeds. A failed acquisition now releases its manager slot and both open log files. The status record is kept, so the failure still shows in the UI.
+    * New handle_queued_test.go checks that failed acquisitions release instances, keep a failed status record that includes the error and log paths, and don't leak file descriptors across repeated failures.
+  * main.go
+    * configPrehook looks for the config file in internal.ConfigDir, then github_orchestrator, then citools, using cmdyaml.LocateConfigFileInDir. If none is found it uses the --config flag value as given.
+    * Errors now report the resolved config file path.
+    * The resolved path is stored in the context.
+  * config.go
+    * Adds ContextWithConfigFile, ContextWithConfigFiles and ConfigFilesFromContext, which store and read config file paths in the context.
+  * config_cmd.go
+    * config show prints a # Configuration file: <path> header, or none if no path is known, before the YAML. It no longer prints an extra trailing newline.
+    * New config_cmd_test.go covers output with and without a config file.
+  * github_orchestrator_config.yml
+    * Adds the go.linux repository to the cloudeng repos.
+
+--- Breaking Changes
+  * The config file is now looked up in standard directories, so a relative or bare --config value may resolve to a different file than before.
+  * config show output now starts with one or more # Configuration file: comment lines.
