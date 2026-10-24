@@ -3,24 +3,24 @@ module github.com/cloudengio/citools/runners/macos/orchestrator
 go 1.27.0
 
 require (
-	cloudeng.io/algo v0.0.0-20261019232711-6d1a572cf353
-	cloudeng.io/cmdutil v0.0.0-20261019232711-6d1a572cf353
+	cloudeng.io/algo v0.0.0-20261023003013-a92ee3d383ff
+	cloudeng.io/cmdutil v0.0.0-20261023003013-a92ee3d383ff
 	cloudeng.io/errors v0.0.14-0.20260312171538-61fcde6ce278
-	cloudeng.io/file v0.0.0-20261018232534-249a4dd7d02a
-	cloudeng.io/logging v0.0.0-20261019232711-6d1a572cf353
-	cloudeng.io/macos v0.0.0-20261015004450-29fe0ea53510
-	cloudeng.io/net v0.0.0-20261019232711-6d1a572cf353
-	cloudeng.io/os v0.0.0-20261019232711-6d1a572cf353
+	cloudeng.io/file v0.0.0-20261023003013-a92ee3d383ff
+	cloudeng.io/logging v0.0.0-20261023003013-a92ee3d383ff
+	cloudeng.io/macos v0.0.0-20261021165814-68b5236bc207
+	cloudeng.io/net v0.0.0-20261023003013-a92ee3d383ff
+	cloudeng.io/os v0.0.0-20261023003013-a92ee3d383ff
 	cloudeng.io/sync v0.0.12-0.20260804222138-e9281ed260ba
 	cloudeng.io/text v0.0.16-0.20260624171915-da98fe9dec2b
-	cloudeng.io/vms v0.0.0-20261019232711-6d1a572cf353
+	cloudeng.io/vms v0.0.0-20261023003013-a92ee3d383ff
 	cloudeng.io/webapi/clients/github v0.0.0-20261019151527-b728423ca3bc
 	cloudeng.io/webapi/operations v0.0.0-20261019151527-b728423ca3bc
-	cloudeng.io/webapp v0.0.0-20261018222244-5fb10032fc8a
-	github.com/getkin/kin-openapi v0.151.0
+	cloudeng.io/webapp v0.0.0-20261020175408-a837605012e7
+	github.com/getkin/kin-openapi v0.152.0
 	github.com/google/go-github/v89 v89.0.0
-	github.com/lestrrat-go/jwx/v3 v3.3.0
-	github.com/oapi-codegen/runtime v1.7.0
+	github.com/lestrrat-go/jwx/v3 v3.4.0
+	github.com/oapi-codegen/runtime v1.8.0
 	golang.org/x/crypto v0.58.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1
@@ -28,13 +28,13 @@ require (
 )
 
 require (
-	cloudeng.io/cicd v0.0.0-20261019232711-6d1a572cf353 // indirect
-	cloudeng.io/encoding v0.0.0-20261019232711-6d1a572cf353 // indirect
-	cloudeng.io/io v0.0.0-20261019232711-6d1a572cf353 // indirect
+	cloudeng.io/cicd v0.0.0-20261023003013-a92ee3d383ff // indirect
+	cloudeng.io/encoding v0.0.0-20261023003013-a92ee3d383ff // indirect
+	cloudeng.io/io v0.0.0-20261023003013-a92ee3d383ff // indirect
 	cloudeng.io/path v0.0.10-0.20260312171538-61fcde6ce278 // indirect
-	cloudeng.io/security v0.0.0-20261019232711-6d1a572cf353 // indirect
-	cloudeng.io/sys v0.0.0-20261018232534-249a4dd7d02a // indirect
-	cloudeng.io/types v0.0.0-20261019232711-6d1a572cf353 // indirect
+	cloudeng.io/security v0.0.0-20261023003013-a92ee3d383ff // indirect
+	cloudeng.io/sys v0.0.0-20261023003013-a92ee3d383ff // indirect
+	cloudeng.io/types v0.0.0-20261023003013-a92ee3d383ff // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/cloudengio/go-keychain v0.0.0-20261014235732-bd9bcf9f8cd6 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
