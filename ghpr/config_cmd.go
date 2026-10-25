@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 
+	"cloudeng.io/cmdutil"
 	"cloudeng.io/cmdutil/structdoc"
 	"gopkg.in/yaml.v3"
 )
@@ -15,11 +16,11 @@ import (
 type ConfigCommand struct{}
 
 func (c ConfigCommand) Show(ctx context.Context, _ any, _ []string) error {
-	cfg, ok := ConfigFromContext(ctx)
+	cfg, ok := cmdutil.ContextValue[Config](ctx)
 	if !ok {
 		return fmt.Errorf("no config in context")
 	}
-	files, _ := ConfigFilesFromContext(ctx)
+	files, _ := cmdutil.ContextValue[ConfigFiles](ctx)
 	if len(files) == 0 {
 		fmt.Println("# Configuration file: none (using defaults)")
 	} else {
@@ -36,7 +37,7 @@ func (c ConfigCommand) Show(ctx context.Context, _ any, _ []string) error {
 }
 
 func (c ConfigCommand) Describe(ctx context.Context, _ any, _ []string) error {
-	cfg, ok := ConfigFromContext(ctx)
+	cfg, ok := cmdutil.ContextValue[Config](ctx)
 	if !ok {
 		cfg = Config{}
 	}

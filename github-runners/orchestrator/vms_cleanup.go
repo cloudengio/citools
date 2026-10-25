@@ -13,6 +13,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"cloudeng.io/cmdutil"
 	"cloudeng.io/logging/ctxlog"
 	"cloudeng.io/vms/vmspool"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/vmsclient"
@@ -63,7 +64,7 @@ func (t VMCommand) Delete(ctx context.Context, flags any, _ []string) error {
 		}
 		return nil
 	}
-	cfg, ok := ConfigFromContext(ctx)
+	cfg, ok := cmdutil.ContextValue[Config](ctx)
 	if !ok {
 		return fmt.Errorf("no config in context")
 	}
@@ -105,7 +106,7 @@ func sweepStopTimeout(cfg Config) time.Duration {
 }
 
 func listVMs(ctx context.Context) ([]vmspool.VMInfo, error) {
-	cfg, ok := ConfigFromContext(ctx)
+	cfg, ok := cmdutil.ContextValue[Config](ctx)
 	if !ok {
 		return nil, fmt.Errorf("no config in context")
 	}

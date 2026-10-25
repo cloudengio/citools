@@ -12,14 +12,14 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"syscall"
 
 	"cloudeng.io/cmdutil"
-	"cloudeng.io/cmdutil/cmdyaml"
+	"cloudeng.io/cmdutil/cmdconfig"
 	"cloudeng.io/cmdutil/subcmd"
-	"cloudeng.io/logging/ctxlog"
 	"cloudeng.io/net/pssh"
 )
 
@@ -34,7 +34,7 @@ commands:
 `
 
 type GlobalFlags struct {
-	ConfigFile string `subcmd:"config,config.yaml,path to YAML configuration file" doc:"path to YAML configuration file"`
+	Config cmdconfig.FilesFlag `subcmd:"config,config.yaml,YAML configuration file" doc:"YAML configuration file"`
 	cmdutil.LoggingFlags
 	Verbose bool `subcmd:"verbose,false,enable verbose logging" doc:"enable verbose logging"`
 }
@@ -51,44 +51,35 @@ func createCLI() *subcmd.CommandSetYAML {
 	return cmdSet
 }
 
+// configSpec specifies how the configuration file is located: in the standard
+// locations for pconn, and it must be there.
+var configSpec = cmdconfig.Spec{
+	AppDir:    "pconn",
+	FirstOnly: []cmdconfig.FileType{cmdconfig.FileTypeYAML},
+}
+
+// loggerPrehook creates the logger from the configuration, as overridden by the
+// command line flags.
+var loggerPrehook = subcmd.LoggerHook("withLoggerPrehook", func(ctx context.Context, fs *flag.FlagSet) (*cmdutil.Logger, error) {
+	cfg, _ := cmdutil.ContextValue[Config](ctx)
+	return cfg.Logging.WithFlagOverrides(fs, globalFlags.LoggingFlags).NewLogger()
+})
+
 func configPrehook(ctx context.Context) (context.Context, string, subcmd.PostHook, error) {
-	id := "withConfigPrehook"
-	postHook := func(ctx context.Context) (string, error) { return id, nil }
-	fs := subcmd.GlobalFlagSetFromContext(ctx)
-	if fs == nil {
-		return ctx, id, postHook, fmt.Errorf("global flagset not in context")
+	hook := subcmd.ConfigHook[Config]{
+		Files:    &globalFlags.Config,
+		Spec:     configSpec,
+		Required: true,
+		Store: func(ctx context.Context, cfg Config, _ *cmdconfig.Located) context.Context {
+			return cmdutil.ContextWithValue(ctx, cfg)
+		},
 	}
-
-	configFile := globalFlags.ConfigFile
-	configFile = cmdyaml.LocateConfigFileInDir(configFile, "pconn")
-	if configFile == "" {
-		return ctx, id, postHook, fmt.Errorf("configuration %q file not found", globalFlags.ConfigFile)
-	}
-
-	var cfg Config
-	if err := cmdyaml.ParseConfigFilesStrict(ctx, &cfg, configFile); err != nil {
-		return ctx, id, postHook, fmt.Errorf("failed to read configuration file %q: %w\nedit that file to correct it", configFile, err)
-	}
-	if err := cfg.Validate(); err != nil {
-		return ctx, id, postHook, fmt.Errorf("configuration file %q is invalid: %w\nedit that file to correct it", configFile, err)
-	}
-
-	loggerConfig := cfg.Logging.WithFlagOverrides(
-		fs.FlagSet(), globalFlags.LoggingFlags)
-	logger, err := loggerConfig.NewLogger()
+	ctx, id, _, err := hook.Run(ctx)
 	if err != nil {
-		return ctx, id, postHook, fmt.Errorf("error setting up logger: %w", err)
+		return ctx, id, nil, err
 	}
-
-	ctx = ctxlog.WithLogger(ctx, logger.Logger)
-	ctx = ContextWithConfig(ctx, cfg)
-	postHook = func(ctx context.Context) (string, error) {
-		if err := logger.Close(); err != nil {
-			return id, fmt.Errorf("error closing logger: %w", err)
-		}
-		return id, nil
-	}
-	return ctx, id, postHook, nil
+	ctx, _, postHook, err := loggerPrehook(ctx)
+	return ctx, id, postHook, err
 }
 
 // isCleanShutdown reports whether err is a clean shutdown for this command:

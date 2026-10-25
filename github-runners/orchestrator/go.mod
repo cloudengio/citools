@@ -3,17 +3,17 @@ module github.com/cloudengio/citools/runners/macos/orchestrator
 go 1.27.0
 
 require (
-	cloudeng.io/algo v0.0.0-20261023003013-a92ee3d383ff
-	cloudeng.io/cmdutil v0.0.0-20261023003013-a92ee3d383ff
+	cloudeng.io/algo v0.0.0-20261024235640-5050ffdc866a
+	cloudeng.io/cmdutil v0.0.0-20261024235640-5050ffdc866a
 	cloudeng.io/errors v0.0.14-0.20260312171538-61fcde6ce278
-	cloudeng.io/file v0.0.0-20261023003013-a92ee3d383ff
-	cloudeng.io/logging v0.0.0-20261023003013-a92ee3d383ff
-	cloudeng.io/macos v0.0.0-20261021165814-68b5236bc207
-	cloudeng.io/net v0.0.0-20261023003013-a92ee3d383ff
-	cloudeng.io/os v0.0.0-20261023003013-a92ee3d383ff
+	cloudeng.io/file v0.0.0-20261024235640-5050ffdc866a
+	cloudeng.io/logging v0.0.0-20261024235640-5050ffdc866a
+	cloudeng.io/macos v0.0.0-20261025171542-4e757ba7c1e2
+	cloudeng.io/net v0.0.0-20261024235640-5050ffdc866a
+	cloudeng.io/os v0.0.0-20261024235640-5050ffdc866a
 	cloudeng.io/sync v0.0.12-0.20260804222138-e9281ed260ba
 	cloudeng.io/text v0.0.16-0.20260624171915-da98fe9dec2b
-	cloudeng.io/vms v0.0.0-20261023003013-a92ee3d383ff
+	cloudeng.io/vms v0.0.0-20261024235640-5050ffdc866a
 	cloudeng.io/webapi/clients/github v0.0.0-20261019151527-b728423ca3bc
 	cloudeng.io/webapi/operations v0.0.0-20261019151527-b728423ca3bc
 	cloudeng.io/webapp v0.0.0-20261020175408-a837605012e7
@@ -28,13 +28,13 @@ require (
 )
 
 require (
-	cloudeng.io/cicd v0.0.0-20261023003013-a92ee3d383ff // indirect
-	cloudeng.io/encoding v0.0.0-20261023003013-a92ee3d383ff // indirect
-	cloudeng.io/io v0.0.0-20261023003013-a92ee3d383ff // indirect
+	cloudeng.io/cicd v0.0.0-20261024235640-5050ffdc866a // indirect
+	cloudeng.io/encoding v0.0.0-20261024235640-5050ffdc866a // indirect
+	cloudeng.io/io v0.0.0-20261024235640-5050ffdc866a // indirect
 	cloudeng.io/path v0.0.10-0.20260312171538-61fcde6ce278 // indirect
-	cloudeng.io/security v0.0.0-20261023003013-a92ee3d383ff // indirect
-	cloudeng.io/sys v0.0.0-20261023003013-a92ee3d383ff // indirect
-	cloudeng.io/types v0.0.0-20261023003013-a92ee3d383ff // indirect
+	cloudeng.io/security v0.0.0-20261024235640-5050ffdc866a // indirect
+	cloudeng.io/sys v0.0.0-20261024235640-5050ffdc866a // indirect
+	cloudeng.io/types v0.0.0-20261024235640-5050ffdc866a // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/cloudengio/go-keychain v0.0.0-20261014235732-bd9bcf9f8cd6 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
@@ -60,13 +60,13 @@ require (
 	github.com/valyala/fastjson v1.6.10 // indirect
 	github.com/vmware-labs/yaml-jsonpath v0.3.2 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/mod v0.41.0 // indirect
+	golang.org/x/mod v0.42.0 // indirect
 	golang.org/x/net v0.61.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
-	golang.org/x/tools v0.51.0 // indirect
+	golang.org/x/tools v0.52.0 // indirect
 )
 
 tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen

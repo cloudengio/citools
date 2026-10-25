@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"cloudeng.io/cmdutil"
 )
 
 func captureStdout(f func()) string {
@@ -36,8 +38,8 @@ func captureStdout(f func()) string {
 func TestConfigCommandShow(t *testing.T) {
 	cmd := ConfigCommand{}
 	cfg := Config{}
-	ctx := ContextWithConfig(context.Background(), cfg)
-	ctx = ContextWithConfigFile(ctx, "/path/to/my_orchestrator.yml")
+	ctx := cmdutil.ContextWithValue(context.Background(), cfg)
+	ctx = cmdutil.ContextWithValue(ctx, ConfigFiles{"/path/to/my_orchestrator.yml"})
 
 	out := captureStdout(func() {
 		if err := cmd.Show(ctx, nil, nil); err != nil {
@@ -53,7 +55,7 @@ func TestConfigCommandShow(t *testing.T) {
 func TestConfigCommandShowNoFile(t *testing.T) {
 	cmd := ConfigCommand{}
 	cfg := Config{}
-	ctx := ContextWithConfig(context.Background(), cfg)
+	ctx := cmdutil.ContextWithValue(context.Background(), cfg)
 
 	out := captureStdout(func() {
 		if err := cmd.Show(ctx, nil, nil); err != nil {
@@ -63,5 +65,26 @@ func TestConfigCommandShowNoFile(t *testing.T) {
 
 	if !strings.Contains(out, "# Configuration file: none") {
 		t.Errorf("expected '# Configuration file: none', got: %q", out)
+	}
+}
+
+func TestConfigCommandShowWithEnvFile(t *testing.T) {
+	cmd := ConfigCommand{}
+	cfg := Config{}
+	ctx := cmdutil.ContextWithValue(context.Background(), cfg)
+	ctx = cmdutil.ContextWithValue(ctx, ConfigFiles{"/path/to/my_orchestrator.yml"})
+	ctx = cmdutil.ContextWithValue(ctx, EnvConfigFile("/path/to/my_orchestrator.env"))
+
+	out := captureStdout(func() {
+		if err := cmd.Show(ctx, nil, nil); err != nil {
+			t.Fatalf("Show: %v", err)
+		}
+	})
+
+	if !strings.Contains(out, "# Configuration file: /path/to/my_orchestrator.yml") {
+		t.Errorf("missing config file path in output: %q", out)
+	}
+	if !strings.Contains(out, "# Environment variables file: /path/to/my_orchestrator.env") {
+		t.Errorf("missing env file path in output: %q", out)
 	}
 }

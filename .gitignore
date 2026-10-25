@@ -21,6 +21,8 @@ govulnchecker/govulnchecker
 multimod/multimod
 waitforfiles/waitforfiles
 citools.code-workspace
+ghpr/ghpr
+pconn/pconn
 code_review.md
 go.work
 go.work.sum

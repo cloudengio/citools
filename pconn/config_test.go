@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"cloudeng.io/cmdutil"
 	"cloudeng.io/cmdutil/cmdyaml"
 	"cloudeng.io/net/pssh"
 )
@@ -350,13 +351,13 @@ func TestFilterConnections(t *testing.T) {
 
 func TestContextWithConfig(t *testing.T) {
 	ctx := context.Background()
-	if _, ok := ConfigFromContext(ctx); ok {
+	if _, ok := cmdutil.ContextValue[Config](ctx); ok {
 		t.Fatal("expected no config in empty context")
 	}
 
 	cfg := Config{Connections: []ConnectionConfig{{Name: "test"}}}
-	ctx = ContextWithConfig(ctx, cfg)
-	got, ok := ConfigFromContext(ctx)
+	ctx = cmdutil.ContextWithValue(ctx, cfg)
+	got, ok := cmdutil.ContextValue[Config](ctx)
 	if !ok || len(got.Connections) != 1 || got.Connections[0].Name != "test" {
 		t.Fatalf("failed to retrieve config from context: got %v, ok %v", got, ok)
 	}

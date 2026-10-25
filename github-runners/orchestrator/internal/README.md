@@ -6,7 +6,7 @@ import github.com/cloudengio/citools/runners/macos/orchestrator/internal
 
 
 ## Constants
-### OrchestratorBinary, BundleID, ConfigDir, ConfigFileName, LaunchAgentFileName, RunLockName
+### OrchestratorBinary, BundleID, ConfigDir, ConfigDirXDG, ConfigFileName, LaunchAgentFileName, RunLockName
 ```go
 // OrchestratorBinary is the name of the orchestrator executable.
 OrchestratorBinary = "github-runner-orchestrator"
@@ -17,9 +17,12 @@ BundleID = "io.cloudeng." + OrchestratorBinary
 // ConfigDir is the per-user directory, within the directory reported by
 // os.UserConfigDir, holding the configuration file and the run lock.
 ConfigDir = "io.cloudeng." + OrchestratorBinary
+// ConfigDirXDG is the directory, within ~/.config, that the configuration
+// file is also searched for in.
+ConfigDirXDG = "github-orchestrator"
 // ConfigFileName is the name of the configuration file, both in ConfigDir
 // and in the bundle's Resources directory.
-ConfigFileName = "github_orchestrator_config.yml"
+ConfigFileName = "config.yaml"
 // LaunchAgentFileName is the name of the launchd login service
 // configuration, both in the source tree and in the bundle's Resources.
 LaunchAgentFileName = "launch_agent.yml"

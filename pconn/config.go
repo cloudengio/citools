@@ -5,7 +5,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"os"
@@ -421,17 +420,4 @@ func (cfg *Config) Validate() error {
 	}
 
 	return nil
-}
-
-type configContextKey struct{}
-
-// ContextWithConfig returns a context carrying the parsed Config.
-func ContextWithConfig(ctx context.Context, cfg Config) context.Context {
-	return context.WithValue(ctx, configContextKey{}, cfg)
-}
-
-// ConfigFromContext extracts the Config from the context.
-func ConfigFromContext(ctx context.Context) (Config, bool) {
-	cfg, ok := ctx.Value(configContextKey{}).(Config)
-	return cfg, ok
 }

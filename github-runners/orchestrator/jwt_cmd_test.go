@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"cloudeng.io/cmdutil"
 	"cloudeng.io/cmdutil/keys"
 	"cloudeng.io/cmdutil/keys/keyscmd"
 	"cloudeng.io/webapp/cookies"
@@ -138,7 +139,7 @@ func TestJWTIssuer(t *testing.T) {
 			SigningKey: keyInfo.KeySpec(),
 		},
 	}
-	ctx = ContextWithConfig(ctx, cfg)
+	ctx = cmdutil.ContextWithValue(ctx, cfg)
 
 	// Set up capture of the generated auth URL via jwtOpenBrowserFn.
 	urlCh := make(chan string, 1)
