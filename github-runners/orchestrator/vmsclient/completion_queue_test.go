@@ -132,4 +132,3 @@ func TestCompletionQueueVMTracking(t *testing.T) {
 		t.Errorf("queue should not contain VM after Remove")
 	}
 }
-

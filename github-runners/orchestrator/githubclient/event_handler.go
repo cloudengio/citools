@@ -123,6 +123,17 @@ func (r *WorkflowEventHandler) PoolStatus(ctx context.Context) ([]vmsclient.Pool
 	return r.vmPools.Status(ctx)
 }
 
+// Capacity reports whether the VM pools can supply a VM for a queued job, see
+// vmsclient.Capacity. It is what gates the webhook listener's connection to
+// the relay: there is no point in holding it, or in reading events that would
+// only queue up here, whilst no job can be started.
+func (r *WorkflowEventHandler) Capacity() vmsclient.Capacity {
+	if r.vmPools == nil {
+		return vmsclient.Capacity{}
+	}
+	return r.vmPools.Capacity()
+}
+
 // RefreshPool removes all currently available VMs in the named pool and replaces
 // them with newly cloned ones. Acquired (busy) VMs are not affected.
 func (r *WorkflowEventHandler) RefreshPool(ctx context.Context, name string) (int, error) {

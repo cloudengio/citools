@@ -282,6 +282,15 @@ It returns ErrWorkflowNotRunning if no live instance exists for name.
 
 
 ```go
+func (r *WorkflowEventHandler) Capacity() vmsclient.Capacity
+```
+Capacity reports whether the VM pools can supply a VM for a queued job,
+see vmsclient.Capacity. It is what gates the webhook listener's connection
+to the relay: there is no point in holding it, or in reading events that
+would only queue up here, whilst no job can be started.
+
+
+```go
 func (r *WorkflowEventHandler) Close(ctx context.Context) error
 ```
 

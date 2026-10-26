@@ -153,6 +153,31 @@ func reconfigureVMPools(cfg Config, deleteAcquiredOnClose bool) Config {
 	return cfg
 }
 
+// poolCapacity gates the webhook listener's connection to the relay on the VM
+// pools being able to run a job, see githubwebhook.WithCapacity. Whilst every
+// VM is busy there is nothing to be done with a queued job but wait for one,
+// so the connection is dropped and the events stay queued at the relay, where
+// another orchestrator reading it can take them instead, until a VM is free
+// again.
+//
+// Only the "queued" events actually need a VM; the "in_progress" and
+// "completed" ones are bookkeeping, and holding them at the relay delays only
+// that. The jobs themselves are unaffected: a VM is driven to completion
+// locally, rather than by the webhooks, so a job running on one finishes, and
+// frees its VM, whilst the relay is not being read.
+type poolCapacity struct {
+	handler *githubclient.WorkflowEventHandler
+	changed <-chan struct{}
+}
+
+func (c poolCapacity) HasCapacity() bool {
+	return c.handler.Capacity().Any()
+}
+
+func (c poolCapacity) Changed() <-chan struct{} {
+	return c.changed
+}
+
 func (r RunCommand) Run(ctx context.Context, fl any, _ []string) error {
 	fv := fl.(*RunFlags)
 	return r.runWithUIMode(ctx, fv, ui.ModeAccessory)
@@ -242,7 +267,14 @@ func (r RunCommand) runWithUIMode(ctx context.Context, fv *RunFlags, mode ui.Mod
 		backend.SetHandler(ctx, wh)
 	}
 
-	h := githubwebhook.New(cfg.Webhook.RelayURL, wh.HandleWebhooks, githubwebhook.WithStreaming(cfg.Webhook.Streaming))
+	// The relay is read only whilst a VM can be had to run a job on, see
+	// poolCapacity.
+	capacityCh, releaseCapacity := wh.Subscribe(ctx)
+	defer releaseCapacity()
+
+	h := githubwebhook.New(cfg.Webhook.RelayURL, wh.HandleWebhooks,
+		githubwebhook.WithStreaming(cfg.Webhook.Streaming),
+		githubwebhook.WithCapacity(poolCapacity{handler: wh, changed: capacityCh}))
 
 	u := ui.New(mode)
 	if fv.NoMenuBar || !u.IsAvailable() {

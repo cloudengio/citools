@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -30,6 +31,9 @@ type fakeRelay struct {
 	deliveries chan relayDelivery
 	done       chan struct{}
 	requests   atomic.Int64
+	// ended carries one value per request the relay has finished serving, ie.
+	// per connection the listener no longer holds.
+	ended chan struct{}
 }
 
 type relayDelivery struct {
@@ -43,6 +47,7 @@ func newFakeRelay(t *testing.T) *fakeRelay {
 	f := &fakeRelay{
 		deliveries: make(chan relayDelivery, 16),
 		done:       make(chan struct{}),
+		ended:      make(chan struct{}, 16),
 	}
 	f.server = httptest.NewServer(http.HandlerFunc(f.serve))
 	// Cleanups run LIFO: close done first so any in-flight hanging read returns,
@@ -55,6 +60,12 @@ func newFakeRelay(t *testing.T) *fakeRelay {
 
 func (f *fakeRelay) serve(w http.ResponseWriter, r *http.Request) {
 	f.requests.Add(1)
+	defer func() {
+		select {
+		case f.ended <- struct{}{}:
+		default:
+		}
+	}()
 	if r.URL.Query().Get("stream") == "1" {
 		f.serveStream(w, r)
 		return
@@ -344,5 +355,138 @@ func TestListenContextCancelled(t *testing.T) {
 		errCh := runListen(ctx, l)
 		cancel()
 		mustReturn(t, errCh, context.Canceled)
+	})
+}
+
+// fakeCapacity is a githubwebhook.Capacity whose answer the test controls. It
+// signals a change as the orchestrator's VM pools do: on a channel whose
+// signals may be coalesced.
+type fakeCapacity struct {
+	mu        sync.Mutex
+	available bool
+	changed   chan struct{}
+}
+
+func newFakeCapacity(available bool) *fakeCapacity {
+	return &fakeCapacity{available: available, changed: make(chan struct{}, 1)}
+}
+
+func (c *fakeCapacity) HasCapacity() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.available
+}
+
+func (c *fakeCapacity) Changed() <-chan struct{} {
+	return c.changed
+}
+
+// set changes the answer and signals that it has changed.
+func (c *fakeCapacity) set(available bool) {
+	c.mu.Lock()
+	c.available = available
+	c.mu.Unlock()
+	select {
+	case c.changed <- struct{}{}:
+	default:
+	}
+}
+
+// withCapacity returns opts plus the capacity to gate the listener on.
+func withCapacity(c *fakeCapacity, opts []githubwebhook.Option) []githubwebhook.Option {
+	return append([]githubwebhook.Option{githubwebhook.WithCapacity(c)}, opts...)
+}
+
+// waitForRequests waits until the relay has been sent at least n requests.
+func waitForRequests(t *testing.T, relay *fakeRelay, n int64) {
+	t.Helper()
+	deadline := time.Now().Add(waitTimeout)
+	for relay.requests.Load() < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %d relay requests: got %d", n, relay.requests.Load())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// assertNoRequests checks that the relay is left alone for d, ie. that the
+// listener is not reconnecting to it.
+func assertNoRequests(t *testing.T, relay *fakeRelay, d time.Duration) {
+	t.Helper()
+	before := relay.requests.Load()
+	time.Sleep(d)
+	if got := relay.requests.Load(); got != before {
+		t.Errorf("the relay was read whilst there was no capacity: requests went from %d to %d", before, got)
+	}
+}
+
+func TestListenWaitsForCapacity(t *testing.T) {
+	testModes(t, func(t *testing.T, opts ...githubwebhook.Option) {
+		relay := newFakeRelay(t)
+		capacity := newFakeCapacity(false)
+		l, received := newListener(relay.server.URL, withCapacity(capacity, opts)...)
+		relay.deliver("workflow_job", workflowJobBody(t, "queued", 11))
+
+		errCh := runListen(context.Background(), l)
+
+		// With nothing to run a job on the relay is not read at all: the event
+		// stays queued there rather than being taken on and left to wait.
+		assertNoRequests(t, relay, 200*time.Millisecond)
+		select {
+		case ev := <-received:
+			t.Fatalf("the handler was called with no capacity for the job: %+v", ev)
+		default:
+		}
+
+		capacity.set(true)
+		select {
+		case ev := <-received:
+			if got, want := ev.GetWorkflowJob().GetID(), int64(11); got != want {
+				t.Errorf("WorkflowJob.ID: got %d, want %d", got, want)
+			}
+		case <-time.After(waitTimeout):
+			t.Fatal("timed out waiting for the event queued whilst there was no capacity")
+		}
+
+		l.Stop()
+		mustReturn(t, errCh, nil)
+	})
+}
+
+func TestListenDropsConnectionWhenCapacityIsLost(t *testing.T) {
+	testModes(t, func(t *testing.T, opts ...githubwebhook.Option) {
+		relay := newFakeRelay(t)
+		capacity := newFakeCapacity(true)
+		l, received := newListener(relay.server.URL, withCapacity(capacity, opts)...)
+
+		errCh := runListen(context.Background(), l)
+		waitForRequests(t, relay, 1)
+
+		// Losing the capacity to take on work drops the connection rather than
+		// holding it open, which is what lets another orchestrator reading the
+		// same relay take the events instead.
+		capacity.set(false)
+		select {
+		case <-relay.ended:
+		case <-time.After(waitTimeout):
+			t.Fatal("the relay connection was not dropped when capacity was lost")
+		}
+		assertNoRequests(t, relay, 200*time.Millisecond)
+
+		// Capacity returning reconnects, and what the relay queued in the
+		// meantime is then delivered.
+		relay.deliver("workflow_job", workflowJobBody(t, "queued", 22))
+		capacity.set(true)
+		select {
+		case ev := <-received:
+			if got, want := ev.GetWorkflowJob().GetID(), int64(22); got != want {
+				t.Errorf("WorkflowJob.ID: got %d, want %d", got, want)
+			}
+		case <-time.After(waitTimeout):
+			t.Fatal("timed out waiting for the event delivered after reconnecting")
+		}
+
+		l.Stop()
+		mustReturn(t, errCh, nil)
 	})
 }
