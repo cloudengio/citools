@@ -1,0 +1,22 @@
+--- Overview
+Moves pconn, ghpr and the github-runners orchestrator onto the shared cmdconfig package so each command can take multiple config files the same way. The per-command config loading and config subcommand code is removed, and dependencies are bumped across modules.
+
+--- Key Changes
+  * ghpr
+    * Removed config.go and config_cmd.go; config loading now goes through cmdconfig in main.go.
+    * Updated commands.go, cmdusage.go, the README and the tests.
+  * github-runners/orchestrator
+    * Renamed installer.yaml to bundle-builder.yaml and github_orchestrator_config.yml to config.yaml.
+    * Reworked bundle_cmd.go and expanded its tests.
+    * Removed config_cmd.go, rewrote config.go and added config_test.go.
+    * Updated main.go and the github, jwt, launch, run, install and vms_cleanup commands to use the new config handling.
+    * Updated the README, internal/README.md and macos_ui_readme.md.
+  * pconn
+    * Removed the local config code from config.go.
+    * Updated main.go and connect_cmd.go to use cmdconfig, and added more config tests.
+  * Dependencies: bumped go.mod/go.sum in astest, chrome-for-testing, ghpr, orchestrator, multimod and pconn.
+  * Misc: added two entries to .gitignore.
+
+--- Breaking Changes
+  * Orchestrator config files are renamed: installer.yaml -> bundle-builder.yaml and github_orchestrator_config.yml -> config.yaml.
+  * ghpr and orchestrator no longer have their own config_cmd.go, so config subcommand behavior may have changed. Command-line flags for passing config files may also have changed; see the updated READMEs.
