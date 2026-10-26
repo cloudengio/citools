@@ -12,7 +12,7 @@
 //	      bundle - build a signed macOS .app bundle that installs the orchestrator
 //	     service - manage the orchestrator as a per-user launchd login service
 //	webapp-build - build the embedded web UI frontend (runs npm install, gen and build)
-//	      config - config related commands
+//	      config - show the configuration, and its documentation.
 //	         vms - inspect and clean up the VMs created by the orchestrator's pools
 //	         jwt - JSON Web Token (JWT) key and authentication commands
 //

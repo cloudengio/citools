@@ -44,7 +44,3 @@ func (c *Config) PromptFor(tool string) string {
 	}
 	return defaultInstructions
 }
-
-// ConfigFiles are the configuration files that the Config was read from,
-// carried in the context using cmdutil.ContextWithValue.
-type ConfigFiles []string

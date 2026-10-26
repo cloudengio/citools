@@ -1,3 +1,7 @@
+// Copyright 2026 cloudeng llc. All rights reserved.
+// Use of this source code is governed by the Apache-2.0
+// license that can be found in the LICENSE file.
+
 package main
 
 import (
@@ -6,7 +10,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -305,23 +308,23 @@ func (cfg Config) validateVMPoolNames() error {
 	return nil
 }
 
-// ConfigFiles are the configuration files that the Config was read from,
-// carried in the context using cmdutil.ContextWithValue.
-type ConfigFiles []string
-
-// EnvConfigFile is the environment variables file that was read, carried in
-// the context using cmdutil.ContextWithValue.
-type EnvConfigFile string
-
 const (
 	ConfigOrchestratorEnvVar = "GITHUB_ORCHESTRATOR_CONFIG"
 	EnvOrchestratorEnvVar    = "GITHUB_ORCHESTRATOR_ENV_CONFIG"
-	DefaultConfigFile        = internal.ConfigFileName
 	// DefaultEnvConfigFile is the default file of NAME=VALUE definitions, rather than
 	// YAML, as parsed by cloudeng.io/cmdutil/envfile, used to expand references
 	// in the configuration file.
 	DefaultEnvConfigFile = "config.env"
 )
+
+// configSearchPath returns the path that the orchestrator's configuration
+// files are searched for in: the current directory, internal.ConfigDir within
+// the user's configuration directory, ie.
+// ~/Library/Application Support/io.cloudeng.github-runner-orchestrator on
+// macOS, and ~/.config/github-orchestrator.
+func configSearchPath() string {
+	return cmdconfig.SearchPathFor(internal.ConfigDir, internal.ConfigDirXDG)
+}
 
 // ConfigSpec returns the specification of how the configuration files named
 // by the --config flag are located: in the current directory, in
@@ -331,15 +334,8 @@ const (
 // GITHUB_ORCHESTRATOR_CONFIG and GITHUB_ORCHESTRATOR_ENV_CONFIG replace
 // the defaults, and only one file of each type is used.
 func ConfigSpec() cmdconfig.Spec {
-	dirs := []string{"."}
-	if dir, err := os.UserConfigDir(); err == nil {
-		dirs = append(dirs, filepath.Join(dir, internal.ConfigDir))
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		dirs = append(dirs, filepath.Join(home, ".config", internal.ConfigDirXDG))
-	}
 	return cmdconfig.Spec{
-		Path: strings.Join(slices.Compact(dirs), string(os.PathListSeparator)),
+		Path: configSearchPath(),
 		EnvVars: map[cmdconfig.FileType]string{
 			cmdconfig.FileTypeYAML: ConfigOrchestratorEnvVar,
 			cmdconfig.FileTypeEnv:  EnvOrchestratorEnvVar,
@@ -351,8 +347,8 @@ func ConfigSpec() cmdconfig.Spec {
 // ConfigFileFromContext returns the first of the configuration files read, or
 // an empty string if there is none.
 func ConfigFileFromContext(ctx context.Context) string {
-	if files, _ := cmdutil.ContextValue[ConfigFiles](ctx); len(files) > 0 {
-		return files[0]
+	if loc, ok := cmdutil.ContextValue[*cmdconfig.Located](ctx); ok && len(loc.YAML) > 0 {
+		return loc.YAML[0]
 	}
 	return ""
 }

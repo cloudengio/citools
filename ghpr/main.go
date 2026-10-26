@@ -48,13 +48,8 @@ commands:
     summary: attach the description of a merged pull request to the commit it created on the base branch
     args:
       - "<branch> - the feature branch whose pull request was merged"
-  - name: config
-    summary: config related commands
-    commands:
-      - name: show
-        summary: show the current configuration
-      - name: describe
-        summary: describe the configuration spec
+  {{range subcmdExtension "config"}}{{.}}
+  {{end}}
 `
 
 // SummaryCommandFlags are flags for showing the command that would be run to generate the summary.
@@ -99,23 +94,27 @@ type UpdateFlags struct {
 
 // configSpec specifies how the configuration file is located: the first of
 // those named that is found, in the standard locations for ghpr.
-var configSpec = cmdconfig.Spec{
-	AppDir:    "ghpr",
-	FirstOnly: []cmdconfig.FileType{cmdconfig.FileTypeYAML},
+func configSpec() cmdconfig.Spec {
+	return cmdconfig.Spec{
+		Path:      cmdconfig.SearchPath("ghpr"),
+		FirstOnly: []cmdconfig.FileType{cmdconfig.FileTypeYAML},
+	}
 }
 
 func configPrehook(ctx context.Context) (context.Context, string, subcmd.PostHook, error) {
-	return subcmd.ConfigHook[Config]{
+	return cmdconfig.ConfigHook[Config]{
 		Files: &globalFlags.Config,
-		Spec:  configSpec,
-		Store: func(ctx context.Context, cfg Config, loc *cmdconfig.Located) context.Context {
-			if len(loc.YAML) == 0 {
-				return cmdutil.ContextWithValue(ctx, Config{Prompt: defaultInstructions})
-			}
-			if globalFlags.Verbose {
+		Spec:  configSpec(),
+		// The default prompt is the value the files are parsed into, rather
+		// than something Store substitutes when there are none: a file that
+		// sets only prompts, or nothing, then still carries a usable prompt,
+		// and the default is stated in one place.
+		Initial: Config{Prompt: defaultInstructions},
+		Store: func(ctx context.Context, _ Config, loc *cmdconfig.Located) context.Context {
+			if globalFlags.Verbose && len(loc.YAML) > 0 {
 				fmt.Fprintf(os.Stderr, "ghpr: using configuration file %v\n", loc.YAML[0])
 			}
-			return cmdutil.ContextWithValue(cmdutil.ContextWithValue(ctx, cfg), ConfigFiles(loc.YAML))
+			return ctx
 		},
 	}.Run(ctx)
 }
@@ -201,7 +200,9 @@ func postNote(ctx context.Context, flags any, args []string) error {
 }
 
 func createCLI() *subcmd.CommandSetYAML {
-	cmdSet := subcmd.MustFromYAML(cmdSpec)
+	configCmds := cmdconfig.ConfigCommands[Config]{Summary: "root configuration options\n"}
+	cmdSet := subcmd.MustFromYAMLTemplate(cmdSpec, cmdconfig.ConfigExtension(configCmds))
+	cmdSet.MustAddExtensions()
 	cmdSet.Set("create-pr").MustRunner(createPR, &CreateFlags{})
 	cmdSet.Set("create-pr").MustSetPreHooks(configPrehook)
 	cmdSet.Set("update-summary").MustRunner(updateSummary, &UpdateFlags{})
@@ -209,9 +210,6 @@ func createCLI() *subcmd.CommandSetYAML {
 	cmdSet.Set("post-note").MustRunner(postNote, &PostNoteFlags{})
 	cmdSet.Set("post-note").MustSetPreHooks(configPrehook)
 
-	cfgCmd := ConfigCommand{}
-	cmdSet.Set("config", "show").MustRunner(cfgCmd.Show, &struct{}{})
-	cmdSet.Set("config", "describe").MustRunner(cfgCmd.Describe, &struct{}{})
 	cmdSet.Set("config").MustSetPreHooks(configPrehook)
 	return cmdSet
 }

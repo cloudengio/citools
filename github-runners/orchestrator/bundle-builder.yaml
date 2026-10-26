@@ -1,17 +1,22 @@
-# installer.yaml — configuration for `orchestrator bundle`, which builds a macOS
-# .app bundle that installs the orchestrator.
+# bundle-builder.yaml — configuration for `orchestrator bundle`, which builds a macOS
+# .app bundle that installs the orchestrator. It is separate from the
+# orchestrator's own configuration, and is searched for in the same places.
+# ${NAME} references are expanded from the environment and from
+# bundle-builder.env, if there is one, which may hold the signing values below.
+# They are expanded in the text, before it is parsed as YAML, so a reference to a
+# value that may contain a colon or a quote, such as a signing identity, must be
+# in quotes.
 #
 # This file holds the external / developer-supplied values (bundle identity,
 # signing, provisioning) and points at the default orchestrator config to embed.
 
 bundle: build/github-runner-orchestrator.app
 
-# version is the human-readable release version, stamped into the bundle as
-# CFBundleShortVersionString; CFBundleVersion appends the git commit.
-version: 0.1.0
-
 # info_plist applies to the orchestrator app bundle.
 info_plist:
+  # The human-readable release version; CFBundleVersion is it with the git
+  # commit appended.
+  CFBundleShortVersionString: 0.1.0
   CFBundleIdentifier: io.cloudeng.github-runner-orchestrator
   CFBundleName: github-runner-orchestrator
   CFBundleDisplayName: GitHub Runner Orchestrator
@@ -27,7 +32,7 @@ info_plist:
 # If ORCHESTRATOR_SIGNING_IDENTITY is empty the bundle is left unsigned (fine for
 # local testing, not for distribution).
 signing:
-  identity: ${ORCHESTRATOR_SIGNING_IDENTITY}
+  identity: "${ORCHESTRATOR_SIGNING_IDENTITY}"
   # These entitlements grant access to the (data-protection / iCloud) keychain
   # items the orchestrator manages.
   entitlements:
@@ -43,7 +48,7 @@ signing:
 # bundle (Contents/embedded.provisionprofile). It is a "Developer ID"
 # provisioning profile for App ID io.cloudeng.github-runner-orchestrator with
 # the Keychain Sharing capability, signed by the same Developer ID cert used above.
-provisioning_profile: ${ORCHESTRATOR_PROFILE}
+provisioning_profile: "${ORCHESTRATOR_PROFILE}"
 
 # Notarization. Only used when `orchestrator bundle --notarize` is passed. A
 # signed Developer ID bundle must be notarized by Apple before other Macs will
@@ -64,7 +69,7 @@ provisioning_profile: ${ORCHESTRATOR_PROFILE}
 #   xcrun notarytool store-credentials orchestrator-notary \
 #     --apple-id you@example.com --team-id TEAMID --password <app-specific-password>
 notary:
-  keychain_profile: ${ORCHESTRATOR_NOTARY}
+  keychain_profile: "${ORCHESTRATOR_NOTARY}"
   # Alternatively supply Apple ID credentials directly (expanded from the
   # environment). API keys must go through store-credentials above, not here.
   # apple_id: ${ORCHESTRATOR_APPLE_ID}

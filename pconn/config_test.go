@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"cloudeng.io/cmdutil"
+	"cloudeng.io/cmdutil/cmdconfig"
 	"cloudeng.io/cmdutil/cmdyaml"
 	"cloudeng.io/net/pssh"
 )
@@ -655,5 +656,40 @@ connections:
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "group \"dev\": conflict on local port 8080") {
 		t.Fatalf("expected conflict on local port 8080 within group 'dev', got: %v", err)
+	}
+}
+
+// TestConfigFileNames covers the names reported when a configuration fails
+// validation. Nothing having been located is not the same as nothing having
+// been asked for, and an error that names no file at all is of little use.
+func TestConfigFileNames(t *testing.T) {
+	located := &cmdconfig.Located{YAML: []string{"/etc/pconn/config.yaml"}}
+	twoLocated := &cmdconfig.Located{YAML: []string{"a.yaml", "b.yaml"}}
+
+	var flagWithFile cmdconfig.FilesFlag
+	if err := flagWithFile.Set("asked-for.yaml"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	var emptyFlag cmdconfig.FilesFlag
+
+	for _, tc := range []struct {
+		name  string
+		loc   *cmdconfig.Located
+		files *cmdconfig.FilesFlag
+		want  string
+	}{
+		// What was read is what the error should name.
+		{"located", located, &flagWithFile, "/etc/pconn/config.yaml"},
+		{"several located", twoLocated, &flagWithFile, "a.yaml, b.yaml"},
+		// Nothing located: the flag says what was asked for.
+		{"nothing located", &cmdconfig.Located{}, &flagWithFile, "asked-for.yaml"},
+		{"no location at all", nil, &flagWithFile, "asked-for.yaml"},
+		// Neither: say so rather than quoting an empty string.
+		{"neither", &cmdconfig.Located{}, &emptyFlag, "(none)"},
+		{"neither, no flag", nil, nil, "(none)"},
+	} {
+		if got := configFileNames(tc.loc, tc.files); got != tc.want {
+			t.Errorf("%v: got %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }

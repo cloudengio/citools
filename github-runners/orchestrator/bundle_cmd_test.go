@@ -16,44 +16,64 @@ import (
 	"testing"
 	"time"
 
+	"cloudeng.io/cmdutil/cmdconfig"
 	"cloudeng.io/macos/buildtools"
 	"howett.net/plist"
 )
 
-// TestExpandEnv covers the ${ENV} expansion applied to the bundle
-// configuration, which is how signing identities and profile paths are kept out
-// of the file.
-func TestExpandEnv(t *testing.T) {
-	t.Setenv("ORCH_TEST_ID", "Developer ID Application: Example")
+// bundleFlag returns a flag holding the files, which are set, replacing the
+// defaults, if there are any.
+func bundleFlag(t *testing.T, files ...string) *cmdconfig.FilesFlag {
+	t.Helper()
+	var ff cmdconfig.FilesFlag
+	ff.SetDefaults("bundle-builder.yaml", "bundle-builder.env")
+	if len(files) > 0 {
+		if err := ff.Set(strings.Join(files, ",")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return &ff
+}
 
-	got := expandEnv(map[string]any{
-		"identity":  "${ORCH_TEST_ID}",
-		"nested":    map[string]any{"profile": "$ORCH_TEST_ID/p.provisionprofile"},
-		"list":      []any{"${ORCH_TEST_ID}", 42},
-		"untouched": 7,
-	})
-	m, ok := got.(map[string]any)
-	if !ok {
-		t.Fatalf("expandEnv returned %T, want a map", got)
+// TestBundleConfigEnv covers the ${ENV} expansion applied to the bundle
+// configuration, which is how signing identities and profile paths are kept out
+// of the file: from the environment, which takes precedence, and from the
+// environment variables file.
+func TestBundleConfigEnv(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ORCH_TEST_ID", "Developer ID Application: Example")
+	t.Setenv("ORCH_TEST_UNSET", "")
+	envFile := filepath.Join(dir, "bundle-builder.env")
+	if err := os.WriteFile(envFile, []byte("ORCH_TEST_ID=from-file\nORCH_TEST_PROFILE=/profiles/p\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if want := "Developer ID Application: Example"; m["identity"] != want {
-		t.Errorf("identity: got %v, want %v", m["identity"], want)
+	path := filepath.Join(dir, "bundle-builder.yaml")
+	content := `signing:
+  identity: "${ORCH_TEST_ID}"
+  entitlements:
+    keychain-access-groups:
+      - ${ORCH_TEST_UNSET}.group
+provisioning_profile: ${ORCH_TEST_PROFILE}
+notary:
+  keychain_profile: "${ORCH_TEST_UNSET}"
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	nested := m["nested"].(map[string]any)
-	if want := "Developer ID Application: Example/p.provisionprofile"; nested["profile"] != want {
-		t.Errorf("nested: got %v, want %v", nested["profile"], want)
+	cfg, err := loadBundleConfig(t.Context(), bundleFlag(t, path, envFile))
+	if err != nil {
+		t.Fatal(err)
 	}
-	list := m["list"].([]any)
-	if want := "Developer ID Application: Example"; list[0] != want {
-		t.Errorf("list: got %v, want %v", list[0], want)
+	if want := "Developer ID Application: Example"; cfg.Signing.Identity != want {
+		t.Errorf("identity: got %q, want %q", cfg.Signing.Identity, want)
 	}
-	// Non-string values pass through untouched.
-	if list[1] != 42 || m["untouched"] != 7 {
-		t.Errorf("non-string values were altered: %v", m)
+	if want := "/profiles/p"; cfg.ProvisioningProfile != want {
+		t.Errorf("profile: got %q, want %q", cfg.ProvisioningProfile, want)
 	}
-	// An unset variable expands to empty, as os.ExpandEnv does.
-	if got := expandEnv("${ORCH_TEST_UNSET}"); got != "" {
-		t.Errorf("unset variable: got %q, want empty", got)
+	// A variable that is not defined is empty, so that, for example, an unset
+	// signing identity leaves the bundle unsigned.
+	if cfg.Notary.KeychainProfile != "" {
+		t.Errorf("notary profile: got %q, want empty", cfg.Notary.KeychainProfile)
 	}
 }
 
@@ -118,17 +138,17 @@ func TestBuildInfoPlist(t *testing.T) {
 }
 
 // TestLoadBundleConfig covers the defaults applied to an installer
-// configuration, which is what makes a minimal installer.yaml usable.
+// configuration, which is what makes a minimal bundle-builder.yaml usable.
 func TestLoadBundleConfig(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "installer.yaml")
+	path := filepath.Join(t.TempDir(), "bundle-builder.yaml")
 	if err := os.WriteFile(path, []byte("info_plist:\n  CFBundleVersion: \"9.9\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := loadBundleConfig(path)
+	cfg, err := loadBundleConfig(t.Context(), bundleFlag(t, path))
 	if err != nil {
 		t.Fatalf("loadBundleConfig: %v", err)
 	}
-	if got, want := cfg.Bundle, defaultExecutable+".app"; got != want {
+	if got, want := cfg.Path, defaultExecutable+".app"; got != want {
 		t.Errorf("bundle: got %q, want %q", got, want)
 	}
 	if got, want := cfg.OrchestratorConfig, "minimal_config.yml"; got != want {
@@ -141,25 +161,38 @@ func TestLoadBundleConfig(t *testing.T) {
 		t.Errorf("CFBundleVersion: got %q, want %q", got, want)
 	}
 
-	if _, err := loadBundleConfig(filepath.Join(t.TempDir(), "absent.yaml")); err == nil {
-		t.Error("a missing installer configuration was accepted")
+	// A file that is named and not there is an error, as is there being none.
+	if _, err := loadBundleConfig(t.Context(), bundleFlag(t, filepath.Join(t.TempDir(), "absent.yaml"))); err == nil {
+		t.Error("a missing bundle configuration was accepted")
+	}
+	t.Chdir(t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	if _, err := loadBundleConfig(t.Context(), bundleFlag(t)); err == nil {
+		t.Error("no bundle configuration was accepted")
+	}
+	// Unknown fields are rejected.
+	if err := os.WriteFile(path, []byte("bundel: x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadBundleConfig(t.Context(), bundleFlag(t, path)); err == nil {
+		t.Error("an unknown field was accepted")
 	}
 }
 
-// TestShippedInstallerConfig verifies that the installer.yaml in the tree
+// TestShippedBundleConfig verifies that the bundle-builder.yaml in the tree
 // still loads and yields a valid Info.plist, so that a bundle build fails at
 // review rather than at release time.
-func TestShippedInstallerConfig(t *testing.T) {
-	if _, err := os.Stat("installer.yaml"); err != nil {
-		t.Skipf("no installer.yaml in the tree: %v", err)
+func TestShippedBundleConfig(t *testing.T) {
+	if _, err := os.Stat("bundle-builder.yaml"); err != nil {
+		t.Skipf("no bundle-builder.yaml in the tree: %v", err)
 	}
-	cfg, err := loadBundleConfig("installer.yaml")
+	cfg, err := loadBundleConfig(t.Context(), bundleFlag(t, "bundle-builder.yaml"))
 	if err != nil {
 		t.Fatalf("loadBundleConfig: %v", err)
 	}
-	version := versionInfo{Short: cfg.Version, Build: cfg.Version + "+abcdef12", Commit: "abcdef12", BuildTime: time.Now()}
+	version := versionInfo{Short: cfg.Info.CFBundleShortVersionString, Build: cfg.Info.CFBundleShortVersionString + "+abcdef12", Commit: "abcdef12", BuildTime: time.Now()}
 	if _, err := buildInfoPlist(cfg.Info, defaultExecutable, orchestratorBundleID, version); err != nil {
-		t.Errorf("the shipped installer.yaml yields an invalid Info.plist: %v", err)
+		t.Errorf("the shipped bundle-builder.yaml yields an invalid Info.plist: %v", err)
 	}
 }
 
@@ -204,7 +237,7 @@ func TestDetailErr(t *testing.T) {
 }
 
 func TestBundleConfigPermissions(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "installer.yaml")
+	path := filepath.Join(t.TempDir(), "bundle-builder.yaml")
 	content := `permissions:
   executable: "0755"
   macos_dir: "0700"
@@ -212,7 +245,7 @@ func TestBundleConfigPermissions(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := loadBundleConfig(path)
+	cfg, err := loadBundleConfig(t.Context(), bundleFlag(t, path))
 	if err != nil {
 		t.Fatalf("loadBundleConfig: %v", err)
 	}
@@ -249,7 +282,7 @@ func TestBundleInfoLSMinimumSystemVersion(t *testing.T) {
 func TestBuildAppBundleDryRun(t *testing.T) {
 	tempDir := t.TempDir()
 	cfg := BundleConfig{
-		Bundle:             filepath.Join(tempDir, "test.app"),
+		Bundle:             buildtools.Bundle{Path: filepath.Join(tempDir, "test.app")},
 		OrchestratorConfig: "minimal_config.yml",
 		LaunchAgentConfig:  "launch_agent.yml",
 	}
@@ -260,6 +293,56 @@ func TestBuildAppBundleDryRun(t *testing.T) {
 	}
 	err = buildAppBundle(context.Background(), cfg, info, "orchestrator", false, false, true, false)
 	if err != nil {
+		t.Fatalf("buildAppBundle dry run failed: %v", err)
+	}
+}
+
+// TestBundleVersionFromInfoPlist checks that the release version is the one in
+// the Info.plist fields, and that the build version is derived from it.
+func TestBundleVersionFromInfoPlist(t *testing.T) {
+	user := buildtools.InfoPlist{CFBundleShortVersionString: "2.0.0"}
+	version, err := gitVersion(t.Context(), ".", user.CFBundleShortVersionString)
+	if err != nil {
+		t.Skipf("not in a git repository: %v", err)
+	}
+	info, err := buildInfoPlist(user, defaultExecutable, orchestratorBundleID, version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.CFBundleShortVersionString != "2.0.0" || !strings.HasPrefix(info.CFBundleVersion, "2.0.0+") {
+		t.Errorf("got %q, %q", info.CFBundleShortVersionString, info.CFBundleVersion)
+	}
+
+	// Without one the default is used.
+	version, err = gitVersion(t.Context(), ".", "")
+	if err != nil {
+		t.Skipf("not in a git repository: %v", err)
+	}
+	if info, err = buildInfoPlist(buildtools.InfoPlist{}, defaultExecutable, orchestratorBundleID, version); err != nil ||
+		info.CFBundleShortVersionString != DefaultVersion {
+		t.Errorf("got %q, %v, want %q", info.CFBundleShortVersionString, err, DefaultVersion)
+	}
+}
+
+// TestBuildAppBundleDryRunIcon checks that the icon of the bundle configuration
+// is created when there is one.
+func TestBuildAppBundleDryRunIcon(t *testing.T) {
+	tempDir := t.TempDir()
+	icon := filepath.Join(tempDir, "icon.png")
+	if err := os.WriteFile(icon, []byte("png"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := BundleConfig{
+		Bundle:             buildtools.Bundle{Path: filepath.Join(tempDir, "test.app"), BundleSpec: buildtools.BundleSpec{Icon: icon}},
+		OrchestratorConfig: "minimal_config.yml",
+		LaunchAgentConfig:  "launch_agent.yml",
+	}
+	version := versionInfo{Short: "1.0.0", Build: "1.0.0", Commit: "abcdef12", BuildTime: time.Now()}
+	info, err := buildInfoPlist(buildtools.InfoPlist{CFBundleIconFile: "AppIcon.icns"}, defaultExecutable, orchestratorBundleID, version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := buildAppBundle(context.Background(), cfg, info, "orchestrator", false, false, true, false); err != nil {
 		t.Fatalf("buildAppBundle dry run failed: %v", err)
 	}
 }

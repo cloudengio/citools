@@ -15,7 +15,6 @@ import (
 	"cloudeng.io/algo/ratecontrol"
 	"cloudeng.io/cmdutil"
 	"cloudeng.io/cmdutil/cmdconfig"
-	"cloudeng.io/cmdutil/cmdyaml"
 	"cloudeng.io/logging/ctxlog"
 	"cloudeng.io/net/pssh"
 	"cloudeng.io/sync/errgroup"
@@ -49,6 +48,22 @@ func newBackoffController(unlimitedRetries bool) *ratecontrol.Controller {
 	)
 }
 
+// configFileNames names the configuration files for an error message. What
+// was located is preferred, since it is what was actually read, and the flag
+// is the fallback for when nothing was: an error naming no file at all says
+// less than one naming what was asked for.
+func configFileNames(loc *cmdconfig.Located, files *cmdconfig.FilesFlag) string {
+	if loc != nil && len(loc.YAML) > 0 {
+		return strings.Join(loc.YAML, ", ")
+	}
+	if files != nil {
+		if named := files.Files(cmdconfig.FileTypeYAML, false); len(named) > 0 {
+			return strings.Join(named, ", ")
+		}
+	}
+	return "(none)"
+}
+
 // Run executes the connect command.
 func (c ConnectCommand) Run(ctx context.Context, flags any, args []string) error {
 	cf := flags.(*ConnectFlags)
@@ -60,12 +75,12 @@ func (c ConnectCommand) Run(ctx context.Context, flags any, args []string) error
 
 	if cf.Config.HasSet(cmdconfig.FileTypeYAML) {
 		var newCfg Config
-		loc, err := cmdyaml.Load(ctx, &newCfg, &cf.Config, configSpec)
+		loc, err := cmdconfig.Load(ctx, &newCfg, &cf.Config, configSpec())
 		if err != nil {
 			return fmt.Errorf("failed to read the configuration file: %w", err)
 		}
 		if err := newCfg.Validate(); err != nil {
-			return fmt.Errorf("configuration file %q is invalid: %w", strings.Join(loc.YAML, ", "), err)
+			return fmt.Errorf("configuration file %q is invalid: %w", configFileNames(loc, &cf.Config), err)
 		}
 		cfg = newCfg
 	}

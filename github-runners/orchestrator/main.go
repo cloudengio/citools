@@ -84,13 +84,8 @@ commands:
         summary: restart the login service
   - name: webapp-build
     summary: build the embedded web UI frontend (runs npm install, gen and build)
-  - name: config
-    summary: config related commands
-    commands:
-      - name: show
-        summary: show the current configuration
-      - name: describe
-        summary: describe the configuration spec
+  {{range subcmdExtension "config"}}{{.}}
+  {{end}}
   - name: vms
     summary: inspect and clean up the VMs created by the orchestrator's pools
     commands:
@@ -120,7 +115,9 @@ type GlobalFlags struct {
 }
 
 func createCLI() *subcmd.CommandSetYAML {
-	cmdSet := subcmd.MustFromYAML(CmdSpecYAML)
+	configCmds := cmdconfig.ConfigCommands[Config]{Summary: "root configuration options\n"}
+	cmdSet := subcmd.MustFromYAMLTemplate(CmdSpecYAML, cmdconfig.ConfigExtension(configCmds))
+	cmdSet.MustAddExtensions()
 
 	runCmd := RunCommand{}
 	cmdSet.Set("run").MustRunner(runCmd.Run, &RunFlags{})
@@ -172,10 +169,6 @@ func createCLI() *subcmd.CommandSetYAML {
 	webappCmd := WebappBuildCommand{}
 	cmdSet.Set("webapp-build").MustRunner(webappCmd.Run, &WebappBuildFlags{})
 
-	cfgCmd := ConfigCommand{}
-	cmdSet.Set("config", "show").MustRunner(cfgCmd.Show, &struct{}{})
-	cmdSet.Set("config", "describe").MustRunner(cfgCmd.Describe, &struct{}{})
-
 	jwtCmd := JWTCommand{}
 	cmdSet.Set("jwt", "create").MustRunner(jwtCmd.Create, &JWTCreateFlags{})
 	cmdSet.Set("jwt", "issue").MustRunner(jwtCmd.Issuer, &JWTIssuerFlags{})
@@ -203,17 +196,6 @@ func (vf VerboseFlags) stepsVerbose() bool {
 	return vf.Verbose || verbose()
 }
 
-// storeConfig adds the configuration, and the files it was read from, to the
-// context.
-func storeConfig(ctx context.Context, cfg Config, loc *cmdconfig.Located) context.Context {
-	ctx = cmdutil.ContextWithValue(ctx, cfg)
-	ctx = cmdutil.ContextWithValue(ctx, ConfigFiles(loc.YAML))
-	if len(loc.Env) > 0 {
-		ctx = cmdutil.ContextWithValue(ctx, EnvConfigFile(loc.Env[0]))
-	}
-	return ctx
-}
-
 // loggerPrehook creates the logger from the configuration, as overridden by the
 // command line flags.
 var loggerPrehook = subcmd.LoggerHook("withLoggerPrehook", func(ctx context.Context, fs *flag.FlagSet) (*cmdutil.Logger, error) {
@@ -223,12 +205,11 @@ var loggerPrehook = subcmd.LoggerHook("withLoggerPrehook", func(ctx context.Cont
 })
 
 func configPrehook(ctx context.Context) (context.Context, string, subcmd.PostHook, error) {
-	hook := subcmd.ConfigHook[Config]{
+	hook := cmdconfig.ConfigHook[Config]{
 		ID:       "withConfigPrehook",
 		Files:    &globalFlags.Config,
 		Spec:     ConfigSpec(),
 		Required: true,
-		Store:    storeConfig,
 	}
 	ctx, id, _, err := hook.Run(ctx)
 	if err != nil {

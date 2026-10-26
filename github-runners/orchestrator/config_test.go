@@ -16,9 +16,9 @@ import (
 
 	"cloudeng.io/cmdutil"
 	"cloudeng.io/cmdutil/cmdconfig"
-	"cloudeng.io/cmdutil/cmdyaml"
 	"cloudeng.io/cmdutil/flags"
 	cerrors "cloudeng.io/errors"
+	"github.com/cloudengio/citools/runners/macos/orchestrator/internal"
 )
 
 func TestValidateListenAddress(t *testing.T) {
@@ -123,7 +123,7 @@ func newConfigFlag(t *testing.T, set ...string) *cmdconfig.FilesFlag {
 
 func TestConfigFlagDefaults(t *testing.T) {
 	ff := newConfigFlag(t)
-	if got, want := ff.Files(cmdconfig.FileTypeYAML, false), []string{DefaultConfigFile}; !slices.Equal(got, want) {
+	if got, want := ff.Files(cmdconfig.FileTypeYAML, false), []string{internal.ConfigFileName}; !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 	if got, want := ff.Files(cmdconfig.FileTypeEnv, false), []string{DefaultEnvConfigFile}; !slices.Equal(got, want) {
@@ -206,7 +206,7 @@ web_ui:
 	}
 
 	var cfg Config
-	if _, err := cmdyaml.Load(context.Background(), &cfg, newConfigFlag(t, cfgFile, envFile), ConfigSpec()); err != nil {
+	if _, err := cmdconfig.Load(context.Background(), &cfg, newConfigFlag(t, cfgFile, envFile), ConfigSpec()); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 

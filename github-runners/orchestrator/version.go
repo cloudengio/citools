@@ -14,7 +14,8 @@ import (
 	"cloudeng.io/macos/buildtools"
 )
 
-// DefaultVersion is used when installer.yaml does not set one.
+// DefaultVersion is used when info_plist in bundle-builder.yaml does not set
+// CFBundleShortVersionString.
 const DefaultVersion = "0.0.0"
 
 // versionInfo describes the build stamped into the bundle.

@@ -53,9 +53,11 @@ func createCLI() *subcmd.CommandSetYAML {
 
 // configSpec specifies how the configuration file is located: in the standard
 // locations for pconn, and it must be there.
-var configSpec = cmdconfig.Spec{
-	AppDir:    "pconn",
-	FirstOnly: []cmdconfig.FileType{cmdconfig.FileTypeYAML},
+func configSpec() cmdconfig.Spec {
+	return cmdconfig.Spec{
+		Path:      cmdconfig.SearchPath("pconn"),
+		FirstOnly: []cmdconfig.FileType{cmdconfig.FileTypeYAML},
+	}
 }
 
 // loggerPrehook creates the logger from the configuration, as overridden by the
@@ -66,13 +68,10 @@ var loggerPrehook = subcmd.LoggerHook("withLoggerPrehook", func(ctx context.Cont
 })
 
 func configPrehook(ctx context.Context) (context.Context, string, subcmd.PostHook, error) {
-	hook := subcmd.ConfigHook[Config]{
+	hook := cmdconfig.ConfigHook[Config]{
 		Files:    &globalFlags.Config,
-		Spec:     configSpec,
+		Spec:     configSpec(),
 		Required: true,
-		Store: func(ctx context.Context, cfg Config, _ *cmdconfig.Located) context.Context {
-			return cmdutil.ContextWithValue(ctx, cfg)
-		},
 	}
 	ctx, id, _, err := hook.Run(ctx)
 	if err != nil {
