@@ -29,7 +29,7 @@ import (
 	"syscall"
 
 	"cloudeng.io/cmdutil"
-	"cloudeng.io/cmdutil/cmdyaml"
+	"cloudeng.io/cmdutil/cmdconfig"
 	"cloudeng.io/cmdutil/subcmd"
 )
 
@@ -48,13 +48,8 @@ commands:
     summary: attach the description of a merged pull request to the commit it created on the base branch
     args:
       - "<branch> - the feature branch whose pull request was merged"
-  - name: config
-    summary: config related commands
-    commands:
-      - name: show
-        summary: show the current configuration
-      - name: describe
-        summary: describe the configuration spec
+  {{range subcmdExtension "config"}}{{.}}
+  {{end}}
 `
 
 // SummaryCommandFlags are flags for showing the command that would be run to generate the summary.
@@ -65,13 +60,13 @@ type SummaryCommandFlags struct {
 
 // GlobalFlags are the flags common to every command.
 type GlobalFlags struct {
-	ConfigFile   string `subcmd:"config,,'path to YAML configuration file; if unset, config.yaml or ghpr.yaml is searched in standard locations'"`
-	Engine       string `subcmd:"engine,claude,'agent used to generate descriptions: claude or agy'"`
-	Model        string `subcmd:"model,,model for the agent to use; the agent's own default if unset"`
-	Base         string `subcmd:"base,main,branch that pull requests are merged into"`
-	MaxDiffLines int    `subcmd:"max-diff-lines,3000,summarize the diff stat instead of the diff once it is longer than this; 0 for no limit"`
-	Yes          bool   `subcmd:"yes,false,answer yes to every confirmation"`
-	DryRun       bool   `subcmd:"dry-run,false,report what would be changed without changing it"`
+	Config       cmdconfig.FilesFlag `subcmd:"config,'config.yaml,ghpr.yaml','YAML configuration file; if unset, the first of config.yaml and ghpr.yaml found in the standard locations is used'"`
+	Engine       string              `subcmd:"engine,claude,'agent used to generate descriptions: claude or agy'"`
+	Model        string              `subcmd:"model,,model for the agent to use; the agent's own default if unset"`
+	Base         string              `subcmd:"base,main,branch that pull requests are merged into"`
+	MaxDiffLines int                 `subcmd:"max-diff-lines,3000,summarize the diff stat instead of the diff once it is longer than this; 0 for no limit"`
+	Yes          bool                `subcmd:"yes,false,answer yes to every confirmation"`
+	DryRun       bool                `subcmd:"dry-run,false,report what would be changed without changing it"`
 	SummaryCommandFlags
 	Verbose bool `subcmd:"verbose,false,explain what is being done"`
 }
@@ -97,56 +92,31 @@ type UpdateFlags struct {
 	SummaryCommandFlags
 }
 
+// configSpec specifies how the configuration file is located: the first of
+// those named that is found, in the standard locations for ghpr.
+func configSpec() cmdconfig.Spec {
+	return cmdconfig.Spec{
+		Path:      cmdconfig.SearchPath("ghpr"),
+		FirstOnly: []cmdconfig.FileType{cmdconfig.FileTypeYAML},
+	}
+}
+
 func configPrehook(ctx context.Context) (context.Context, string, subcmd.PostHook, error) {
-	id := "withConfigPrehook"
-	postHook := func(ctx context.Context) (string, error) { return id, nil }
-	fs := subcmd.GlobalFlagSetFromContext(ctx)
-	if fs == nil {
-		return ctx, id, postHook, fmt.Errorf("global flagset not in context")
-	}
-
-	configFile := globalFlags.ConfigFile
-	explicitlySet := fs.IsExplicitlySet("config")
-
-	var foundFile string
-	if explicitlySet {
-		foundFile = cmdyaml.LocateConfigFileInDir(configFile, "ghpr")
-		if foundFile == "" {
-			return ctx, id, postHook, fmt.Errorf("configuration file %q not found", configFile)
-		}
-	} else {
-		if configFile != "" {
-			foundFile = cmdyaml.LocateConfigFileInDir(configFile, "ghpr")
-		}
-		if foundFile == "" {
-			foundFile = cmdyaml.LocateConfigFileInDir("config", "ghpr")
-		}
-		if foundFile == "" {
-			foundFile = cmdyaml.LocateConfigFileInDir("ghpr", "ghpr")
-		}
-	}
-
-	if foundFile == "" {
-		cfg := Config{Prompt: defaultInstructions}
-		ctx = ContextWithConfig(ctx, cfg)
-		return ctx, id, postHook, nil
-	}
-
-	if globalFlags.Verbose {
-		fmt.Fprintf(os.Stderr, "ghpr: using configuration file %v\n", foundFile)
-	}
-
-	var cfg Config
-	if err := cmdyaml.ParseConfigFilesStrict(ctx, &cfg, foundFile); err != nil {
-		return ctx, id, postHook, fmt.Errorf("failed to read configuration file %q: %w\nedit that file to correct it", foundFile, err)
-	}
-	if err := cfg.Validate(); err != nil {
-		return ctx, id, postHook, fmt.Errorf("configuration file %q is invalid: %w\nedit that file to correct it", foundFile, err)
-	}
-
-	ctx = ContextWithConfig(ctx, cfg)
-	ctx = ContextWithConfigFile(ctx, foundFile)
-	return ctx, id, postHook, nil
+	return cmdconfig.ConfigHook[Config]{
+		Files: &globalFlags.Config,
+		Spec:  configSpec(),
+		// The default prompt is the value the files are parsed into, rather
+		// than something Store substitutes when there are none: a file that
+		// sets only prompts, or nothing, then still carries a usable prompt,
+		// and the default is stated in one place.
+		Initial: Config{Prompt: defaultInstructions},
+		Store: func(ctx context.Context, _ Config, loc *cmdconfig.Located) context.Context {
+			if globalFlags.Verbose && len(loc.YAML) > 0 {
+				fmt.Fprintf(os.Stderr, "ghpr: using configuration file %v\n", loc.YAML[0])
+			}
+			return ctx
+		},
+	}.Run(ctx)
 }
 
 func newApp(ctx context.Context) *App {
@@ -167,7 +137,7 @@ func newApp(ctx context.Context) *App {
 		announce := func(cmd string) { fmt.Printf("would run: %v\n", cmd) }
 		git, gh = git.DryRun(announce), gh.DryRun(announce)
 	}
-	cfg, _ := ConfigFromContext(ctx)
+	cfg, _ := cmdutil.ContextValue[Config](ctx)
 	return &App{
 		Git:  git,
 		GH:   gh,
@@ -230,7 +200,9 @@ func postNote(ctx context.Context, flags any, args []string) error {
 }
 
 func createCLI() *subcmd.CommandSetYAML {
-	cmdSet := subcmd.MustFromYAML(cmdSpec)
+	configCmds := cmdconfig.ConfigCommands[Config]{Summary: "root configuration options\n"}
+	cmdSet := subcmd.MustFromYAMLTemplate(cmdSpec, cmdconfig.ConfigExtension(configCmds))
+	cmdSet.MustAddExtensions()
 	cmdSet.Set("create-pr").MustRunner(createPR, &CreateFlags{})
 	cmdSet.Set("create-pr").MustSetPreHooks(configPrehook)
 	cmdSet.Set("update-summary").MustRunner(updateSummary, &UpdateFlags{})
@@ -238,9 +210,6 @@ func createCLI() *subcmd.CommandSetYAML {
 	cmdSet.Set("post-note").MustRunner(postNote, &PostNoteFlags{})
 	cmdSet.Set("post-note").MustSetPreHooks(configPrehook)
 
-	cfgCmd := ConfigCommand{}
-	cmdSet.Set("config", "show").MustRunner(cfgCmd.Show, &struct{}{})
-	cmdSet.Set("config", "describe").MustRunner(cfgCmd.Describe, &struct{}{})
 	cmdSet.Set("config").MustSetPreHooks(configPrehook)
 	return cmdSet
 }

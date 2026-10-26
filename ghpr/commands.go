@@ -17,12 +17,12 @@ import (
 // the repository, GitHub or an agent is reached through it, so a test can
 // supply its own.
 type App struct {
-	Git        *Git
-	GH         *GH
-	Summarizer *Summarizer
-	Base       string
-	Stdout     io.Writer
-	Stdin      io.Reader
+	Git                *Git
+	GH                 *GH
+	Summarizer         *Summarizer
+	Base               string
+	Stdout             io.Writer
+	Stdin              io.Reader
 	AssumeYes          bool
 	DryRun             bool
 	ShowSummaryCommand bool

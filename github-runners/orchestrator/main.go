@@ -6,19 +6,18 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"runtime"
 	"syscall"
 
 	"cloudeng.io/cmdutil"
-	"cloudeng.io/cmdutil/cmdyaml"
+	"cloudeng.io/cmdutil/cmdconfig"
 	"cloudeng.io/cmdutil/subcmd"
-	"cloudeng.io/logging/ctxlog"
 	"cloudeng.io/macos/macosutils"
 	"cloudeng.io/webapi/clients/github/githubcmd"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/githubclient"
-	"github.com/cloudengio/citools/runners/macos/orchestrator/internal"
 )
 
 const CmdSpecYAML = `
@@ -85,13 +84,8 @@ commands:
         summary: restart the login service
   - name: webapp-build
     summary: build the embedded web UI frontend (runs npm install, gen and build)
-  - name: config
-    summary: config related commands
-    commands:
-      - name: show
-        summary: show the current configuration
-      - name: describe
-        summary: describe the configuration spec
+  {{range subcmdExtension "config"}}{{.}}
+  {{end}}
   - name: vms
     summary: inspect and clean up the VMs created by the orchestrator's pools
     commands:
@@ -115,13 +109,15 @@ commands:
 `
 
 type GlobalFlags struct {
-	ConfigFile string `subcmd:"config,github_orchestrator_config.yml,path to YAML configuration file" doc:"path to YAML configuration file"`
+	Config cmdconfig.FilesFlag `subcmd:"config,'config.yaml,config.env','comma separated list of the YAML configuration file and of the file of NAME=VALUE environment variable definitions (.env) for use in it, replacing the defaults; searched for in the current directory, ~/Library/Application Support/io.cloudeng.github-runner-orchestrator on macOS and ~/.config/github-orchestrator; the shell environment overrides the values the latter defines'" doc:"the configuration file and the file of environment variable definitions for use in it"`
 	cmdutil.LoggingFlags
 	Verbose bool `subcmd:"verbose,false,enable verbose logging" doc:"enable verbose logging"`
 }
 
 func createCLI() *subcmd.CommandSetYAML {
-	cmdSet := subcmd.MustFromYAML(CmdSpecYAML)
+	configCmds := cmdconfig.ConfigCommands[Config]{Summary: "root configuration options\n"}
+	cmdSet := subcmd.MustFromYAMLTemplate(CmdSpecYAML, cmdconfig.ConfigExtension(configCmds))
+	cmdSet.MustAddExtensions()
 
 	runCmd := RunCommand{}
 	cmdSet.Set("run").MustRunner(runCmd.Run, &RunFlags{})
@@ -173,10 +169,6 @@ func createCLI() *subcmd.CommandSetYAML {
 	webappCmd := WebappBuildCommand{}
 	cmdSet.Set("webapp-build").MustRunner(webappCmd.Run, &WebappBuildFlags{})
 
-	cfgCmd := ConfigCommand{}
-	cmdSet.Set("config", "show").MustRunner(cfgCmd.Show, &struct{}{})
-	cmdSet.Set("config", "describe").MustRunner(cfgCmd.Describe, &struct{}{})
-
 	jwtCmd := JWTCommand{}
 	cmdSet.Set("jwt", "create").MustRunner(jwtCmd.Create, &JWTCreateFlags{})
 	cmdSet.Set("jwt", "issue").MustRunner(jwtCmd.Issuer, &JWTIssuerFlags{})
@@ -204,56 +196,33 @@ func (vf VerboseFlags) stepsVerbose() bool {
 	return vf.Verbose || verbose()
 }
 
+// loggerPrehook creates the logger from the configuration, as overridden by the
+// command line flags.
+var loggerPrehook = subcmd.LoggerHook("withLoggerPrehook", func(ctx context.Context, fs *flag.FlagSet) (*cmdutil.Logger, error) {
+	cfg, _ := cmdutil.ContextValue[Config](ctx)
+	loggerConfig := cfg.Logging.WithFlagOverrides(fs, globalFlags.LoggingFlags)
+	return loggerConfig.NewLoggerOpts(loggerConfig.Options(), cfg.Logging.Options()...)
+})
+
 func configPrehook(ctx context.Context) (context.Context, string, subcmd.PostHook, error) {
-	id := "withConfigPrehook"
-	postHook := func(ctx context.Context) (string, error) { return id, nil }
-	fs := subcmd.GlobalFlagSetFromContext(ctx)
-	if fs == nil {
-		return ctx, id, postHook, fmt.Errorf("global flagset not in context")
+	hook := cmdconfig.ConfigHook[Config]{
+		ID:       "withConfigPrehook",
+		Files:    &globalFlags.Config,
+		Spec:     ConfigSpec(),
+		Required: true,
 	}
-
-	configFile := cmdyaml.LocateConfigFileInDir(globalFlags.ConfigFile, internal.ConfigDir)
-	if configFile == "" {
-		configFile = cmdyaml.LocateConfigFileInDir(globalFlags.ConfigFile, "github_orchestrator")
-	}
-	if configFile == "" {
-		configFile = cmdyaml.LocateConfigFileInDir(globalFlags.ConfigFile, "citools")
-	}
-	if configFile == "" {
-		configFile = globalFlags.ConfigFile
-	}
-
-	var cfg Config
-	if err := cmdyaml.ParseConfigFilesStrict(ctx, &cfg, configFile); err != nil {
-		return ctx, id, postHook, fmt.Errorf("failed to read the configuration file %q: %v\nedit that file to correct it", configFile, err)
-	}
-	if err := cfg.Validate(); err != nil {
-		return ctx, id, postHook, fmt.Errorf("the configuration file %q is invalid: %v\nedit that file to correct it", configFile, err)
-	}
-
-	loggerConfig := cfg.Logging.WithFlagOverrides(
-		fs.FlagSet(), globalFlags.LoggingFlags)
-	logger, err := loggerConfig.NewLoggerOpts(loggerConfig.Options(), cfg.Logging.Options()...)
+	ctx, id, _, err := hook.Run(ctx)
 	if err != nil {
-		return ctx, id, postHook, fmt.Errorf("error setting up logger: %v", err)
+		return ctx, id, nil, err
 	}
-
-	ctx = ctxlog.WithLogger(ctx, logger.Logger)
-	ctx = ContextWithConfig(ctx, cfg)
-	ctx = ContextWithConfigFile(ctx, configFile)
-	postHook = func(ctx context.Context) (string, error) {
-		if err := logger.Close(); err != nil {
-			return id, fmt.Errorf("error closing logger: %v", err)
-		}
-		return id, nil
-	}
-	return ctx, id, postHook, nil
+	ctx, _, postHook, err := loggerPrehook(ctx)
+	return ctx, id, postHook, err
 }
 
 func repoClientsPrehook(ctx context.Context) (context.Context, string, subcmd.PostHook, error) {
 	id := "withRepoClientsPrehook"
 	postHook := func(ctx context.Context) (string, error) { return id, nil }
-	cfg, ok := ConfigFromContext(ctx)
+	cfg, ok := cmdutil.ContextValue[Config](ctx)
 	if !ok {
 		return ctx, id, postHook, fmt.Errorf("no config in context")
 	}
@@ -261,7 +230,7 @@ func repoClientsPrehook(ctx context.Context) (context.Context, string, subcmd.Po
 	if err != nil {
 		return ctx, id, postHook, fmt.Errorf("error creating GitHub clients: %v", err)
 	}
-	ctx = ContextWithRepoClients(ctx, rc)
+	ctx = cmdutil.ContextWithValue(ctx, rc)
 	return ctx, id, postHook, nil
 }
 

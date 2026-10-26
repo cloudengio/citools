@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 
+	"cloudeng.io/cmdutil"
 	"cloudeng.io/cmdutil/keys"
 	"cloudeng.io/cmdutil/subcmd"
 	"cloudeng.io/logging/ctxlog"
@@ -27,7 +28,7 @@ func withKeysPrehook(ctx context.Context) (context.Context, string, subcmd.PostH
 
 	ks := keys.NewInMemoryKeyStore()
 	ctx = keys.ContextWithKeyStore(ctx, ks)
-	cfg, ok := ConfigFromContext(ctx)
+	cfg, ok := cmdutil.ContextValue[Config](ctx)
 	if !ok {
 		return ctx, id, postHook, fmt.Errorf("no config in context")
 	}

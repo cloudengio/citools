@@ -5,15 +5,15 @@
 //	     create-pr - create a pull request for the current branch, with a description generated from its diff
 //	update-summary - regenerate the description of a pull request from what its branch now changes
 //	     post-note - attach the description of a merged pull request to the commit it created on the base branch
-//	        config - config related commands
+//	        config - show the configuration, and its documentation.
 //
-// global flags: [--base=main --config= --dry-run=false --engine=claude --max-diff-lines=3000 --model= --show-command=false --show-summary-command=false --verbose=false --yes=false]
+// global flags: [--base=main --config=config.yaml,ghpr.yaml --dry-run=false --engine=claude --max-diff-lines=3000 --model= --show-command=false --show-summary-command=false --verbose=false --yes=false]
 //
 //	-base string
 //	  branch that pull requests are merged into (default "main")
-//	-config string
-//	  path to YAML configuration file; if unset, config.yaml or ghpr.yaml is
-//	  searched in standard locations
+//	-config value
+//	  YAML configuration file; if unset, the first of config.yaml and ghpr.yaml
+//	  found in the standard locations is used (default config.yaml,ghpr.yaml)
 //	-dry-run
 //	  report what would be changed without changing it
 //	-engine string

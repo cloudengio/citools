@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 
+	"cloudeng.io/cmdutil"
+	"cloudeng.io/cmdutil/cmdconfig"
 	"cloudeng.io/cmdutil/cmdyaml"
 	"cloudeng.io/cmdutil/subcmd"
 )
@@ -84,37 +86,6 @@ func TestConfigValidation(t *testing.T) {
 				t.Errorf("got prompt %q, want %q", cfg.Prompt, tc.wantP)
 			}
 		})
-	}
-}
-
-func TestConfigContext(t *testing.T) {
-	if _, ok := ConfigFromContext(nil); ok { //nolint:staticcheck // testing nil context handling explicitly
-		t.Errorf("got ok=true for nil context")
-	}
-	if _, ok := ConfigFromContext(context.Background()); ok {
-		t.Errorf("got ok=true for context without config")
-	}
-	if _, ok := ConfigFilesFromContext(nil); ok { //nolint:staticcheck // testing nil context handling explicitly
-		t.Errorf("got ok=true for nil context on ConfigFilesFromContext")
-	}
-	if _, ok := ConfigFilesFromContext(context.Background()); ok {
-		t.Errorf("got ok=true for context without config files")
-	}
-
-	cfg := Config{Prompt: "test prompt"}
-	ctx := ContextWithConfig(context.Background(), cfg)
-	got, ok := ConfigFromContext(ctx)
-	if !ok {
-		t.Fatalf("got ok=false, want true")
-	}
-	if got.Prompt != cfg.Prompt {
-		t.Errorf("got prompt %q, want %q", got.Prompt, cfg.Prompt)
-	}
-
-	ctx = ContextWithConfigFile(ctx, "/path/to/file.yaml")
-	files, ok := ConfigFilesFromContext(ctx)
-	if !ok || len(files) != 1 || files[0] != "/path/to/file.yaml" {
-		t.Errorf("got files %v, want [/path/to/file.yaml]", files)
 	}
 }
 
@@ -277,16 +248,16 @@ func TestConfigPrehook(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		cfg, ok := ConfigFromContext(outCtx)
+		cfg, ok := cmdutil.ContextValue[Config](outCtx)
 		if !ok {
 			t.Fatalf("config not in context")
 		}
 		if got, want := cfg.Prompt, "custom prompt text"; got != want {
 			t.Errorf("got prompt %q, want %q", got, want)
 		}
-		files, ok := ConfigFilesFromContext(outCtx)
-		if !ok || len(files) != 1 || files[0] != cfgPath {
-			t.Errorf("got files %v, want [%s]", files, cfgPath)
+		loc, ok := cmdutil.ContextValue[*cmdconfig.Located](outCtx)
+		if !ok || len(loc.YAML) != 1 || loc.YAML[0] != cfgPath {
+			t.Errorf("got files %v, want [%s]", loc, cfgPath)
 		}
 	})
 
@@ -310,15 +281,15 @@ func TestConfigPrehook(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		cfg, ok := ConfigFromContext(outCtx)
+		cfg, ok := cmdutil.ContextValue[Config](outCtx)
 		if !ok {
 			t.Fatalf("expected config in context")
 		}
 		if cfg.Prompt != defaultInstructions {
 			t.Errorf("expected default instructions, got %q", cfg.Prompt)
 		}
-		if files, ok := ConfigFilesFromContext(outCtx); ok && len(files) > 0 {
-			t.Errorf("expected no config files in context, got %v", files)
+		if loc, ok := cmdutil.ContextValue[*cmdconfig.Located](outCtx); ok && len(loc.YAML) > 0 {
+			t.Errorf("expected no config files in context, got %v", loc.YAML)
 		}
 	})
 }
@@ -343,52 +314,6 @@ func captureOutput(f func()) string {
 	return <-outC
 }
 
-func TestConfigCommandShowAndDescribe(t *testing.T) {
-	cmd := ConfigCommand{}
-
-	t.Run("show with config file", func(t *testing.T) {
-		ctx := ContextWithConfig(context.Background(), Config{Prompt: "prompt text\n"})
-		ctx = ContextWithConfigFile(ctx, "/path/to/my_config.yaml")
-		out := captureOutput(func() {
-			if err := cmd.Show(ctx, nil, nil); err != nil {
-				t.Fatalf("Show: %v", err)
-			}
-		})
-		if !strings.Contains(out, "# Configuration file: /path/to/my_config.yaml") {
-			t.Errorf("output missing config file line: %q", out)
-		}
-		if !strings.Contains(out, "prompt: |") {
-			t.Errorf("output missing prompt: %q", out)
-		}
-	})
-
-	t.Run("show without config file", func(t *testing.T) {
-		ctx := ContextWithConfig(context.Background(), Config{Prompt: defaultInstructions})
-		out := captureOutput(func() {
-			if err := cmd.Show(ctx, nil, nil); err != nil {
-				t.Fatalf("Show: %v", err)
-			}
-		})
-		if !strings.Contains(out, "# Configuration file: none (using defaults)") {
-			t.Errorf("output missing none indicator: %q", out)
-		}
-		if !strings.Contains(out, "senior software engineer") {
-			t.Errorf("output missing prompt: %q", out)
-		}
-	})
-
-	t.Run("describe", func(t *testing.T) {
-		out := captureOutput(func() {
-			if err := cmd.Describe(context.Background(), nil, nil); err != nil {
-				t.Fatalf("Describe: %v", err)
-			}
-		})
-		if !strings.Contains(out, "prompt") {
-			t.Errorf("describe output missing prompt field: %q", out)
-		}
-	})
-}
-
 func TestCLIConfigShow(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "test_config.yaml")
@@ -410,5 +335,21 @@ func TestCLIConfigShow(t *testing.T) {
 	}
 	if !strings.Contains(out, "hello from test") {
 		t.Errorf("missing prompt in output: %q", out)
+	}
+}
+
+func TestCLIConfigDescribe(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	globalFlags = GlobalFlags{}
+	cli := createCLI()
+	cli.WithGlobalFlags(subcmd.NewFlagSet().MustRegisterFlagStruct(&globalFlags, nil, nil))
+	out := captureOutput(func() {
+		if err := cli.DispatchWithArgs(context.Background(), "ghpr", "config", "describe"); err != nil {
+			t.Fatalf("dispatch: %v", err)
+		}
+	})
+	if !strings.Contains(out, "prompt") || !strings.Contains(out, "root configuration options") {
+		t.Errorf("unexpected output: %q", out)
 	}
 }

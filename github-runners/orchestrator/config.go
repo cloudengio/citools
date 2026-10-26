@@ -1,3 +1,7 @@
+// Copyright 2026 cloudeng llc. All rights reserved.
+// Use of this source code is governed by the Apache-2.0
+// license that can be found in the LICENSE file.
+
 package main
 
 import (
@@ -10,6 +14,7 @@ import (
 	"time"
 
 	"cloudeng.io/cmdutil"
+	"cloudeng.io/cmdutil/cmdconfig"
 	"cloudeng.io/cmdutil/cmdyaml"
 	"cloudeng.io/cmdutil/keys"
 	"cloudeng.io/file/crawl/crawlcmd"
@@ -17,6 +22,7 @@ import (
 	"cloudeng.io/webapp/webassets"
 	"cloudeng.io/webapp/webauth/jwtutil"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/githubclient"
+	"github.com/cloudengio/citools/runners/macos/orchestrator/internal"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/vmsclient"
 	"github.com/lestrrat-go/jwx/v3/jwt"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -302,35 +308,49 @@ func (cfg Config) validateVMPoolNames() error {
 	return nil
 }
 
-type contextConfigKey struct{}
-type contextConfigFileKey struct{}
+const (
+	ConfigOrchestratorEnvVar = "GITHUB_ORCHESTRATOR_CONFIG"
+	EnvOrchestratorEnvVar    = "GITHUB_ORCHESTRATOR_ENV_CONFIG"
+	// DefaultEnvConfigFile is the default file of NAME=VALUE definitions, rather than
+	// YAML, as parsed by cloudeng.io/cmdutil/envfile, used to expand references
+	// in the configuration file.
+	DefaultEnvConfigFile = "config.env"
+)
 
-func ContextWithConfig(ctx context.Context, cfg Config) context.Context {
-	return context.WithValue(ctx, contextConfigKey{}, cfg)
+// configSearchPath returns the path that the orchestrator's configuration
+// files are searched for in: the current directory, internal.ConfigDir within
+// the user's configuration directory, ie.
+// ~/Library/Application Support/io.cloudeng.github-runner-orchestrator on
+// macOS, and ~/.config/github-orchestrator.
+func configSearchPath() string {
+	return cmdconfig.SearchPathFor(internal.ConfigDir, internal.ConfigDirXDG)
 }
 
-func ConfigFromContext(ctx context.Context) (Config, bool) {
-	cfg, ok := ctx.Value(contextConfigKey{}).(Config)
-	return cfg, ok
-}
-
-// ContextWithConfigFile returns a context carrying the path of the configuration file read.
-func ContextWithConfigFile(ctx context.Context, file string) context.Context {
-	return context.WithValue(ctx, contextConfigFileKey{}, []string{file})
-}
-
-// ContextWithConfigFiles returns a context carrying the paths of the configuration files read.
-func ContextWithConfigFiles(ctx context.Context, files ...string) context.Context {
-	return context.WithValue(ctx, contextConfigFileKey{}, files)
-}
-
-// ConfigFilesFromContext extracts the configuration file paths from the context.
-func ConfigFilesFromContext(ctx context.Context) ([]string, bool) {
-	if ctx == nil {
-		return nil, false
+// ConfigSpec returns the specification of how the configuration files named
+// by the --config flag are located: in the current directory, in
+// internal.ConfigDir within the user's configuration directory, ie.
+// ~/Library/Application Support/io.cloudeng.github-runner-orchestrator on
+// macOS, and in ~/.config/github-orchestrator. The environment variables
+// GITHUB_ORCHESTRATOR_CONFIG and GITHUB_ORCHESTRATOR_ENV_CONFIG replace
+// the defaults, and only one file of each type is used.
+func ConfigSpec() cmdconfig.Spec {
+	return cmdconfig.Spec{
+		Path: configSearchPath(),
+		EnvVars: map[cmdconfig.FileType]string{
+			cmdconfig.FileTypeYAML: ConfigOrchestratorEnvVar,
+			cmdconfig.FileTypeEnv:  EnvOrchestratorEnvVar,
+		},
+		FirstOnly: []cmdconfig.FileType{cmdconfig.FileTypeYAML, cmdconfig.FileTypeEnv},
 	}
-	files, ok := ctx.Value(contextConfigFileKey{}).([]string)
-	return files, ok
+}
+
+// ConfigFileFromContext returns the first of the configuration files read, or
+// an empty string if there is none.
+func ConfigFileFromContext(ctx context.Context) string {
+	if loc, ok := cmdutil.ContextValue[*cmdconfig.Located](ctx); ok && len(loc.YAML) > 0 {
+		return loc.YAML[0]
+	}
+	return ""
 }
 
 type WebhookConfig struct {
@@ -347,15 +367,4 @@ func (wc WebhookConfig) Options() ([]operations.Option, error) {
 	}
 	opts = append(opts, operations.WithRateController(rc, wc.RateControl.ExponentialBackoff.StatusCodes...))
 	return opts, nil
-}
-
-type repoClientsKey struct{}
-
-func ContextWithRepoClients(ctx context.Context, rc *githubclient.RepoClients) context.Context {
-	return context.WithValue(ctx, repoClientsKey{}, rc)
-}
-
-func RepoClientsFromContext(ctx context.Context) (*githubclient.RepoClients, bool) {
-	rc, ok := ctx.Value(repoClientsKey{}).(*githubclient.RepoClients)
-	return rc, ok
 }

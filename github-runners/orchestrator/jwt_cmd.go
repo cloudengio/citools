@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"cloudeng.io/cmdutil"
 	"cloudeng.io/cmdutil/keys/keyscmd"
 	"cloudeng.io/file/localfs"
 	"cloudeng.io/webapp/webauth/jwtutil"
@@ -247,7 +248,7 @@ func runJWTIssuer(ctx context.Context, cfg Config, fv *JWTIssuerFlags) error {
 // are specific to running this as an interactive, one-off command.
 func (c JWTCommand) Issuer(ctx context.Context, flags any, _ []string) error {
 	fv := flags.(*JWTIssuerFlags)
-	cfg, ok := ConfigFromContext(ctx)
+	cfg, ok := cmdutil.ContextValue[Config](ctx)
 	if !ok {
 		return fmt.Errorf("no configuration loaded")
 	}

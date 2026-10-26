@@ -159,12 +159,12 @@ func (r RunCommand) Run(ctx context.Context, fl any, _ []string) error {
 }
 
 func (r RunCommand) runWithUIMode(ctx context.Context, fv *RunFlags, mode ui.Mode) error {
-	cfg, ok := ConfigFromContext(ctx)
+	cfg, ok := cmdutil.ContextValue[Config](ctx)
 	if !ok {
 		return fmt.Errorf("no config in context")
 	}
 
-	repoClients, ok := RepoClientsFromContext(ctx)
+	repoClients, ok := cmdutil.ContextValue[*githubclient.RepoClients](ctx)
 	if !ok {
 		return fmt.Errorf("no repo clients in context")
 	}
@@ -183,7 +183,7 @@ func (r RunCommand) runWithUIMode(ctx context.Context, fv *RunFlags, mode ui.Mod
 	}
 
 	if cfg.Webhook.RelayURL == "" {
-		return fmt.Errorf("no webhook relay URL is configured: set webhook.relay_url in the configuration file %q", globalFlags.ConfigFile)
+		return fmt.Errorf("no webhook relay URL is configured: set webhook.relay_url in the configuration file %q", ConfigFileFromContext(ctx))
 	}
 
 	opts, err := cfg.Webhook.Options()
@@ -197,7 +197,7 @@ func (r RunCommand) runWithUIMode(ctx context.Context, fv *RunFlags, mode ui.Mod
 		// Start the web UI immediately so it is available (serving config and an
 		// empty-but-live dashboard) while the slower parts of initialization below
 		// proceed; the handler is wired in once ready and the UI fills in.
-		backend = newWebUIBackend(cfg, globalFlags.ConfigFile)
+		backend = newWebUIBackend(cfg, ConfigFileFromContext(ctx))
 		cookieName := ""
 		if cfg.WebUI.JWTVerification != nil {
 			cookieName = cfg.WebUI.JWTVerification.Name
@@ -412,11 +412,11 @@ type RunJobFlags struct {
 
 func (r RunCommand) RunJob(ctx context.Context, flags any, _ []string) error {
 	fv := flags.(*RunJobFlags)
-	cfg, ok := ConfigFromContext(ctx)
+	cfg, ok := cmdutil.ContextValue[Config](ctx)
 	if !ok {
 		return fmt.Errorf("no config in context")
 	}
-	repoClients, ok := RepoClientsFromContext(ctx)
+	repoClients, ok := cmdutil.ContextValue[*githubclient.RepoClients](ctx)
 	if !ok {
 		return fmt.Errorf("no repo clients in context")
 	}

@@ -10,11 +10,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"cloudeng.io/cmdutil/cmdconfig"
+	"cloudeng.io/cmdutil/cmdyaml"
 	"cloudeng.io/macos/buildtools"
 	"cloudeng.io/os/executil"
-	"gopkg.in/yaml.v3"
 
 	"github.com/cloudengio/citools/runners/macos/orchestrator/internal"
 )
@@ -25,26 +27,13 @@ import (
 // which orchestrator config to embed as the installed default. It is deliberately
 // separate from the orchestrator's own runtime configuration.
 type BundleConfig struct {
-	// Bundle is the output .app path; defaults to <CFBundleExecutable>.app.
-	Bundle string `yaml:"bundle"`
-	// Info holds Info.plist fields (e.g. CFBundleIdentifier); missing standard
-	// keys are defaulted.
-	Info buildtools.InfoPlist `yaml:"info_plist"`
-	// Signing holds the code-signing identity, entitlements and codesign args.
-	Signing buildtools.SigningConfig `yaml:"signing"`
-	// Permissions holds the permissions for the bundle executables and directories.
-	Permissions buildtools.PermissionsConfig `yaml:"permissions,omitempty"`
-	// Notary holds the credentials used to notarize the signed bundle with
-	// Apple's notarization service. Only used when --notarize is set.
-	Notary buildtools.NotaryConfig `yaml:"notary"`
-	// ProvisioningProfile is embedded as Contents/embedded.provisionprofile.
-	ProvisioningProfile string `yaml:"provisioning_profile"`
+	// Bundle holds the output .app path, which defaults to
+	// <CFBundleExecutable>.app, the Info.plist fields, the signing, notarization
+	// and permissions configuration, and the provisioning profile.
+	buildtools.Bundle `yaml:",inline"`
 	// OrchestratorConfig is the minimal orchestrator config file embedded into
 	// the bundle as the installed default. Defaults to minimal_config.yml.
 	OrchestratorConfig string `yaml:"orchestrator_config"`
-	// Version is the human-readable release version stamped into the bundle
-	// as CFBundleShortVersionString. Defaults to DefaultVersion.
-	Version string `yaml:"version"`
 	// LaunchAgentConfig is the launchd login service configuration embedded
 	// into the bundle, which `service install` reads from there. Defaults to
 	// launch_agent.yml.
@@ -75,25 +64,25 @@ type BundleCommand struct{}
 
 type BundleFlags struct {
 	VerboseFlags
-	Config     string `subcmd:"config,installer.yaml,path to the installer bundle configuration file"`
-	Binary     string `subcmd:"binary,,path to a prebuilt orchestrator binary; if empty the current package (.) is built"`
-	Timing     bool   `subcmd:"timing,false,print timing information for each build step"`
-	DryRun     bool   `subcmd:"dry-run,false,print the build steps without executing them"`
-	Notarize   bool   `subcmd:"notarize,false,submit the signed bundle to Apple for notarization and staple the ticket"`
-	AllowDirty      bool   `subcmd:"allow-dirty,false,'build even though the tree has uncommitted changes; the bundle is then stamped -dirty'"`
-	SkipWebappBuild bool   `subcmd:"skip-webapp-build,false,skip building the web UI frontend before compiling the binary"`
+	Config          cmdconfig.FilesFlag `subcmd:"config,'bundle-builder.yaml,bundle-builder.env','comma separated list of the YAML bundle configuration file and of the file of NAME=VALUE environment variable definitions (.env) for use in it, replacing the defaults; searched for as the orchestrator configuration is'"`
+	Binary          string              `subcmd:"binary,,path to a prebuilt orchestrator binary; if empty the current package (.) is built"`
+	Timing          bool                `subcmd:"timing,false,print timing information for each build step"`
+	DryRun          bool                `subcmd:"dry-run,false,print the build steps without executing them"`
+	Notarize        bool                `subcmd:"notarize,false,submit the signed bundle to Apple for notarization and staple the ticket"`
+	AllowDirty      bool                `subcmd:"allow-dirty,false,'build even though the tree has uncommitted changes; the bundle is then stamped -dirty'"`
+	SkipWebappBuild bool                `subcmd:"skip-webapp-build,false,skip building the web UI frontend before compiling the binary"`
 }
 
 func (BundleCommand) Run(ctx context.Context, fl any, _ []string) error {
 	fv := fl.(*BundleFlags)
 
-	cfg, err := loadBundleConfig(fv.Config)
+	cfg, err := loadBundleConfig(ctx, &fv.Config)
 	if err != nil {
 		return err
 	}
 
 	// The bundle is built from this tree, so it carries the version derived from git.
-	version, err := gitVersion(ctx, ".", cfg.Version)
+	version, err := gitVersion(ctx, ".", cfg.Info.CFBundleShortVersionString)
 	if err != nil {
 		return err
 	}
@@ -125,63 +114,50 @@ func (BundleCommand) Run(ctx context.Context, fl any, _ []string) error {
 		orchestrator = b
 	}
 
-	fmt.Printf("building app bundle %s with orchestrator binary %s (dry run: %v)\n", cfg.Bundle, orchestrator, fv.DryRun)
+	fmt.Printf("building app bundle %s with orchestrator binary %s (dry run: %v)\n", cfg.Path, orchestrator, fv.DryRun)
 
 	return buildAppBundle(ctx, cfg, info, orchestrator, fv.Timing, fv.stepsVerbose(), fv.DryRun, fv.Notarize)
 }
 
-func loadBundleConfig(path string) (BundleConfig, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return BundleConfig{}, fmt.Errorf("reading bundle config %s: %w", path, err)
+// bundleSpec specifies how the bundle configuration files are located: in
+// the same places as the orchestrator's own configuration, using one of each type.
+func bundleSpec() cmdconfig.Spec {
+	return cmdconfig.Spec{
+		Path:      configSearchPath(),
+		FirstOnly: []cmdconfig.FileType{cmdconfig.FileTypeYAML, cmdconfig.FileTypeEnv},
 	}
-	// Expand ${ENV} references in every string value so that sensitive or
-	// machine-specific values (signing identity, team ID) can be kept out of the
-	// checked-in config file.
-	var raw map[string]any
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return BundleConfig{}, fmt.Errorf("parsing bundle config %s: %w", path, err)
-	}
-	expandEnv(raw)
-	expanded, err := yaml.Marshal(raw)
-	if err != nil {
-		return BundleConfig{}, err
-	}
+}
+
+// loadBundleConfig reads the bundle configuration files named by ff. ${ENV}
+// references in them are expanded from the environment and the environment
+// variables file, so that sensitive or machine-specific values (signing
+// identity, team ID) can be kept out of the checked-in config file; a
+// reference to a variable that is not defined is the empty string.
+func loadBundleConfig(ctx context.Context, ff *cmdconfig.FilesFlag) (BundleConfig, error) {
 	var cfg BundleConfig
-	if err := yaml.Unmarshal(expanded, &cfg); err != nil {
-		return BundleConfig{}, fmt.Errorf("parsing bundle config %s: %w", path, err)
+	loc, err := cmdconfig.Load(ctx, &cfg, ff, bundleSpec(), cmdyaml.WithUnresolvedEmpty())
+	if err != nil {
+		return BundleConfig{}, fmt.Errorf("loading the bundle configuration: %w", err)
 	}
-	if cfg.Bundle == "" {
-		cfg.Bundle = defaultExecutable + ".app"
-	}
-	if cfg.OrchestratorConfig == "" {
-		cfg.OrchestratorConfig = "minimal_config.yml"
-	}
-	if cfg.LaunchAgentConfig == "" {
-		cfg.LaunchAgentConfig = internal.LaunchAgentFileName
-	}
-	if cfg.Version == "" {
-		cfg.Version = DefaultVersion
+	if len(loc.YAML) == 0 {
+		return BundleConfig{}, fmt.Errorf("no bundle configuration found, looked for %s in any of %s",
+			strings.Join(ff.Files(cmdconfig.FileTypeYAML, false), ", "), strings.Join(filepath.SplitList(loc.SearchPath), ", "))
 	}
 	return cfg, nil
 }
 
-// expandEnv walks a decoded YAML value and expands ${ENV} references in every
-// string, in place.
-func expandEnv(v any) any {
-	switch t := v.(type) {
-	case string:
-		return os.ExpandEnv(t)
-	case map[string]any:
-		for k, val := range t {
-			t[k] = expandEnv(val)
-		}
-	case []any:
-		for i, val := range t {
-			t[i] = expandEnv(val)
-		}
+// SetDefaults fills in the values that are not set, and is called once the
+// configuration has been read.
+func (c *BundleConfig) SetDefaults() {
+	if c.Path == "" {
+		c.Path = defaultExecutable + ".app"
 	}
-	return v
+	if c.OrchestratorConfig == "" {
+		c.OrchestratorConfig = "minimal_config.yml"
+	}
+	if c.LaunchAgentConfig == "" {
+		c.LaunchAgentConfig = internal.LaunchAgentFileName
+	}
 }
 
 // buildInfoPlist merges the caller-supplied Info.plist keys over the standard
@@ -252,20 +228,17 @@ func buildBinary(ctx context.Context, pkg string, env ...string) (string, func()
 // buildAppBundle assembles and (if an identity is configured) signs the
 // orchestrator app bundle using cloudeng.io/macos/buildtools.
 func buildAppBundle(ctx context.Context, cfg BundleConfig, info buildtools.InfoPlist, orchestrator string, timing, verbose, dryRun, notarize bool) error {
-	if notarize {
-		if !cfg.Notary.Configured() {
-			return fmt.Errorf("--notarize requires notary credentials: configure notary in the bundle config")
-		}
-		if err := cfg.Notary.ValidateSigning(cfg.Signing); err != nil {
-			return err
-		}
+	cfg.Info = info
+	app := cfg.AppBundle()
+	steps, err := cfg.Steps(
+		buildtools.WithNotarize(notarize),
+		buildtools.WithBinary("", orchestrator),
+		buildtools.WithContents("",
+			app.CopyContents(cfg.OrchestratorConfig, "Resources", bundledConfigName),
+			app.CopyContents(cfg.LaunchAgentConfig, "Resources", internal.LaunchAgentFileName)))
+	if err != nil {
+		return err
 	}
-	if cfg.Signing.Configured() && cfg.Signing.Entitlements != nil {
-		if cfg.ProvisioningProfile == "" {
-			return fmt.Errorf("signing with entitlements requires a provisioning profile: set provisioning_profile in the bundle config")
-		}
-	}
-	app := buildtools.AppBundle{Path: cfg.Bundle, Info: info}
 
 	var stepOpts []buildtools.StepRunnerOption
 	if timing {
@@ -274,41 +247,7 @@ func buildAppBundle(ctx context.Context, cfg BundleConfig, info buildtools.InfoP
 	if verbose {
 		stepOpts = append(stepOpts, buildtools.WithStepVerbose(true))
 	}
-	runner := buildtools.NewRunner(stepOpts...)
-
-	runner.AddSteps(app.Clean()...)
-	runner.AddSteps(app.Create()...)
-
-	runner.AddSteps(
-		app.WriteInfoPlist(),
-		app.CopyExecutable(orchestrator),
-		app.CopyContents(cfg.OrchestratorConfig, "Resources", bundledConfigName),
-		app.CopyContents(cfg.LaunchAgentConfig, "Resources", internal.LaunchAgentFileName),
-		app.SetExecutablePermissions(orchestrator, cfg.Permissions.ExecutableMode()),
-		app.SetMacOSDirPermissions(cfg.Permissions.MacOSDirMode()),
-	)
-
-	if cfg.ProvisioningProfile != "" {
-		profilePath := os.ExpandEnv(cfg.ProvisioningProfile)
-		if _, err := os.Stat(profilePath); err != nil {
-			return fmt.Errorf("provisioning profile %q is not accessible: %w", profilePath, err)
-		}
-		runner.AddSteps(app.InstallProvisioningProfile(profilePath))
-	}
-
-	if cfg.Signing.Configured() {
-		signer := cfg.Signing.Signer()
-		runner.AddSteps(
-			app.SignExecutable(signer),
-			app.Sign(signer),
-		)
-	}
-
-	// Notarization must follow signing: Apple staples a ticket into the already
-	// signed bundle so Gatekeeper accepts it on other Macs.
-	if notarize {
-		runner.AddSteps(app.Notarize(cfg.Notary)...)
-	}
+	runner := buildtools.NewRunner(stepOpts...).AddSteps(steps...)
 
 	results := runner.Run(ctx, buildtools.NewCommandRunner(buildtools.WithDryRun(dryRun)))
 	for _, r := range results {
@@ -319,6 +258,6 @@ func buildAppBundle(ctx context.Context, cfg BundleConfig, info buildtools.InfoP
 	if err := results.Error(); err != nil {
 		return err
 	}
-	fmt.Printf("created app bundle %s\n", cfg.Bundle)
+	fmt.Printf("created app bundle %s\n", cfg.Path)
 	return nil
 }

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"cloudeng.io/cmdutil"
 	"cloudeng.io/cmdutil/keys"
 	"cloudeng.io/errors"
 	"cloudeng.io/text/textutil"
@@ -75,7 +76,7 @@ type ListRunnersFlags struct {
 }
 
 func (g GitHubCommand) getCommand(ctx context.Context, flags GitHubFlags) (*githubcmd.Command, error) {
-	cfg, ok := ConfigFromContext(ctx)
+	cfg, ok := cmdutil.ContextValue[Config](ctx)
 	if !ok {
 		return nil, fmt.Errorf("no config in context")
 	}
@@ -233,7 +234,7 @@ func (g GitHubCommand) GetJobConclusion(ctx context.Context, flags any, runIDArg
 // single rejected request does not strand the rest; a malformed ID is a usage
 // error and stops the command immediately.
 func requestForEachID(ctx context.Context, flags GitHubFlags, noun, action string, idArgs []string, request func(context.Context, string, int64) error) error {
-	cfg, ok := ConfigFromContext(ctx)
+	cfg, ok := cmdutil.ContextValue[Config](ctx)
 	if !ok {
 		return fmt.Errorf("no config in context")
 	}
@@ -267,7 +268,7 @@ type RerunJobFlags struct {
 // here as requested rather than as started.
 func (g GitHubCommand) RerunJob(ctx context.Context, flags any, jobIDArgs []string) error {
 	fv := flags.(*RerunJobFlags)
-	rc, ok := RepoClientsFromContext(ctx)
+	rc, ok := cmdutil.ContextValue[*githubclient.RepoClients](ctx)
 	if !ok {
 		return fmt.Errorf("no repo clients in context")
 	}
@@ -288,7 +289,7 @@ type CancelRunFlags struct {
 // with 409 Conflict if the run has already completed.
 func (g GitHubCommand) CancelRun(ctx context.Context, flags any, runIDArgs []string) error {
 	fv := flags.(*CancelRunFlags)
-	rc, ok := RepoClientsFromContext(ctx)
+	rc, ok := cmdutil.ContextValue[*githubclient.RepoClients](ctx)
 	if !ok {
 		return fmt.Errorf("no repo clients in context")
 	}
@@ -302,7 +303,7 @@ type CreateRegistrationTokenFlags struct {
 
 func (g GitHubCommand) CreateRegistrationToken(ctx context.Context, flags any, _ []string) error {
 	fv := flags.(*CreateRegistrationTokenFlags)
-	rc, ok := RepoClientsFromContext(ctx)
+	rc, ok := cmdutil.ContextValue[*githubclient.RepoClients](ctx)
 	if !ok {
 		return fmt.Errorf("no repo clients in context")
 	}

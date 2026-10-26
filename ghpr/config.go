@@ -5,7 +5,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"strings"
 )
@@ -44,40 +43,4 @@ func (c *Config) PromptFor(tool string) string {
 		return c.Prompt
 	}
 	return defaultInstructions
-}
-
-type configContextKey struct{}
-type configFilesContextKey struct{}
-
-// ContextWithConfig returns a context carrying the parsed Config.
-func ContextWithConfig(ctx context.Context, cfg Config) context.Context {
-	return context.WithValue(ctx, configContextKey{}, cfg)
-}
-
-// ConfigFromContext extracts the Config from the context.
-func ConfigFromContext(ctx context.Context) (Config, bool) {
-	if ctx == nil {
-		return Config{}, false
-	}
-	cfg, ok := ctx.Value(configContextKey{}).(Config)
-	return cfg, ok
-}
-
-// ContextWithConfigFile returns a context carrying the path of the configuration file read.
-func ContextWithConfigFile(ctx context.Context, path string) context.Context {
-	return context.WithValue(ctx, configFilesContextKey{}, []string{path})
-}
-
-// ContextWithConfigFiles returns a context carrying the paths of the configuration files read.
-func ContextWithConfigFiles(ctx context.Context, paths ...string) context.Context {
-	return context.WithValue(ctx, configFilesContextKey{}, paths)
-}
-
-// ConfigFilesFromContext extracts the configuration file paths from the context.
-func ConfigFilesFromContext(ctx context.Context) ([]string, bool) {
-	if ctx == nil {
-		return nil, false
-	}
-	files, ok := ctx.Value(configFilesContextKey{}).([]string)
-	return files, ok
 }

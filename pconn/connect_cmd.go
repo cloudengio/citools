@@ -13,7 +13,8 @@ import (
 	"time"
 
 	"cloudeng.io/algo/ratecontrol"
-	"cloudeng.io/cmdutil/cmdyaml"
+	"cloudeng.io/cmdutil"
+	"cloudeng.io/cmdutil/cmdconfig"
 	"cloudeng.io/logging/ctxlog"
 	"cloudeng.io/net/pssh"
 	"cloudeng.io/sync/errgroup"
@@ -26,11 +27,11 @@ type ConnectCommand struct{}
 
 // ConnectFlags defines flags for the connect subcommand.
 type ConnectFlags struct {
-	ConfigFile       string        `subcmd:"config,,path to YAML configuration file (overrides global --config)"`
-	Group            string        `subcmd:"group,,comma-separated list of groups of connections to connect"`
-	UnlimitedRetries bool          `subcmd:"unlimited-retries,true,continue retrying connections indefinitely"`
-	FailFast         bool          `subcmd:"fail-fast,false,exit immediately if any connection fails permanently"`
-	StatusInterval   time.Duration `subcmd:"status-interval,15s,how often to report on connections that have not yet been established; 0 disables"`
+	Config           cmdconfig.FilesFlag `subcmd:"config,,YAML configuration file (overrides global --config)"`
+	Group            string              `subcmd:"group,,comma-separated list of groups of connections to connect"`
+	UnlimitedRetries bool                `subcmd:"unlimited-retries,true,continue retrying connections indefinitely"`
+	FailFast         bool                `subcmd:"fail-fast,false,exit immediately if any connection fails permanently"`
+	StatusInterval   time.Duration       `subcmd:"status-interval,15s,how often to report on connections that have not yet been established; 0 disables"`
 	//nolint:lll // The usage has to say when this is worth using.
 	InterfaceRecovery bool `subcmd:"interface-recovery,false,'retry a connection that cannot be routed to by way of each local interface in turn; only of use when this host is attached to the target subnet more than once, such as over both ethernet and wi-fi'"`
 }
@@ -47,22 +48,39 @@ func newBackoffController(unlimitedRetries bool) *ratecontrol.Controller {
 	)
 }
 
+// configFileNames names the configuration files for an error message. What
+// was located is preferred, since it is what was actually read, and the flag
+// is the fallback for when nothing was: an error naming no file at all says
+// less than one naming what was asked for.
+func configFileNames(loc *cmdconfig.Located, files *cmdconfig.FilesFlag) string {
+	if loc != nil && len(loc.YAML) > 0 {
+		return strings.Join(loc.YAML, ", ")
+	}
+	if files != nil {
+		if named := files.Files(cmdconfig.FileTypeYAML, false); len(named) > 0 {
+			return strings.Join(named, ", ")
+		}
+	}
+	return "(none)"
+}
+
 // Run executes the connect command.
 func (c ConnectCommand) Run(ctx context.Context, flags any, args []string) error {
 	cf := flags.(*ConnectFlags)
 
-	cfg, ok := ConfigFromContext(ctx)
+	cfg, ok := cmdutil.ContextValue[Config](ctx)
 	if !ok {
 		return fmt.Errorf("no configuration found in context")
 	}
 
-	if cf.ConfigFile != "" && cf.ConfigFile != globalFlags.ConfigFile {
+	if cf.Config.HasSet(cmdconfig.FileTypeYAML) {
 		var newCfg Config
-		if err := cmdyaml.ParseConfigFilesStrict(ctx, &newCfg, cf.ConfigFile); err != nil {
-			return fmt.Errorf("failed to read configuration file %q: %w", cf.ConfigFile, err)
+		loc, err := cmdconfig.Load(ctx, &newCfg, &cf.Config, configSpec())
+		if err != nil {
+			return fmt.Errorf("failed to read the configuration file: %w", err)
 		}
 		if err := newCfg.Validate(); err != nil {
-			return fmt.Errorf("configuration file %q is invalid: %w", cf.ConfigFile, err)
+			return fmt.Errorf("configuration file %q is invalid: %w", configFileNames(loc, &cf.Config), err)
 		}
 		cfg = newCfg
 	}

@@ -9,8 +9,11 @@ import (
 	"context"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"cloudeng.io/cmdutil/subcmd"
 )
 
 func captureStdout(f func()) string {
@@ -33,35 +36,42 @@ func captureStdout(f func()) string {
 	return <-outC
 }
 
-func TestConfigCommandShow(t *testing.T) {
-	cmd := ConfigCommand{}
-	cfg := Config{}
-	ctx := ContextWithConfig(context.Background(), cfg)
-	ctx = ContextWithConfigFile(ctx, "/path/to/my_orchestrator.yml")
-
-	out := captureStdout(func() {
-		if err := cmd.Show(ctx, nil, nil); err != nil {
-			t.Fatalf("Show: %v", err)
-		}
-	})
-
-	if !strings.Contains(out, "# Configuration file: /path/to/my_orchestrator.yml") {
-		t.Errorf("missing config file path in output: %q", out)
+// TestCLIConfigCommands runs the config commands, which are provided by
+// cmdconfig.ConfigExtension, through the command line, with the configuration
+// that the config pre-hook loads.
+func TestCLIConfigCommands(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "test.yaml")
+	if err := os.WriteFile(cfgPath, minimalConfigYAML, 0o600); err != nil {
+		t.Fatal(err)
 	}
-}
+	envPath := filepath.Join(dir, "test.env")
+	if err := os.WriteFile(envPath, []byte("UNUSED=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
-func TestConfigCommandShowNoFile(t *testing.T) {
-	cmd := ConfigCommand{}
-	cfg := Config{}
-	ctx := ContextWithConfig(context.Background(), cfg)
+	globalFlags = GlobalFlags{}
+	cli := createCLI()
+	cli.WithGlobalFlags(subcmd.NewFlagSet().MustRegisterFlagStruct(&globalFlags, nil, nil))
 
 	out := captureStdout(func() {
-		if err := cmd.Show(ctx, nil, nil); err != nil {
-			t.Fatalf("Show: %v", err)
+		err := cli.DispatchWithArgs(context.Background(), "orchestrator", "--config", cfgPath+","+envPath, "config", "show")
+		if err != nil {
+			t.Fatalf("config show: %v", err)
 		}
 	})
+	for _, want := range []string{"# Configuration file: " + cfgPath, "# Environment variables file: " + envPath, "webhook:"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("config show output does not contain %q: %q", want, out)
+		}
+	}
 
-	if !strings.Contains(out, "# Configuration file: none") {
-		t.Errorf("expected '# Configuration file: none', got: %q", out)
+	out = captureStdout(func() {
+		if err := cli.DispatchWithArgs(context.Background(), "orchestrator", "--config", cfgPath, "config", "describe"); err != nil {
+			t.Fatalf("config describe: %v", err)
+		}
+	})
+	if !strings.Contains(out, "root configuration options") || !strings.Contains(out, "webhook") {
+		t.Errorf("unexpected config describe output: %q", out)
 	}
 }

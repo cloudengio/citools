@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"cloudeng.io/cmdutil"
 	"cloudeng.io/webapi/clients/github/githubcmd"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/githubclient"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/vmsclient"
@@ -123,11 +124,11 @@ func TestConfigValidate(t *testing.T) {
 // TestConfigContext covers the round trip the subcommands rely on to reach the
 // configuration parsed by main.
 func TestConfigContext(t *testing.T) {
-	if _, ok := ConfigFromContext(context.Background()); ok {
+	if _, ok := cmdutil.ContextValue[Config](context.Background()); ok {
 		t.Error("a bare context reported a configuration")
 	}
 	want := Config{Global: GlobalConfig{TmpDir: "orchestrator"}}
-	got, ok := ConfigFromContext(ContextWithConfig(context.Background(), want))
+	got, ok := cmdutil.ContextValue[Config](cmdutil.ContextWithValue(context.Background(), want))
 	if !ok {
 		t.Fatal("the configuration was not found in the context")
 	}

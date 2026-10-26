@@ -8,6 +8,7 @@ import (
 	"context"
 	"os/exec"
 
+	"cloudeng.io/cmdutil/cmdconfig"
 	"cloudeng.io/cmdutil/cmdyaml"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/internal/ui"
 )
@@ -54,8 +55,11 @@ func (LaunchCommand) Run(ctx context.Context, _ any, _ []string) error {
 		return nil
 	}
 
-	if globalFlags.ConfigFile == "github_orchestrator_config.yml" {
-		globalFlags.ConfigFile = cfgPath
+	if !globalFlags.Config.HasSet(cmdconfig.FileTypeYAML) {
+		if err := globalFlags.Config.Set(cfgPath); err != nil {
+			u.Notify(dialogTitle, err.Error())
+			return err
+		}
 	}
 
 	ctx, _, postConfig, err := configPrehook(ctx)

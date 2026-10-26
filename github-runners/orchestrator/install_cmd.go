@@ -90,7 +90,7 @@ func installMinimalConfigIfMissing() (path string, created bool, err error) {
 }
 
 // defaultInstallPath returns the per-user location for the installed config
-// (~/Library/Application Support/github-runner-orchestrator on macOS).
+// (~/Library/Application Support/io.cloudeng.github-runner-orchestrator on macOS).
 func defaultInstallPath() (string, error) {
 	return executil.UserConfigDirPath(
 		filepath.Join(internal.ConfigDir, internal.ConfigFileName))

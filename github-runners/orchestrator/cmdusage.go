@@ -12,14 +12,19 @@
 //	      bundle - build a signed macOS .app bundle that installs the orchestrator
 //	     service - manage the orchestrator as a per-user launchd login service
 //	webapp-build - build the embedded web UI frontend (runs npm install, gen and build)
-//	      config - config related commands
+//	      config - show the configuration, and its documentation.
 //	         vms - inspect and clean up the VMs created by the orchestrator's pools
 //	         jwt - JSON Web Token (JWT) key and authentication commands
 //
-// global flags: [--config=github_orchestrator_config.yml --log-file= --log-format=json --log-level=0 --log-source-code=false --verbose=false]
+// global flags: [--config=config.yaml,config.env --log-file= --log-format=json --log-level=0 --log-source-code=false --verbose=false]
 //
-//	-config string
-//	  path to YAML configuration file (default "github_orchestrator_config.yml")
+//	-config value
+//	  comma separated list of the YAML configuration file and of the file of
+//	  NAME=VALUE environment variable definitions (.env) for use in it, replacing
+//	  the defaults; searched for in the current directory, ~/Library/Application
+//	  Support/io.cloudeng.github-runner-orchestrator on macOS and
+//	  ~/.config/github-orchestrator; the shell environment overrides the values
+//	  the latter defines (default config.yaml,config.env)
 //	-log-file string
 //	  log file path. If not specified logs are written to stderr, if set to -
 //	  logs are written to stdout
