@@ -1,0 +1,20 @@
+--- Overview
+ghpr and pconn no longer search the current directory for config files by default. They now look only in their own user configuration directory, and they read a file from the current directory only when it's named with --config.
+
+--- Key Changes
+  * ghpr
+    * Added searchPath(explicit). It returns cmdconfig.SearchPathUserDirs("ghpr") by default and cmdconfig.SearchPath("ghpr"), which includes ., when --config is set.
+    * configSpec now uses searchPath, and --config help text, README.md and cmdusage.go are updated to match.
+    * Tests cover the search path contents, ignoring a cwd config.yaml/ghpr.yaml by default, reading a named cwd file, and falling back to ~/.config/ghpr.
+  * pconn
+    * Added configSpecFor(*cmdconfig.FilesFlag) and searchPath(explicit). configSpec now uses the global flag.
+    * connect now builds its spec from its own --config flag, so a relative name given to that flag is still found in the current directory.
+    * --config help, README.md, config.md and cmdusage.go now give the per-OS default location (~/Library/Application Support/pconn on macOS, otherwise $XDG_CONFIG_HOME/pconn or ~/.config/pconn). They also fix the stale pconn.yaml default.
+    * Tests cover the search path, the "no configuration file found" error when only a cwd file exists, reading a named cwd file, the user directory lookup, and configSpecFor.
+  * Dependencies: bumped cloudeng.io/cmdutil to v0.0.0-20261027172419-c2cb239e8127 in both modules, which provides SearchPathUserDirs.
+
+--- Breaking Changes
+  * A config.yaml (or ghpr.yaml) in the current directory is no longer picked up automatically. Users who rely on one must pass --config config.yaml or move it to the tool's user configuration directory.
+  * pconn now fails with "no configuration file found" if the only config file is in the current directory.
+
+ Generated with Claude Code (https://claude.com/claude-code)
