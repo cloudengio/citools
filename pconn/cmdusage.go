@@ -1,7 +1,3 @@
-// Copyright 2026 cloudeng llc. All rights reserved.
-// Use of this source code is governed by the Apache-2.0
-// license that can be found in the LICENSE file.
-
 // Usage of pconn
 //
 //	manage persistent network connections
@@ -11,7 +7,9 @@
 // global flags: [--config=config.yaml --log-file= --log-format=json --log-level=0 --log-source-code=false --verbose=false]
 //
 //	-config value
-//	  YAML configuration file (default config.yaml)
+//	  YAML configuration file; if unset, config.yaml in the pconn directory
+//	  of the user configuration directories is used. The current directory is
+//	  not searched unless a file is named here (default config.yaml)
 //	-log-file string
 //	  log file path. If not specified logs are written to stderr, if set to -
 //	  logs are written to stdout

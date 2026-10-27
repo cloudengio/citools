@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -352,4 +353,122 @@ func TestCLIConfigDescribe(t *testing.T) {
 	if !strings.Contains(out, "prompt") || !strings.Contains(out, "root configuration options") {
 		t.Errorf("unexpected output: %q", out)
 	}
+}
+
+// TestSearchPath covers the directories a configuration file is looked for in:
+// ghpr's own, plus the current directory only when a file was named on the
+// command line.
+func TestSearchPath(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	dirs := filepath.SplitList(searchPath(false))
+	if len(dirs) == 0 {
+		t.Fatal("no directories to search")
+	}
+	if slices.Contains(dirs, ".") {
+		t.Errorf("the current directory is searched by default: %v", dirs)
+	}
+
+	explicit := filepath.SplitList(searchPath(true))
+	if got, want := explicit[0], "."; got != want {
+		t.Errorf("a named file is not resolved against the current directory first: got %v, want %v", got, want)
+	}
+	if got, want := explicit[1:], dirs; !slices.Equal(got, want) {
+		t.Errorf("the rest of the path differs: got %v, want %v", got, want)
+	}
+}
+
+// writeConfig writes a configuration file naming where it came from, so that a
+// test can tell which of them was read.
+func writeConfig(t *testing.T, dir, name, from string) string {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatalf("mkdir %v: %v", dir, err)
+	}
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte("prompt: "+from+"\n"), 0600); err != nil {
+		t.Fatalf("write %v: %v", path, err)
+	}
+	return path
+}
+
+// prehookWithArgs runs configPrehook with args as the global flags, as a
+// command dispatched with them would.
+func prehookWithArgs(t *testing.T, args ...string) (Config, *cmdconfig.Located) {
+	t.Helper()
+	var gf GlobalFlags
+	fs := subcmd.NewFlagSet().MustRegisterFlagStruct(&gf, nil, nil)
+	if err := fs.FlagSet().Parse(args); err != nil {
+		t.Fatalf("parse flags: %v", err)
+	}
+	saved := globalFlags
+	t.Cleanup(func() { globalFlags = saved })
+	globalFlags = gf
+
+	ctx, _, _, err := configPrehook(subcmd.WithGlobalFlagSet(context.Background(), fs))
+	if err != nil {
+		t.Fatalf("configPrehook: %v", err)
+	}
+	cfg, ok := cmdutil.ContextValue[Config](ctx)
+	if !ok {
+		t.Fatal("no configuration in context")
+	}
+	loc, _ := cmdutil.ContextValue[*cmdconfig.Located](ctx)
+	return cfg, loc
+}
+
+// TestConfigPrehookCurrentDirectory covers ghpr being run in arbitrary
+// repositories: a configuration file that happens to be in the current
+// directory is almost certainly not ghpr's, so it is read only when it is
+// asked for by name.
+func TestConfigPrehookCurrentDirectory(t *testing.T) {
+	t.Run("not read by default", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		cwd := t.TempDir()
+		t.Chdir(cwd)
+		writeConfig(t, cwd, "config.yaml", "the current directory")
+		writeConfig(t, cwd, "ghpr.yaml", "the current directory")
+
+		cfg, loc := prehookWithArgs(t)
+		if cfg.Prompt != defaultInstructions {
+			t.Errorf("a file in the current directory was read: %q", cfg.Prompt)
+		}
+		if loc != nil && len(loc.YAML) > 0 {
+			t.Errorf("located %v", loc.YAML)
+		}
+	})
+
+	t.Run("read when named", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		cwd := t.TempDir()
+		t.Chdir(cwd)
+		writeConfig(t, cwd, "config.yaml", "the current directory")
+
+		// A relative name is resolved against the current directory, as it is
+		// for any other command.
+		cfg, loc := prehookWithArgs(t, "--config", "config.yaml")
+		if got, want := cfg.Prompt, "the current directory"; got != want {
+			t.Errorf("got prompt %q, want %q", got, want)
+		}
+		if loc == nil || len(loc.YAML) != 1 {
+			t.Fatalf("located %v", loc)
+		}
+	})
+
+	t.Run("the user configuration directory is still searched", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		cwd := t.TempDir()
+		t.Chdir(cwd)
+		writeConfig(t, cwd, "config.yaml", "the current directory")
+		path := writeConfig(t, filepath.Join(home, ".config", appDir), "ghpr.yaml", "the user configuration directory")
+
+		cfg, loc := prehookWithArgs(t)
+		if got, want := cfg.Prompt, "the user configuration directory"; got != want {
+			t.Errorf("got prompt %q, want %q", got, want)
+		}
+		if loc == nil || len(loc.YAML) != 1 || loc.YAML[0] != path {
+			t.Errorf("located %v, want [%v]", loc, path)
+		}
+	})
 }

@@ -60,7 +60,7 @@ type SummaryCommandFlags struct {
 
 // GlobalFlags are the flags common to every command.
 type GlobalFlags struct {
-	Config       cmdconfig.FilesFlag `subcmd:"config,'config.yaml,ghpr.yaml','YAML configuration file; if unset, the first of config.yaml and ghpr.yaml found in the standard locations is used'"`
+	Config       cmdconfig.FilesFlag `subcmd:"config,'config.yaml,ghpr.yaml','YAML configuration file; if unset, the first of config.yaml and ghpr.yaml found in the ghpr directory of the user configuration directories is used. The current directory is not searched unless a file is named here'"`
 	Engine       string              `subcmd:"engine,claude,'agent used to generate descriptions: claude or agy'"`
 	Model        string              `subcmd:"model,,model for the agent to use; the agent's own default if unset"`
 	Base         string              `subcmd:"base,main,branch that pull requests are merged into"`
@@ -92,13 +92,34 @@ type UpdateFlags struct {
 	SummaryCommandFlags
 }
 
+// appDir is ghpr's own directory within each of the user's configuration
+// directories, see cmdconfig.SearchPath.
+const appDir = "ghpr"
+
 // configSpec specifies how the configuration file is located: the first of
-// those named that is found, in the standard locations for ghpr.
+// those named that is found, in ghpr's own configuration directories.
 func configSpec() cmdconfig.Spec {
 	return cmdconfig.Spec{
-		Path:      cmdconfig.SearchPath("ghpr"),
+		Path:      searchPath(globalFlags.Config.HasSet(cmdconfig.FileTypeYAML)),
 		FirstOnly: []cmdconfig.FileType{cmdconfig.FileTypeYAML},
 	}
+}
+
+// searchPath returns the directories that the configuration file is looked for
+// in: ghpr's own, and the current directory as well only when a file was named
+// on the command line.
+//
+// The current directory is not searched by default because ghpr is run in
+// whatever repository is being worked on, where a config.yaml, and often a
+// ghpr.yaml, belongs to that repository or to the tool it builds rather than
+// to ghpr. A file in the current directory is read when it is asked for, since
+// --config resolves a relative name against the full search path as any other
+// command would.
+func searchPath(explicit bool) string {
+	if explicit {
+		return cmdconfig.SearchPath(appDir)
+	}
+	return cmdconfig.SearchPathUserDirs(appDir)
 }
 
 func configPrehook(ctx context.Context) (context.Context, string, subcmd.PostHook, error) {

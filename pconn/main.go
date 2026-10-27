@@ -34,7 +34,7 @@ commands:
 `
 
 type GlobalFlags struct {
-	Config cmdconfig.FilesFlag `subcmd:"config,config.yaml,YAML configuration file" doc:"YAML configuration file"`
+	Config cmdconfig.FilesFlag `subcmd:"config,config.yaml,'YAML configuration file; if unset, config.yaml in the pconn directory of the user configuration directories is used. The current directory is not searched unless a file is named here'" doc:"YAML configuration file"`
 	cmdutil.LoggingFlags
 	Verbose bool `subcmd:"verbose,false,enable verbose logging" doc:"enable verbose logging"`
 }
@@ -51,13 +51,42 @@ func createCLI() *subcmd.CommandSetYAML {
 	return cmdSet
 }
 
-// configSpec specifies how the configuration file is located: in the standard
-// locations for pconn, and it must be there.
+// appDir is pconn's own directory within each of the user's configuration
+// directories, see cmdconfig.SearchPath.
+const appDir = "pconn"
+
+// configSpec specifies how the configuration file named by the global --config
+// is located, see configSpecFor.
 func configSpec() cmdconfig.Spec {
+	return configSpecFor(&globalFlags.Config)
+}
+
+// configSpecFor specifies how the files held by a --config flag are located:
+// in pconn's own configuration directories, and one must be there. Each flag
+// has its own spec because whether the current directory is searched depends
+// on whether that flag names a file, see searchPath; connect has a --config of
+// its own that overrides the global one.
+func configSpecFor(files *cmdconfig.FilesFlag) cmdconfig.Spec {
 	return cmdconfig.Spec{
-		Path:      cmdconfig.SearchPath("pconn"),
+		Path:      searchPath(files.HasSet(cmdconfig.FileTypeYAML)),
 		FirstOnly: []cmdconfig.FileType{cmdconfig.FileTypeYAML},
 	}
+}
+
+// searchPath returns the directories that the configuration file is looked for
+// in: pconn's own, and the current directory as well only when a file was
+// named on the command line.
+//
+// The current directory is not searched by default because pconn is run from
+// wherever the connections it maintains are wanted, and a config.yaml there
+// belongs to whatever is being worked on rather than to pconn. A file in the
+// current directory is read when it is asked for, since --config resolves a
+// relative name against the full search path as any other command would.
+func searchPath(explicit bool) string {
+	if explicit {
+		return cmdconfig.SearchPath(appDir)
+	}
+	return cmdconfig.SearchPathUserDirs(appDir)
 }
 
 // loggerPrehook creates the logger from the configuration, as overridden by the
