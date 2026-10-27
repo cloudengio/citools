@@ -150,6 +150,8 @@ func TestEndpoints(t *testing.T) {
 		{BasePath + "/workflows/w1/logs/job", "hello log"},
 		{BasePath + "/service", `"installed":true`},
 		{BasePath + "/buildinfo", `"go_version"`},
+		// The host the orchestrator runs on reaches the UI, which names it.
+		{BasePath + "/buildinfo", `"hostname"`},
 		{"/", "Runner Orchestrator"},
 	}
 	for _, tc := range cases {

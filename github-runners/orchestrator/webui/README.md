@@ -164,6 +164,12 @@ type BuildInfo struct {
 	// GoVersion Example: go1.24.0
 	GoVersion string `json:"go_version"`
 
+	// Hostname The host the orchestrator is running on, which the forwarded URL the UI is reached by does not say. Absent if the OS reports no name.
+	//
+	//
+	// Example: macpro-2024.local
+	Hostname *string `json:"hostname,omitempty"`
+
 	// Modified Example: false
 	Modified *bool `json:"modified,omitempty"`
 
@@ -194,7 +200,9 @@ BuildInfo defines model for BuildInfo.
 func CurrentBuildInfo() BuildInfo
 ```
 CurrentBuildInfo extracts build and version information for the running
-binary.
+binary, along with the name of the host it is running on: the UI is usually
+reached over a forwarded port, so the host is not otherwise apparent from
+the browser.
 
 
 
