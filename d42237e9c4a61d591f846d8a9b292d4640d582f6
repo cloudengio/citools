@@ -1,0 +1,17 @@
+--- Overview
+Shows the orchestrator's hostname in the web UI, because the UI is usually reached over a forwarded port that doesn't identify the host. Fatal startup errors written to stderr now also carry a timestamp.
+
+--- Key Changes
+  * orchestrator (main.go)
+    * Fatal errors written to stderr now start with an RFC3339 timestamp, since they can happen before slog is set up.
+  * webui (API)
+    * Added an optional hostname field to the BuildInfo schema in openapi.yaml; it is left out when the OS reports no name.
+    * CurrentBuildInfo fills in Hostname from os.Hostname(); an error or empty name leaves it unset.
+    * Tests check the hostname in TestCurrentBuildInfo and the /buildinfo endpoint.
+  * webui (frontend)
+    * The header shows the hostname next to the title, and the browser tab title becomes <host> * Runner Orchestrator.
+    * ConfigView has a new "Host" row.
+    * Added styling for the host label and rebuilt the dist assets.
+
+--- Breaking Changes
+None
