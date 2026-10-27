@@ -60,9 +60,12 @@ notary:
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := loadBundleConfig(t.Context(), bundleFlag(t, path, envFile))
+	cfg, undefined, err := loadBundleConfig(t.Context(), bundleFlag(t, path, envFile))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if want := []string{"ORCH_TEST_UNSET"}; !slices.Equal(undefined, want) {
+		t.Errorf("undefined: got %v, want %v", undefined, want)
 	}
 	if want := "Developer ID Application: Example"; cfg.Signing.Identity != want {
 		t.Errorf("identity: got %q, want %q", cfg.Signing.Identity, want)
@@ -144,7 +147,7 @@ func TestLoadBundleConfig(t *testing.T) {
 	if err := os.WriteFile(path, []byte("info_plist:\n  CFBundleVersion: \"9.9\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := loadBundleConfig(t.Context(), bundleFlag(t, path))
+	cfg, _, err := loadBundleConfig(t.Context(), bundleFlag(t, path))
 	if err != nil {
 		t.Fatalf("loadBundleConfig: %v", err)
 	}
@@ -162,19 +165,19 @@ func TestLoadBundleConfig(t *testing.T) {
 	}
 
 	// A file that is named and not there is an error, as is there being none.
-	if _, err := loadBundleConfig(t.Context(), bundleFlag(t, filepath.Join(t.TempDir(), "absent.yaml"))); err == nil {
+	if _, _, err := loadBundleConfig(t.Context(), bundleFlag(t, filepath.Join(t.TempDir(), "absent.yaml"))); err == nil {
 		t.Error("a missing bundle configuration was accepted")
 	}
 	t.Chdir(t.TempDir())
 	t.Setenv("HOME", t.TempDir())
-	if _, err := loadBundleConfig(t.Context(), bundleFlag(t)); err == nil {
+	if _, _, err := loadBundleConfig(t.Context(), bundleFlag(t)); err == nil {
 		t.Error("no bundle configuration was accepted")
 	}
 	// Unknown fields are rejected.
 	if err := os.WriteFile(path, []byte("bundel: x\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadBundleConfig(t.Context(), bundleFlag(t, path)); err == nil {
+	if _, _, err := loadBundleConfig(t.Context(), bundleFlag(t, path)); err == nil {
 		t.Error("an unknown field was accepted")
 	}
 }
@@ -186,7 +189,7 @@ func TestShippedBundleConfig(t *testing.T) {
 	if _, err := os.Stat("bundle-builder.yaml"); err != nil {
 		t.Skipf("no bundle-builder.yaml in the tree: %v", err)
 	}
-	cfg, err := loadBundleConfig(t.Context(), bundleFlag(t, "bundle-builder.yaml"))
+	cfg, _, err := loadBundleConfig(t.Context(), bundleFlag(t, "bundle-builder.yaml"))
 	if err != nil {
 		t.Fatalf("loadBundleConfig: %v", err)
 	}
@@ -245,7 +248,7 @@ func TestBundleConfigPermissions(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := loadBundleConfig(t.Context(), bundleFlag(t, path))
+	cfg, _, err := loadBundleConfig(t.Context(), bundleFlag(t, path))
 	if err != nil {
 		t.Fatalf("loadBundleConfig: %v", err)
 	}

@@ -15,6 +15,7 @@ import (
 
 	"cloudeng.io/cmdutil/cmdconfig"
 	"cloudeng.io/cmdutil/cmdyaml"
+	"cloudeng.io/cmdutil/envfile"
 	"cloudeng.io/macos/buildtools"
 	"cloudeng.io/os/executil"
 
@@ -76,9 +77,12 @@ type BundleFlags struct {
 func (BundleCommand) Run(ctx context.Context, fl any, _ []string) error {
 	fv := fl.(*BundleFlags)
 
-	cfg, err := loadBundleConfig(ctx, &fv.Config)
+	cfg, undefined, err := loadBundleConfig(ctx, &fv.Config)
 	if err != nil {
 		return err
+	}
+	if len(undefined) > 0 {
+		fmt.Printf("warning: these variables are not defined, in the environment variables file or the environment, and are empty: %s\n", strings.Join(undefined, ", "))
 	}
 
 	// The bundle is built from this tree, so it carries the version derived from git.
@@ -132,18 +136,35 @@ func bundleSpec() cmdconfig.Spec {
 // references in them are expanded from the environment and the environment
 // variables file, so that sensitive or machine-specific values (signing
 // identity, team ID) can be kept out of the checked-in config file; a
-// reference to a variable that is not defined is the empty string.
-func loadBundleConfig(ctx context.Context, ff *cmdconfig.FilesFlag) (BundleConfig, error) {
-	var cfg BundleConfig
-	loc, err := cmdconfig.Load(ctx, &cfg, ff, bundleSpec(), cmdyaml.WithUnresolvedEmpty())
+// reference to a variable that is not defined is the empty string, and its
+// name is returned, so that it can be reported: an unset signing identity,
+// say, leaves the bundle unsigned, which is more likely to be a mistake, such
+// as a missing environment variables file, than intended.
+//
+// The references are expanded by the mapping of cmdconfig.Load, from the
+// environment and then the environment variables file, followed by an
+// envfile.Unresolved, which records those that it did not resolve, see
+// cmdconfig.Located.ExpandMapping. Expansion is textual, so a
+// reference in a YAML comment is recorded too.
+func loadBundleConfig(ctx context.Context, ff *cmdconfig.FilesFlag) (BundleConfig, []string, error) {
+	loc, err := ff.Locate(bundleSpec())
 	if err != nil {
-		return BundleConfig{}, fmt.Errorf("loading the bundle configuration: %w", err)
+		return BundleConfig{}, nil, fmt.Errorf("loading the bundle configuration: %w", err)
+	}
+	var unresolved envfile.Unresolved
+	mapping, err := loc.ExpandMapping(unresolved.Mapping)
+	if err != nil {
+		return BundleConfig{}, nil, fmt.Errorf("loading the bundle configuration: %w", err)
+	}
+	var cfg BundleConfig
+	if err := cmdconfig.LoadFiles(ctx, &cfg, loc, cmdyaml.WithUnresolvedEmpty(), cmdyaml.WithExpandMapping(mapping)); err != nil {
+		return BundleConfig{}, nil, fmt.Errorf("loading the bundle configuration: %w", err)
 	}
 	if len(loc.YAML) == 0 {
-		return BundleConfig{}, fmt.Errorf("no bundle configuration found, looked for %s in any of %s",
+		return BundleConfig{}, nil, fmt.Errorf("no bundle configuration found, looked for %s in any of %s",
 			strings.Join(ff.Files(cmdconfig.FileTypeYAML, false), ", "), strings.Join(filepath.SplitList(loc.SearchPath), ", "))
 	}
-	return cfg, nil
+	return cfg, unresolved.Names(), nil
 }
 
 // SetDefaults fills in the values that are not set, and is called once the
