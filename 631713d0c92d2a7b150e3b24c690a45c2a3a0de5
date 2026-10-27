@@ -1,0 +1,29 @@
+--- Overview
+The orchestrator now connects to the webhook relay only while its VM pools have capacity to run a job. While every VM is busy, events stay queued at the relay, where another orchestrator reading it can take them. The PR also adds copyright/license headers across the repo and regenerates command READMEs.
+
+--- Key Changes
+githubwebhook
+  * New Capacity interface (HasCapacity, Changed) and WithCapacity option. When set, the listener waits for capacity before connecting and drops the connection when capacity is lost. This applies in both streaming and polling modes.
+  * Capacity is re-checked on its change signal and also every 5s, so a missed or unsignalled change is still noticed.
+  * Streaming: a new watchStream cancels the stream when capacity is lost, and reconnects after that skip retry backoff.
+  * Polling: a new awaitEvent abandons the read when capacity is lost, and drainEvent handles an event that was already delivered. waitForEvent now always sends on its buffered channel, so a delivery the relay has already written is never dropped.
+  * Tests: waiting for capacity, dropping and re-establishing the connection, fallback polling with no change signal, and stop/cancel while waiting.
+
+vmsclient
+  * New Capacity snapshot (Pools, Available, Pending), with Any() that counts pending VMs as capacity and treats a set with no pools as having capacity.
+  * New Pools.Capacity() that combines the stats of every pool.
+  * Tests cover both the Any() rules and real pools driven through the mock backend.
+
+githubclient
+  * WorkflowEventHandler.Capacity() exposes the pools' capacity, and is safe when there are no pools.
+
+orchestrator run
+  * A poolCapacity adapter backs the listener's capacity with the event handler's capacity and its Subscribe change channel.
+
+Repo hygiene
+  * New copyright-annotation.yaml for goannotate, which adds Apache-2.0 headers to the cmdusage.go files and govulnchecker/main.go.
+  * Regenerated READMEs for astest, chrome-for-testing, govulnchecker, multimod and waitforfiles. The astest docs now cover --postamble, --wrapper, --variadic, --testing-t-type and --test-functions-list, and show the flag as --internal-test.
+  * gofmt and trailing-newline fixes in test files.
+
+--- Breaking Changes
+None. WithCapacity is optional, and listeners without it behave as before.
