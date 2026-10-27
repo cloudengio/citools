@@ -32,6 +32,12 @@ body {
   position: sticky; top: 0; background: var(--bg); z-index: 5;
 }
 .topbar h1 { font-size: 18px; margin: 0; }
+/* The host the orchestrator is running on, named beside the title because the
+   UI is usually reached over a forwarded port. */
+.topbar h1 .host {
+  margin-left: 8px; color: var(--accent); font-size: 14px; font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
 .build-info-bar { display: flex; align-items: center; gap: 8px; margin-top: 3px; font-size: 11px; }
 .spacer { flex: 1; }
 

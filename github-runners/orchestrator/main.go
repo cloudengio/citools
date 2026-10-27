@@ -11,6 +11,7 @@ import (
 	"os"
 	"runtime"
 	"syscall"
+	"time"
 
 	"cloudeng.io/cmdutil"
 	"cloudeng.io/cmdutil/cmdconfig"
@@ -256,7 +257,9 @@ func main() {
 		if isCleanShutdown(err) {
 			return
 		}
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		// This error may have occurred before slog is configured/enabled so
+		// log it to stderr with a timestamp.
+		fmt.Fprintf(os.Stderr, "%v error: %v\n", time.Now().Format(time.RFC3339), err)
 		os.Exit(1)
 	}
 }

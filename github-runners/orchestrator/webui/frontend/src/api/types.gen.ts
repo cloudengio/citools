@@ -430,6 +430,11 @@ export interface components {
             os: string;
             /** @example arm64 */
             arch: string;
+            /**
+             * @description The host the orchestrator is running on, which the forwarded URL the UI is reached by does not say. Absent if the OS reports no name.
+             * @example macpro-2024.local
+             */
+            hostname?: string;
         };
     };
     responses: never;

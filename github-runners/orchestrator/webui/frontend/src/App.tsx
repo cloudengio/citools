@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useOrchestrator } from './api/useOrchestrator'
 import { PoolsView } from './components/PoolsView'
 import { WorkflowsView } from './components/WorkflowsView'
@@ -7,11 +8,20 @@ import { fmtTime } from './format'
 
 export default function App() {
   const { config, buildInfo, pools, workflows, connected, error, refresh } = useOrchestrator()
+  const host = buildInfo?.hostname
+  // The UI is usually reached over a forwarded port, so neither the URL nor the
+  // tab says which orchestrator is being looked at: name the host in both.
+  useEffect(() => {
+    document.title = host ? `${host} · Runner Orchestrator` : 'Runner Orchestrator'
+  }, [host])
   return (
     <div className="app">
       <header className="topbar">
         <div>
-          <h1>GitHub Runner Orchestrator</h1>
+          <h1>
+            GitHub Runner Orchestrator
+            {host && <span className="host" title={`Running on ${host}`}>{host}</span>}
+          </h1>
           {buildInfo && (
             <div className="build-info-bar">
               {buildInfo.version && buildInfo.version !== '(devel)' && (

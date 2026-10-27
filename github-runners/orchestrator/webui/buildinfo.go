@@ -5,6 +5,7 @@
 package webui
 
 import (
+	"os"
 	"runtime"
 	"runtime/debug"
 	"time"
@@ -12,12 +13,20 @@ import (
 	"cloudeng.io/cmdutil"
 )
 
-// CurrentBuildInfo extracts build and version information for the running binary.
+// CurrentBuildInfo extracts build and version information for the running
+// binary, along with the name of the host it is running on: the UI is usually
+// reached over a forwarded port, so the host is not otherwise apparent from
+// the browser.
 func CurrentBuildInfo() BuildInfo {
 	info := BuildInfo{
 		GoVersion: runtime.Version(),
 		Os:        runtime.GOOS,
 		Arch:      runtime.GOARCH,
+	}
+	// A host with no name is reported as having none rather than as an error:
+	// it is a label for the UI, not something anything depends on.
+	if host, err := os.Hostname(); err == nil && host != "" {
+		info.Hostname = &host
 	}
 	goVersion, revision, lastCommit, buildTime, dirty, ok := cmdutil.VCSInfo()
 	if goVersion != "" {

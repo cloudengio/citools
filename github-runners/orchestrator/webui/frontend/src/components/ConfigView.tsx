@@ -45,6 +45,7 @@ export function ConfigView({
                 ) : (
                   <div><span className="muted">Commit date</span><div className="mono">{fmtTime(buildInfo.revision_time)}</div></div>
                 )}
+                <div><span className="muted">Host</span><div className="mono">{buildInfo.hostname ?? '—'}</div></div>
                 <div><span className="muted">Target OS / Arch</span><div className="mono">{buildInfo.os}/{buildInfo.arch}</div></div>
                 {buildInfo.version && buildInfo.version !== '(devel)' && (
                   <div><span className="muted">Version</span><div className="mono">{buildInfo.version}</div></div>

@@ -5,6 +5,7 @@
 package webui
 
 import (
+	"os"
 	"testing"
 )
 
@@ -21,6 +22,17 @@ func TestCurrentBuildInfo(t *testing.T) {
 	}
 	if info.BuildTime == nil || *info.BuildTime == "" {
 		t.Error("expected non-nil BuildTime from executable")
+	}
+	// The host name identifies which orchestrator the UI is showing, so it is
+	// reported whenever the OS will supply one.
+	host, err := os.Hostname()
+	if err != nil {
+		t.Skipf("no host name available: %v", err)
+	}
+	if info.Hostname == nil {
+		t.Errorf("expected Hostname %q, got none", host)
+	} else if got, want := *info.Hostname, host; got != want {
+		t.Errorf("Hostname: got %v, want %v", got, want)
 	}
 	t.Logf("BuildInfo: %+v", info)
 }

@@ -619,3 +619,9 @@ components:
         arch:
           type: string
           example: "arm64"
+        hostname:
+          description: >
+            The host the orchestrator is running on, which the forwarded URL the
+            UI is reached by does not say. Absent if the OS reports no name.
+          type: string
+          example: "macpro-2024.local"
