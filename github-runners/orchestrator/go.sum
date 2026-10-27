@@ -2,8 +2,8 @@ cloudeng.io/algo v0.0.0-20261026191912-bcd1dece5d6c h1:XovxHHVSPDjlp+CxvTZHPfdYK
 cloudeng.io/algo v0.0.0-20261026191912-bcd1dece5d6c/go.mod h1:gfioGOMz+1xMXOEnz+RsscgNNC/MVgCBrENCUHKUCgQ=
 cloudeng.io/cicd v0.0.0-20261026191912-bcd1dece5d6c h1:TL29FcfnHXIrvG8K5l2R2nw7rcS049eSxsDpwXjvtBo=
 cloudeng.io/cicd v0.0.0-20261026191912-bcd1dece5d6c/go.mod h1:pI98u5ytMFakWkLK2yrVvHyRlzcyYArBYA4xKR1vPj8=
-cloudeng.io/cmdutil v0.0.0-20261026191912-bcd1dece5d6c h1:2TIWVR1o6m0VGwkkJ9cncC89ELHFtgCJMc6oHWchCRY=
-cloudeng.io/cmdutil v0.0.0-20261026191912-bcd1dece5d6c/go.mod h1:U2vemeAUp0DJW8F3m7Obx9It87prt5G1Smd8rm6m/y4=
+cloudeng.io/cmdutil v0.0.0-20261027225206-401592c3d504 h1:vX+4x6Ti7j5YjAi3L6HUsXByt/ZWLcps974ojzNge5s=
+cloudeng.io/cmdutil v0.0.0-20261027225206-401592c3d504/go.mod h1:EIwOeHzO7vTsxzErQLyy1PUl5kq0fsswpwwgkb7B5yo=
 cloudeng.io/debug v0.0.0-20260527194618-4cb6d4558850 h1:gUar3YNqSdi+uvszdB44uBuutJnWWZX1lzAzlT/Y0IA=
 cloudeng.io/debug v0.0.0-20260527194618-4cb6d4558850/go.mod h1:MECwal0eFhXI3wixLVjNGnXohW4qGQRg+J68yQWmi9k=
 cloudeng.io/encoding v0.0.0-20261026191912-bcd1dece5d6c h1:v3zTLZLAsfQD6jfJ/pL/utIf+jr6INIB8kr2Oun+2VY=
