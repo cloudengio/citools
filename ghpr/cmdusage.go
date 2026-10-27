@@ -1,7 +1,3 @@
-// Copyright 2026 cloudeng llc. All rights reserved.
-// Use of this source code is governed by the Apache-2.0
-// license that can be found in the LICENSE file.
-
 // Usage of ghpr
 //
 //	create and maintain github pull request descriptions with an ai agent
@@ -17,7 +13,9 @@
 //	  branch that pull requests are merged into (default "main")
 //	-config value
 //	  YAML configuration file; if unset, the first of config.yaml and ghpr.yaml
-//	  found in the standard locations is used (default config.yaml,ghpr.yaml)
+//	  found in the ghpr directory of the user configuration directories is
+//	  used. The current directory is not searched unless a file is named here
+//	  (default config.yaml,ghpr.yaml)
 //	-dry-run
 //	  report what would be changed without changing it
 //	-engine string

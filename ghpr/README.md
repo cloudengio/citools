@@ -18,7 +18,9 @@ global flags: [--base=main --config=config.yaml,ghpr.yaml --dry-run=false
       branch that pull requests are merged into (default "main")
     -config value
       YAML configuration file; if unset, the first of config.yaml and `ghpr`.yaml
-      found in the standard locations is used (default config.yaml,ghpr.yaml)
+      found in the `ghpr` directory of the user configuration directories is
+      used. The current directory is not searched unless a file is named here
+      (default config.yaml,ghpr.yaml)
     -dry-run
       report what would be changed without changing it
     -engine string

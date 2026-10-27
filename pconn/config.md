@@ -1,6 +1,8 @@
 # Configuration
 
-`pconn` is configured using a YAML configuration file (by default `pconn.yaml`). The configuration defines logging settings, persistent connections, their protocol types, group memberships, and local TCP port forwards to maintain.
+`pconn` is configured using a YAML configuration file. The configuration defines logging settings, persistent connections, their protocol types, group memberships, and local TCP port forwards to maintain.
+
+By default the file is `config.yaml` in `pconn`'s own configuration directory: `~/Library/Application Support/pconn` on macOS, `$XDG_CONFIG_HOME/pconn` or `~/.config/pconn` elsewhere. The current directory is deliberately not searched, since `pconn` is run from wherever its connections are wanted and a `config.yaml` there belongs to whatever is being worked on rather than to `pconn`. Use `--config <file>` for a file anywhere else, including one in the current directory.
 
 ## Example Configuration
 

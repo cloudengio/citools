@@ -16,6 +16,7 @@ import (
 	"cloudeng.io/cmdutil"
 	"cloudeng.io/cmdutil/cmdconfig"
 	"cloudeng.io/cmdutil/cmdyaml"
+	"cloudeng.io/cmdutil/subcmd"
 	"cloudeng.io/net/pssh"
 )
 
@@ -691,5 +692,164 @@ func TestConfigFileNames(t *testing.T) {
 		if got := configFileNames(tc.loc, tc.files); got != tc.want {
 			t.Errorf("%v: got %q, want %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+// TestSearchPath covers the directories a configuration file is looked for in:
+// pconn's own, plus the current directory only when a file was named on the
+// command line.
+func TestSearchPath(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	dirs := filepath.SplitList(searchPath(false))
+	if len(dirs) == 0 {
+		t.Fatal("no directories to search")
+	}
+	if slices.Contains(dirs, ".") {
+		t.Errorf("the current directory is searched by default: %v", dirs)
+	}
+
+	explicit := filepath.SplitList(searchPath(true))
+	if got, want := explicit[0], "."; got != want {
+		t.Errorf("a named file is not resolved against the current directory first: got %v, want %v", got, want)
+	}
+	if got, want := explicit[1:], dirs; !slices.Equal(got, want) {
+		t.Errorf("the rest of the path differs: got %v, want %v", got, want)
+	}
+}
+
+// writeConfig writes a configuration file for a single connection to the named
+// host, so that a test can tell which of them was read.
+func writeConfig(t *testing.T, dir, name, host string) string {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatalf("mkdir %v: %v", dir, err)
+	}
+	path := filepath.Join(dir, name)
+	content := "connections:\n  - name: " + host + "\n    host: " + host + ":2222\n"
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatalf("write %v: %v", path, err)
+	}
+	return path
+}
+
+// prehookWithArgs runs configPrehook with args as the global flags, as a
+// command dispatched with them would.
+func prehookWithArgs(t *testing.T, args ...string) (Config, *cmdconfig.Located, error) {
+	t.Helper()
+	var gf GlobalFlags
+	fs := subcmd.NewFlagSet().MustRegisterFlagStruct(&gf, nil, nil)
+	if err := fs.FlagSet().Parse(args); err != nil {
+		t.Fatalf("parse flags: %v", err)
+	}
+	saved := globalFlags
+	t.Cleanup(func() { globalFlags = saved })
+	globalFlags = gf
+
+	ctx, _, _, err := configPrehook(subcmd.WithGlobalFlagSet(context.Background(), fs))
+	if err != nil {
+		return Config{}, nil, err
+	}
+	cfg, ok := cmdutil.ContextValue[Config](ctx)
+	if !ok {
+		t.Fatal("no configuration in context")
+	}
+	loc, _ := cmdutil.ContextValue[*cmdconfig.Located](ctx)
+	return cfg, loc, nil
+}
+
+// firstHost names the connection a located configuration describes, which says
+// which file was read.
+func firstHost(t *testing.T, cfg Config) string {
+	t.Helper()
+	if len(cfg.Connections) != 1 {
+		t.Fatalf("got %v connections, want 1", len(cfg.Connections))
+	}
+	return cfg.Connections[0].Name
+}
+
+// TestConfigPrehookCurrentDirectory covers pconn being run from arbitrary
+// directories: a config.yaml that happens to be in the current one is almost
+// certainly not pconn's, so it is read only when it is asked for by name.
+func TestConfigPrehookCurrentDirectory(t *testing.T) {
+	t.Run("not read by default", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		cwd := t.TempDir()
+		t.Chdir(cwd)
+		writeConfig(t, cwd, "config.yaml", "cwd.example.com")
+
+		// A configuration file is required, so with the current directory out
+		// of the search path there is none and pconn says where it looked.
+		_, _, err := prehookWithArgs(t)
+		if err == nil {
+			t.Fatal("the file in the current directory was read")
+		}
+		if got, want := err.Error(), "no configuration file found"; !strings.Contains(got, want) {
+			t.Errorf("got error %q, want it to contain %q", got, want)
+		}
+		if strings.Contains(err.Error(), " ., ") {
+			t.Errorf("the current directory was searched: %v", err)
+		}
+	})
+
+	t.Run("read when named", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		cwd := t.TempDir()
+		t.Chdir(cwd)
+		writeConfig(t, cwd, "config.yaml", "cwd.example.com")
+
+		// A relative name is resolved against the current directory, as it is
+		// for any other command.
+		cfg, loc, err := prehookWithArgs(t, "--config", "config.yaml")
+		if err != nil {
+			t.Fatalf("configPrehook: %v", err)
+		}
+		if got, want := firstHost(t, cfg), "cwd.example.com"; got != want {
+			t.Errorf("got connection %q, want %q", got, want)
+		}
+		if loc == nil || len(loc.YAML) != 1 {
+			t.Fatalf("located %v", loc)
+		}
+	})
+
+	t.Run("the user configuration directory is still searched", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		cwd := t.TempDir()
+		t.Chdir(cwd)
+		writeConfig(t, cwd, "config.yaml", "cwd.example.com")
+		path := writeConfig(t, filepath.Join(home, ".config", appDir), "config.yaml", "user.example.com")
+
+		cfg, loc, err := prehookWithArgs(t)
+		if err != nil {
+			t.Fatalf("configPrehook: %v", err)
+		}
+		if got, want := firstHost(t, cfg), "user.example.com"; got != want {
+			t.Errorf("got connection %q, want %q", got, want)
+		}
+		if loc == nil || len(loc.YAML) != 1 || loc.YAML[0] != path {
+			t.Errorf("located %v, want [%v]", loc, path)
+		}
+	})
+}
+
+// TestConfigSpecFor covers connect's own --config, which overrides the global
+// one: a relative name given to either must still be resolved against the
+// current directory.
+func TestConfigSpecFor(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	var unset cmdconfig.FilesFlag
+	if dirs := filepath.SplitList(configSpecFor(&unset).Path); slices.Contains(dirs, ".") {
+		t.Errorf("the current directory is searched for the default: %v", dirs)
+	}
+
+	var named cmdconfig.FilesFlag
+	if err := named.Set("asked-for.yaml"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	dirs := filepath.SplitList(configSpecFor(&named).Path)
+	if got, want := dirs[0], "."; got != want {
+		t.Errorf("a named file is not resolved against the current directory first: got %v, want %v", got, want)
 	}
 }

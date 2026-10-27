@@ -2,7 +2,7 @@ module cloudeng.io/citools/ghpr
 
 go 1.27.0
 
-require cloudeng.io/cmdutil v0.0.0-20261026191912-bcd1dece5d6c
+require cloudeng.io/cmdutil v0.0.0-20261027172419-c2cb239e8127
 
 require (
 	cloudeng.io/algo v0.0.0-20261026191912-bcd1dece5d6c // indirect

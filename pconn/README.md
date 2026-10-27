@@ -11,7 +11,9 @@ global flags: [--config=config.yaml --log-file= --log-format=json
 --log-level=0 --log-source-code=false --verbose=false]
 
     -config value
-      YAML configuration file (default config.yaml)
+      YAML configuration file; if unset, config.yaml in the `pconn` directory
+      of the user configuration directories is used. The current directory is
+      not searched unless a file is named here (default config.yaml)
     -log-file string
       log file path. If not specified logs are written to stderr, if set to -
       logs are written to stdout
@@ -37,7 +39,9 @@ sets of related connections to be started and maintained together.
 
 ### Configuration (config.md)
 
-`pconn` is configured using a YAML configuration file (by default `pconn.yaml`). The configuration defines logging settings, persistent connections, their protocol types, group memberships, and local TCP port forwards to maintain.
+`pconn` is configured using a YAML configuration file. The configuration defines logging settings, persistent connections, their protocol types, group memberships, and local TCP port forwards to maintain.
+
+By default the file is `config.yaml` in `pconn`'s own configuration directory: `~/Library/Application Support/pconn` on macOS, `$XDG_CONFIG_HOME/pconn` or `~/.config/pconn` elsewhere. The current directory is deliberately not searched, since `pconn` is run from wherever its connections are wanted and a `config.yaml` there belongs to whatever is being worked on rather than to `pconn`. Use `--config <file>` for a file anywhere else, including one in the current directory.
 
 #### Example Configuration
 

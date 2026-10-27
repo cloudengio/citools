@@ -75,7 +75,7 @@ func (c ConnectCommand) Run(ctx context.Context, flags any, args []string) error
 
 	if cf.Config.HasSet(cmdconfig.FileTypeYAML) {
 		var newCfg Config
-		loc, err := cmdconfig.Load(ctx, &newCfg, &cf.Config, configSpec())
+		loc, err := cmdconfig.Load(ctx, &newCfg, &cf.Config, configSpecFor(&cf.Config))
 		if err != nil {
 			return fmt.Errorf("failed to read the configuration file: %w", err)
 		}
