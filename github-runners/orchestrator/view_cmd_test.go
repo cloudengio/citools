@@ -764,4 +764,3 @@ func TestNewViewController(t *testing.T) {
 		t.Errorf("bLimited.Retries() = %d, want 4", got)
 	}
 }
-

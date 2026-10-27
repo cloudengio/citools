@@ -1,6 +1,14 @@
 # [github.com/cloudengio/citools/govulnchecker](https://pkg.go.dev/github.com/cloudengio/citools/govulnchecker?tab=doc)
 
 
+Usage of
+/var/folders/6l/tm8174_x64j4xsrtfw4mbf380000gn/T/go-build2544859554/b001/exe/govulnchecker:
+
+    -config string
+      	Path to the YAML configuration file containing ignored vulnerabilities (default ".govulnchecker.yaml")
+    -include-not-called
+      	Include vulnerabilities that are imported but never called (symbol scan level only)
+
 Command `govulnchecker` is a wrapper around the standard 'govulncheck' tool
 that provides the ability to ignore specific known vulnerabilities.
 
@@ -25,4 +33,5 @@ and typically a 'why' field providing the justification.
         why: "We do not use the vulnerable function in this module."
       - id: GO-2022-5678
         why: "This is a false positive for our specific deployment environment."
+
 

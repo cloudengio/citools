@@ -408,7 +408,7 @@ func (u *testUI) Start(ctx context.Context, _ ui.Handler, _, _ string) error {
 	<-ctx.Done()
 	return ctx.Err()
 }
-func (u *testUI) Stop() {}
+func (u *testUI) Stop()             {}
 func (u *testUI) IsAvailable() bool { return true }
 
 func TestRunUIHandlerOnIssueJWT(t *testing.T) {

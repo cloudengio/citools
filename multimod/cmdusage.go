@@ -1,4 +1,8 @@
-// Usage of /var/folders/6l/tm8174_x64j4xsrtfw4mbf380000gn/T/go-build1606652369/b001/exe/multimod:
+// Copyright 2026 cloudeng llc. All rights reserved.
+// Use of this source code is governed by the Apache-2.0
+// license that can be found in the LICENSE file.
+
+// Usage of /var/folders/6l/tm8174_x64j4xsrtfw4mbf380000gn/T/go-build1683469252/b001/exe/multimod:
 //
 //	-concurrent
 //	  	run commands concurrently in all modules
