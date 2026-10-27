@@ -1,0 +1,18 @@
+--- Overview
+The orchestrator bundle command now warns when the bundle configuration references environment variables that are not defined. Previously these were silently expanded to empty strings. A missing signing identity, for example, would quietly produce an unsigned bundle.
+
+--- Key Changes
+  * orchestrator bundle command
+    * loadBundleConfig now finds the config files with FilesFlag.Locate. It builds the expansion mapping with Located.ExpandMapping, chained to an envfile.Unresolved that records the names it could not resolve. It then loads the files with cmdconfig.LoadFiles using cmdyaml.WithExpandMapping.
+    * loadBundleConfig now returns those unresolved variable names along with the config.
+    * BundleCommand.Run prints a warning that lists the undefined variables.
+    * Expansion works on the raw text, so references inside YAML comments are reported too.
+  * Tests
+    * Updated for the new return value. Added a check that an unset variable (ORCH_TEST_UNSET) is reported.
+  * Dependencies
+    * Bumped cloudeng.io/cmdutil to v0.0.0-20261027225206-401592c3d504.
+
+--- Breaking Changes
+None
+
+ Generated with Claude Code (https://claude.com/claude-code)
