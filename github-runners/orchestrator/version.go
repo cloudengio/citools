@@ -7,7 +7,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"cloudeng.io/cmdutil"
@@ -18,61 +17,17 @@ import (
 // CFBundleShortVersionString.
 const DefaultVersion = "0.0.0"
 
-// versionInfo describes the build stamped into the bundle.
-type versionInfo struct {
-	// Short is CFBundleShortVersionString, the human-readable release version.
-	Short string
-	// Build is CFBundleVersion, the release version with the commit appended.
-	Build string
-	// Commit is the full hash, and BuildTime when the bundle was built.
-	Commit    string
-	BuildTime time.Time
-	// Dirty reports uncommitted changes in the tree the bundle was built from.
-	Dirty bool
-}
-
-// gitVersion derives the version for a bundle built from the repository at dir.
-// A tree with uncommitted changes yields Dirty, which the caller must decide
-// how to treat: a bundle stamped with a commit it does not match is worse than
-// no stamp at all, especially once it is signed and notarized.
-func gitVersion(ctx context.Context, dir, short string) (versionInfo, error) {
+// gitVersion derives the version for a bundle built from the repository at
+// dir, see buildtools.Git.Version, whose release version is short, or
+// DefaultVersion if it is empty. A tree with uncommitted changes yields
+// Dirty, which the caller must decide how to treat: a bundle stamped with a
+// commit it does not match is worse than no stamp at all, especially once it
+// is signed and notarized.
+func gitVersion(ctx context.Context, dir, short string) (buildtools.Version, error) {
 	if short == "" {
 		short = DefaultVersion
 	}
-	v := versionInfo{Short: short, Build: short, BuildTime: time.Now()}
-
-	git := buildtools.NewGit(dir)
-	runner := buildtools.NewCommandRunner()
-
-	full, err := git.Hash(ctx, runner, "HEAD", 40)
-	if err != nil {
-		return v, fmt.Errorf("determining the git revision of %v: %w", dir, err)
-	}
-	v.Commit = strings.TrimSpace(full.Output())
-
-	abbrev, err := git.Hash(ctx, runner, "HEAD", 8)
-	if err != nil {
-		return v, fmt.Errorf("determining the short git revision of %v: %w", dir, err)
-	}
-	v.Build = short + "+" + strings.TrimSpace(abbrev.Output())
-
-	status, err := gitStatus(ctx, runner, dir)
-	if err != nil {
-		return v, err
-	}
-	if v.Dirty = status != ""; v.Dirty {
-		v.Build += "-dirty"
-	}
-	return v, nil
-}
-
-// gitStatus returns the porcelain status of the tree at dir, empty when clean.
-func gitStatus(ctx context.Context, runner *buildtools.CommandRunner, dir string) (string, error) {
-	res, err := runner.Run(buildtools.ContextWithCWD(ctx, dir), "git", "status", "--porcelain")
-	if err != nil {
-		return "", fmt.Errorf("determining whether %v is clean: %w", dir, err)
-	}
-	return strings.TrimSpace(res.Output()), nil
+	return buildtools.NewGit(dir).Version(ctx, buildtools.NewCommandRunner(), short)
 }
 
 // VersionCommand reports the version of this binary.

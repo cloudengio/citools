@@ -83,7 +83,7 @@ notary:
 // TestBuildInfoPlist covers the defaults every bundle needs and the caller's
 // ability to override them, since a missing key makes an unlaunchable bundle.
 func TestBuildInfoPlist(t *testing.T) {
-	version := versionInfo{Short: "1.0.0", Build: "1.0.0+abcdef12", Commit: "abcdef12345", BuildTime: time.Now()}
+	version := buildtools.Version{Short: "1.0.0", Build: "1.0.0+abcdef12", Commit: "abcdef12345", BuildTime: time.Now()}
 	info, err := buildInfoPlist(buildtools.InfoPlist{}, "my-exe", "io.cloudeng.example", version)
 	if err != nil {
 		t.Fatalf("buildInfoPlist: %v", err)
@@ -193,7 +193,7 @@ func TestShippedBundleConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadBundleConfig: %v", err)
 	}
-	version := versionInfo{Short: cfg.Info.CFBundleShortVersionString, Build: cfg.Info.CFBundleShortVersionString + "+abcdef12", Commit: "abcdef12", BuildTime: time.Now()}
+	version := buildtools.Version{Short: cfg.Info.CFBundleShortVersionString, Build: cfg.Info.CFBundleShortVersionString + "+abcdef12", Commit: "abcdef12", BuildTime: time.Now()}
 	if _, err := buildInfoPlist(cfg.Info, defaultExecutable, orchestratorBundleID, version); err != nil {
 		t.Errorf("the shipped bundle-builder.yaml yields an invalid Info.plist: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestBundleConfigPermissions(t *testing.T) {
 }
 
 func TestBundleInfoLSMinimumSystemVersion(t *testing.T) {
-	version := versionInfo{Short: "1.0.0", Build: "1.0.0+abcdef12", Commit: "abcdef12345", BuildTime: time.Now()}
+	version := buildtools.Version{Short: "1.0.0", Build: "1.0.0+abcdef12", Commit: "abcdef12345", BuildTime: time.Now()}
 	info, err := buildInfoPlist(buildtools.InfoPlist{LSMinimumSystemVersion: "15.2"}, defaultExecutable, orchestratorBundleID, version)
 	if err != nil {
 		t.Fatalf("buildInfoPlist: %v", err)
@@ -289,7 +289,7 @@ func TestBuildAppBundleDryRun(t *testing.T) {
 		OrchestratorConfig: "minimal_config.yml",
 		LaunchAgentConfig:  "launch_agent.yml",
 	}
-	version := versionInfo{Short: "1.0.0", Build: "1.0.0", Commit: "abcdef12", BuildTime: time.Now()}
+	version := buildtools.Version{Short: "1.0.0", Build: "1.0.0", Commit: "abcdef12", BuildTime: time.Now()}
 	info, err := buildInfoPlist(buildtools.InfoPlist{}, defaultExecutable, orchestratorBundleID, version)
 	if err != nil {
 		t.Fatalf("buildInfoPlist: %v", err)
@@ -340,7 +340,7 @@ func TestBuildAppBundleDryRunIcon(t *testing.T) {
 		OrchestratorConfig: "minimal_config.yml",
 		LaunchAgentConfig:  "launch_agent.yml",
 	}
-	version := versionInfo{Short: "1.0.0", Build: "1.0.0", Commit: "abcdef12", BuildTime: time.Now()}
+	version := buildtools.Version{Short: "1.0.0", Build: "1.0.0", Commit: "abcdef12", BuildTime: time.Now()}
 	info, err := buildInfoPlist(buildtools.InfoPlist{CFBundleIconFile: "AppIcon.icns"}, defaultExecutable, orchestratorBundleID, version)
 	if err != nil {
 		t.Fatal(err)
