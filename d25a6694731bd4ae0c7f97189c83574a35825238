@@ -1,0 +1,22 @@
+--- Overview
+This PR replaces the orchestrator's own git version detection with the buildtools.Git.Version support now available upstream, and bumps the cloudeng.io dependencies to pick it up.
+
+--- Key Changes
+orchestrator/version.go
+  * Removed the local versionInfo type and the gitStatus helper.
+  * gitVersion now hands off to buildtools.NewGit(dir).Version(...) and returns buildtools.Version. It still uses DefaultVersion when no short version is given.
+
+orchestrator/bundle_cmd.go
+  * buildInfoPlist now takes a buildtools.Version instead of versionInfo.
+
+orchestrator/bundle_cmd_test.go
+  * Tests now build buildtools.Version values instead of versionInfo.
+
+orchestrator/go.mod
+  * Bumped these direct dependencies: cloudeng.io/{algo,file,logging,macos,os,vms}.
+  * Bumped these indirect dependencies: cloudeng.io/{encoding,security,sys,types}.
+
+--- Breaking Changes
+None. The changes are internal to the main package.
+
+ Generated with Claude Code (https://claude.com/claude-code)
