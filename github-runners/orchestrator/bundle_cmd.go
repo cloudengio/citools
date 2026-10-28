@@ -184,7 +184,7 @@ func (c *BundleConfig) SetDefaults() {
 // buildInfoPlist merges the caller-supplied Info.plist keys over the standard
 // defaults required for a launchable bundle with the given main executable and
 // bundle identifier, and produces a buildtools.InfoPlist.
-func buildInfoPlist(user buildtools.InfoPlist, executable, bundleID string, version versionInfo) (buildtools.InfoPlist, error) {
+func buildInfoPlist(user buildtools.InfoPlist, executable, bundleID string, version buildtools.Version) (buildtools.InfoPlist, error) {
 	info := user.WithDefaults(executable)
 	if user.CFBundleName == "" {
 		info.CFBundleName = defaultExecutable

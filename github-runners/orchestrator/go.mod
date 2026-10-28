@@ -3,17 +3,17 @@ module github.com/cloudengio/citools/runners/macos/orchestrator
 go 1.27.0
 
 require (
-	cloudeng.io/algo v0.0.0-20261026191912-bcd1dece5d6c
+	cloudeng.io/algo v0.0.0-20261027225206-401592c3d504
 	cloudeng.io/cmdutil v0.0.0-20261027225206-401592c3d504
 	cloudeng.io/errors v0.0.14-0.20260312171538-61fcde6ce278
-	cloudeng.io/file v0.0.0-20261026191912-bcd1dece5d6c
-	cloudeng.io/logging v0.0.0-20261026191912-bcd1dece5d6c
-	cloudeng.io/macos v0.0.0-20261026213519-859da02ca943
+	cloudeng.io/file v0.0.0-20261027220638-c457de45484b
+	cloudeng.io/logging v0.0.0-20261027225206-401592c3d504
+	cloudeng.io/macos v0.0.0-20261028020757-c9e3950b0d6c
 	cloudeng.io/net v0.0.0-20261026191912-bcd1dece5d6c
-	cloudeng.io/os v0.0.0-20261026191912-bcd1dece5d6c
+	cloudeng.io/os v0.0.0-20261027225206-401592c3d504
 	cloudeng.io/sync v0.0.12-0.20260804222138-e9281ed260ba
 	cloudeng.io/text v0.0.16-0.20260624171915-da98fe9dec2b
-	cloudeng.io/vms v0.0.0-20261026191912-bcd1dece5d6c
+	cloudeng.io/vms v0.0.0-20261027225206-401592c3d504
 	cloudeng.io/webapi/clients/github v0.0.0-20261019151527-b728423ca3bc
 	cloudeng.io/webapi/operations v0.0.0-20261019151527-b728423ca3bc
 	cloudeng.io/webapp v0.0.0-20261020175408-a837605012e7
@@ -29,12 +29,12 @@ require (
 
 require (
 	cloudeng.io/cicd v0.0.0-20261026191912-bcd1dece5d6c // indirect
-	cloudeng.io/encoding v0.0.0-20261026191912-bcd1dece5d6c // indirect
+	cloudeng.io/encoding v0.0.0-20261027225206-401592c3d504 // indirect
 	cloudeng.io/io v0.0.0-20261026191912-bcd1dece5d6c // indirect
 	cloudeng.io/path v0.0.10-0.20260312171538-61fcde6ce278 // indirect
-	cloudeng.io/security v0.0.0-20261026191912-bcd1dece5d6c // indirect
-	cloudeng.io/sys v0.0.0-20261026191912-bcd1dece5d6c // indirect
-	cloudeng.io/types v0.0.0-20261026191912-bcd1dece5d6c // indirect
+	cloudeng.io/security v0.0.0-20261027220638-c457de45484b // indirect
+	cloudeng.io/sys v0.0.0-20261027225206-401592c3d504 // indirect
+	cloudeng.io/types v0.0.0-20261027225206-401592c3d504 // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/cloudengio/go-keychain v0.0.0-20261014235732-bd9bcf9f8cd6 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
