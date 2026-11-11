@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"cloudeng.io/cmdutil"
+	"cloudeng.io/vms/ociimage"
 	"cloudeng.io/webapi/clients/github/githubcmd"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/githubclient"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/vmsclient"
@@ -30,7 +31,7 @@ func testPools(names ...string) map[string]vmsclient.PoolConfig {
 	pools := make(map[string]vmsclient.PoolConfig, len(names))
 	for _, n := range names {
 		pools[n] = vmsclient.PoolConfig{Tart: &vmsclient.TartConfig{
-			Image:     n + "-ci",
+			Source:    ociimage.Source{Image: n + "-ci"},
 			RunnerDir: "/Users/admin/actions-runner",
 		}}
 	}

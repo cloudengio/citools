@@ -16,6 +16,7 @@ import (
 
 	"cloudeng.io/errors"
 	"cloudeng.io/logging/ctxlog"
+	"cloudeng.io/vms/vmspool"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/internal"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/vmsclient"
 	gogithub "github.com/google/go-github/v89/github"
@@ -32,13 +33,70 @@ type WorkflowEventHandler struct {
 	status          *statusTracker
 }
 
-type CompletionQueue = vmsclient.CompletionQueue[*WorkflowInstance]
+// CompletionQueue parks finished jobs, and the VMs they ran on, so that a VM
+// can be inspected before it is deleted, see vmspool.CompletionQueue.
+type CompletionQueue = vmspool.CompletionQueue
 
-func NewCompletionQueue(ctx context.Context, size int, successfulRetention, failedRetention time.Duration) *CompletionQueue {
-	return vmsclient.NewCompletionQueue[*WorkflowInstance](ctx, size, successfulRetention, failedRetention)
+// The outcomes the orchestrator files finished jobs under. A job that failed
+// is worth keeping for longer than one that succeeded, which is why they are
+// separate queues with retention periods of their own.
+const (
+	OutcomeSuccess = "success"
+	OutcomeFailure = "failure"
+)
+
+// WithCompletionQueue configures the queue the orchestrator parks finished
+// jobs in: one outcome for a job that succeeded and one for a job that failed,
+// each holding at most size of them for its own retention period.
+//
+// It is an option for the VM pools because they are what creates the queue and
+// closes it: every VM they hand out carries it, which is how a finished job
+// reaches it, and closing them releases the VMs it is still holding. The
+// handler fills and drains it, see vmsclient.Pools.CompletionQueue; a pool has
+// no notion of a job being finished.
+func WithCompletionQueue(size int, successfulRetention, failedRetention time.Duration) vmsclient.Option {
+	return vmsclient.WithCompletionOutcomes(
+		vmspool.WithCompletionOutcome(OutcomeSuccess, size, successfulRetention),
+		vmspool.WithCompletionOutcome(OutcomeFailure, size, failedRetention))
 }
 
-func NewWorkflowEventHandler(ctx context.Context, tmpDir string, cq *CompletionQueue, statusRetention time.Duration, poolConfigs map[string]vmsclient.PoolConfig, repoConfigs []RepositoryConfig, clients *RepoClients) (*WorkflowEventHandler, error) {
+// outcomeFor returns the outcome a finished job is filed under.
+func outcomeFor(err error) string {
+	if err != nil {
+		return OutcomeFailure
+	}
+	return OutcomeSuccess
+}
+
+// pushCompletion parks a finished job in the completion queue of the pool its
+// VM came from, see vmspool.VM.CompletionQueue, with err reporting how the job
+// ended. The VM is all the queue is reached through, so nothing has to be
+// handed the queue alongside it.
+//
+// A job that ran on no VM has nothing to park. One whose pool has no queue
+// attached is deleted here instead: it has been stopped and released, and
+// nothing else would ever delete it.
+func pushCompletion(ctx context.Context, inst *WorkflowInstance, err error) {
+	vm := inst.GetVM()
+	if vm == nil {
+		return
+	}
+	if cq := vm.CompletionQueue(); cq != nil {
+		cq.Push(vmspool.CompletionEvent{VM: inst, Err: err, Outcome: outcomeFor(err)})
+		return
+	}
+	if delErr := vm.Delete(ctx); delErr != nil {
+		ctxlog.Error(ctx, "failed to delete the VM of a finished job with no completion queue",
+			"vm", vm.ID(), "error", delErr)
+	}
+}
+
+// NewWorkflowEventHandler creates the handler, and with it the VM pools the
+// jobs it handles run on. poolOpts configures those pools; the orchestrator
+// passes WithCompletionQueue, so that the VMs of finished jobs are parked
+// rather than deleted at once, and a handler created without it deletes each
+// VM as the job on it finishes.
+func NewWorkflowEventHandler(ctx context.Context, tmpDir string, statusRetention time.Duration, poolConfigs map[string]vmsclient.PoolConfig, repoConfigs []RepositoryConfig, clients *RepoClients, poolOpts ...vmsclient.Option) (*WorkflowEventHandler, error) {
 	lm, err := internal.NewLogFileManager(tmpDir)
 	if err != nil {
 		return nil, err
@@ -46,7 +104,7 @@ func NewWorkflowEventHandler(ctx context.Context, tmpDir string, cq *CompletionQ
 	defer lm.CloseGlobalLogFile()
 	vmPools, err := vmsclient.NewPools(ctx, poolConfigs, func(string) io.Writer {
 		return lm.GlobalLogFile()
-	})
+	}, poolOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -65,10 +123,12 @@ func NewWorkflowEventHandler(ctx context.Context, tmpDir string, cq *CompletionQ
 		workflowManager: newWorkflowInstanceManager(lm),
 		vmPools:         vmPools,
 		poolConfigs:     poolConfigs,
-		completeQueue:   cq,
-		lm:              lm,
-		clients:         clients,
-		status:          newStatusTracker(statusRetention),
+		// The pools own the queue, so the handler takes it from them rather
+		// than being handed one: it fills and drains it, and they close it.
+		completeQueue: vmPools.CompletionQueue(),
+		lm:            lm,
+		clients:       clients,
+		status:        newStatusTracker(statusRetention),
 	}, nil
 }
 
@@ -123,15 +183,18 @@ func (r *WorkflowEventHandler) PoolStatus(ctx context.Context) ([]vmsclient.Pool
 	return r.vmPools.Status(ctx)
 }
 
-// Capacity reports whether the VM pools can supply a VM for a queued job, see
-// vmsclient.Capacity. It is what gates the webhook listener's connection to
-// the relay: there is no point in holding it, or in reading events that would
-// only queue up here, whilst no job can be started.
-func (r *WorkflowEventHandler) Capacity() vmsclient.Capacity {
+// HasCapacity reports whether the VM pools can supply a VM for a queued job,
+// see vmsclient.Pools.HasCapacity. It is what gates the webhook listener's
+// connection to the relay: there is no point in holding it, or in reading
+// events that would only queue up here, whilst no job can be started.
+//
+// A handler with no pools has no capacity, since a job has nothing to run on,
+// which leaves the events at the relay for an orchestrator that does.
+func (r *WorkflowEventHandler) HasCapacity() bool {
 	if r.vmPools == nil {
-		return vmsclient.Capacity{}
+		return false
 	}
-	return r.vmPools.Capacity()
+	return r.vmPools.HasCapacity()
 }
 
 // RefreshPool removes all currently available VMs in the named pool and replaces
@@ -140,15 +203,21 @@ func (r *WorkflowEventHandler) RefreshPool(ctx context.Context, name string) (in
 	if r.vmPools == nil {
 		return 0, fmt.Errorf("no VM pools configured")
 	}
-	return r.vmPools.RefreshPool(ctx, name)
+	return r.vmPools.Refresh(ctx, name)
 }
 
-// CompletionQueueVMIDs returns the set of VM IDs currently in the completion queue.
+// CompletionQueueVMIDs returns the set of VM IDs currently in the completion
+// queue, as a set so that the ui can ask about each VM it is listing.
 func (r *WorkflowEventHandler) CompletionQueueVMIDs() map[string]bool {
 	if r.completeQueue == nil {
 		return nil
 	}
-	return r.completeQueue.VMIDs()
+	ids := r.completeQueue.VMIDs()
+	out := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out
 }
 
 // Subscribe returns a coalescing change signal that fires when either pool,
@@ -210,13 +279,9 @@ func (r *WorkflowEventHandler) Close(ctx context.Context) error {
 		ctxlog.Info(ctx, "closed VM pools")
 	}
 	errs.Append(err)
-	err = r.completeQueue.Close(ctx)
-	if err != nil {
-		ctxlog.Error(ctx, "failed to close completion queue", "error", err)
-	} else {
-		ctxlog.Info(ctx, "closed completion queue")
-	}
-	errs.Append(err)
+	// The completion queue is not closed here: it belongs to the pools, which
+	// created it and have just closed it, releasing the VMs it was holding,
+	// see vmsclient.Pools.Close.
 	return errs.Err()
 }
 
@@ -398,9 +463,7 @@ func (r *WorkflowEventHandler) handleCompleted(ctx context.Context, event *gogit
 	if stopErr != nil || runErr != nil {
 		logger.Error("failed to stop VM on cancellation", "stop_err", stopErr, "run_err", runErr)
 	}
-	ce := vmsclient.CompletionEvent[*WorkflowInstance]{Payload: inst}
-	err := fmt.Errorf("job canceled")
-	r.completeQueue.PushFailure(ce, err)
+	pushCompletion(ctx, inst, fmt.Errorf("job canceled"))
 }
 
 func (r *WorkflowEventHandler) handleQueuedEvent(ctx context.Context, event *gogithub.WorkflowJobEvent, pool *vmsclient.PoolConfig, runner *RunnerConfig) error {
@@ -444,7 +507,7 @@ func (r *WorkflowEventHandler) handleQueuedEvent(ctx context.Context, event *gog
 		}
 	})
 
-	runErr := inst.RunJob(ctx, r.completeQueue, r.clients, r.status)
+	runErr := inst.RunJob(ctx, r.clients, r.status)
 	// The VM has finished running the job locally at this point; record the
 	// vm_completed state. GitHub's "completed" webhook (handleCompleted) will
 	// later advance this to the completed state (or if it already arrived, advance now).
@@ -506,32 +569,43 @@ func (r *WorkflowEventHandler) RunJob(ctx context.Context, owner, repo string, l
 }
 
 func (r *WorkflowEventHandler) DrainCompletionQueue(ctx context.Context, waitForInput bool) {
+	if r.completeQueue == nil {
+		return
+	}
 	for {
 		select {
-		case success := <-r.completeQueue.Success():
-			inst := success.Payload
-			if vm := inst.GetVM(); vm != nil {
-				r.completeQueue.Remove(vm.ID())
-			}
-			logger := inst.GetLogger(ctxlog.Logger(ctx))
-			logger.Info("job completed successfully")
-			waitForUserInput(waitForInput, fmt.Sprintf("VM %s kept for debugging; press Enter to release it and continue...", inst.GetVM().ID()))
-			inst.GetVM().Delete(ctx) //nolint:errcheck
-		case failure := <-r.completeQueue.Failure():
-			inst := failure.Payload
-			if vm := inst.GetVM(); vm != nil {
-				r.completeQueue.Remove(vm.ID())
-			}
-			logger := inst.GetLogger(ctxlog.Logger(ctx))
-			logger.Error("job failed", "error", failure.Err)
-			waitForUserInput(waitForInput, fmt.Sprintf("VM %s kept for debugging; press Enter to release it and continue...", inst.GetVM().ID()))
-			inst.GetVM().Delete(ctx) //nolint:errcheck
+		case e := <-r.completeQueue.Out(OutcomeSuccess):
+			r.releaseCompleted(ctx, e, waitForInput)
+		case e := <-r.completeQueue.Out(OutcomeFailure):
+			r.releaseCompleted(ctx, e, waitForInput)
 		case <-ctx.Done():
 			return
 		default:
 			return
 		}
 	}
+}
+
+// releaseCompleted reports a job taken off the completion queue and deletes
+// the VM it ran on. A drained event is no longer the queue's responsibility,
+// so the VM is removed from its account before it is deleted.
+func (r *WorkflowEventHandler) releaseCompleted(ctx context.Context, e vmspool.CompletionEvent, waitForInput bool) {
+	if e.VM == nil {
+		return
+	}
+	logger := e.VM.GetLogger(ctxlog.Logger(ctx))
+	if e.Err != nil {
+		logger.Error("job failed", "error", e.Err)
+	} else {
+		logger.Info("job completed successfully")
+	}
+	vm := e.VM.GetVM()
+	if vm == nil {
+		return
+	}
+	r.completeQueue.Remove(vm.PoolName(), vm.ID())
+	waitForUserInput(waitForInput, fmt.Sprintf("VM %s kept for debugging; press Enter to release it and continue...", vm.ID()))
+	vm.Delete(ctx) //nolint:errcheck
 }
 
 func waitForUserInput(keepVM bool, prompt string) {

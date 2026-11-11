@@ -5,6 +5,20 @@ import github.com/cloudengio/citools/runners/macos/orchestrator/githubclient
 ```
 
 
+## Constants
+### OutcomeSuccess, OutcomeFailure
+```go
+const (
+	OutcomeSuccess = "success"
+	OutcomeFailure = "failure"
+)
+```
+The outcomes the orchestrator files finished jobs under. A job that failed
+is worth keeping for longer than one that succeeded, which is why they are
+separate queues with retention periods of their own.
+
+
+
 ## Variables
 ### ErrWorkflowNotRunning
 ```go
@@ -52,21 +66,29 @@ func LoggerWithEvent(logger *slog.Logger, event *gogithub.WorkflowJobEvent) *slo
 func LoggerWithWorkflowInstance(logger *slog.Logger, inst *WorkflowInstance) *slog.Logger
 ```
 
+### Func WithCompletionQueue
+```go
+func WithCompletionQueue(size int, successfulRetention, failedRetention time.Duration) vmsclient.Option
+```
+WithCompletionQueue configures the queue the orchestrator parks finished
+jobs in: one outcome for a job that succeeded and one for a job that failed,
+each holding at most size of them for its own retention period.
+
+It is an option for the VM pools because they are what creates the queue
+and closes it: every VM they hand out carries it, which is how a finished
+job reaches it, and closing them releases the VMs it is still holding.
+The handler fills and drains it, see vmsclient.Pools.CompletionQueue;
+a pool has no notion of a job being finished.
+
 
 
 ## Types
 ### Type CompletionQueue
 ```go
-type CompletionQueue = vmsclient.CompletionQueue[*WorkflowInstance]
+type CompletionQueue = vmspool.CompletionQueue
 ```
-
-### Functions
-
-```go
-func NewCompletionQueue(ctx context.Context, size int, successfulRetention, failedRetention time.Duration) *CompletionQueue
-```
-
-
+CompletionQueue parks finished jobs, and the VMs they ran on, so that a VM
+can be inspected before it is deleted, see vmspool.CompletionQueue.
 
 
 ### Type JobStartedInfo
@@ -265,8 +287,13 @@ type WorkflowEventHandler struct {
 ### Functions
 
 ```go
-func NewWorkflowEventHandler(ctx context.Context, tmpDir string, cq *CompletionQueue, statusRetention time.Duration, poolConfigs map[string]vmsclient.PoolConfig, repoConfigs []RepositoryConfig, clients *RepoClients) (*WorkflowEventHandler, error)
+func NewWorkflowEventHandler(ctx context.Context, tmpDir string, statusRetention time.Duration, poolConfigs map[string]vmsclient.PoolConfig, repoConfigs []RepositoryConfig, clients *RepoClients, poolOpts ...vmsclient.Option) (*WorkflowEventHandler, error)
 ```
+NewWorkflowEventHandler creates the handler, and with it the VM pools the
+jobs it handles run on. poolOpts configures those pools; the orchestrator
+passes WithCompletionQueue, so that the VMs of finished jobs are parked
+rather than deleted at once, and a handler created without it deletes each
+VM as the job on it finishes.
 
 
 
@@ -282,15 +309,6 @@ It returns ErrWorkflowNotRunning if no live instance exists for name.
 
 
 ```go
-func (r *WorkflowEventHandler) Capacity() vmsclient.Capacity
-```
-Capacity reports whether the VM pools can supply a VM for a queued job,
-see vmsclient.Capacity. It is what gates the webhook listener's connection
-to the relay: there is no point in holding it, or in reading events that
-would only queue up here, whilst no job can be started.
-
-
-```go
 func (r *WorkflowEventHandler) Close(ctx context.Context) error
 ```
 
@@ -299,7 +317,7 @@ func (r *WorkflowEventHandler) Close(ctx context.Context) error
 func (r *WorkflowEventHandler) CompletionQueueVMIDs() map[string]bool
 ```
 CompletionQueueVMIDs returns the set of VM IDs currently in the completion
-queue.
+queue, as a set so that the ui can ask about each VM it is listing.
 
 
 ```go
@@ -310,6 +328,18 @@ func (r *WorkflowEventHandler) DrainCompletionQueue(ctx context.Context, waitFor
 ```go
 func (r *WorkflowEventHandler) HandleWebhooks(ctx context.Context, event *gogithub.WorkflowJobEvent) error
 ```
+
+
+```go
+func (r *WorkflowEventHandler) HasCapacity() bool
+```
+HasCapacity reports whether the VM pools can supply a VM for a queued job,
+see vmsclient.Pools.HasCapacity. It is what gates the webhook listener's
+connection to the relay: there is no point in holding it, or in reading
+events that would only queue up here, whilst no job can be started.
+
+A handler with no pools has no capacity, since a job has nothing to run on,
+which leaves the events at the relay for an orchestrator that does.
 
 
 ```go
@@ -396,25 +426,27 @@ It is guaranteed to run at most once, and always before the VM is stopped.
 ```go
 func (wi *WorkflowInstance) GetLogger(logger *slog.Logger) *slog.Logger
 ```
-GetLogger implements the CompletionEventPayload interface, returning a
-logger enriched with workflow instance details.
+GetLogger implements vmspool.CompletedVM, returning a logger enriched with
+workflow instance details.
 
 
 ```go
 func (wi *WorkflowInstance) GetVM() *vmspool.VM
 ```
-GetVM implements the CompletionEventPayload interface, returning the VM
-associated with this workflow instance.
+GetVM implements vmspool.CompletedVM, returning the VM associated with this
+workflow instance, or nil if it never acquired one.
 
 
 ```go
-func (wi *WorkflowInstance) RunJob(ctx context.Context, cq *CompletionQueue, clients *RepoClients, status *statusTracker) error
+func (wi *WorkflowInstance) RunJob(ctx context.Context, clients *RepoClients, status *statusTracker) error
 ```
 RunJob runs the job on the instance's VM and returns the local outcome
 (nil on success). The VM has finished running by the time this returns.
 It examines the jobStarted data reported by the VM's start hook, compares it
 with the workflow instance values (reporting errors to logs and UI if they
 differ), and ensures that the job status on GitHub is completed or canceled.
+The job is parked in the completion queue of the pool its VM came from,
+see vmspool.VM.CompletionQueue, so the queue is not a parameter: the VM is.
 
 
 ```go
@@ -470,19 +502,20 @@ orchestrator. It intentionally mirrors the API's WorkflowState enum.
 ### Constants
 ### WorkflowQueued, WorkflowAcquiring, WorkflowRunning, WorkflowVMCompleted, WorkflowCompleted, WorkflowFailed, WorkflowCanceled
 ```go
-WorkflowQueued WorkflowState = "queued"
-WorkflowAcquiring WorkflowState = "acquiring"
-WorkflowRunning WorkflowState = "running"
-// WorkflowVMCompleted means the job finished on the local VM (the runner
-// exited and the VM was stopped) but GitHub has not yet acknowledged
-// completion via a workflow_job "completed" webhook.
-WorkflowVMCompleted WorkflowState = "vm_completed"
-// WorkflowCompleted means GitHub has delivered the workflow_job "completed"
-// webhook, i.e. the run is finished end-to-end.
-WorkflowCompleted WorkflowState = "completed"
-WorkflowFailed WorkflowState = "failed"
-WorkflowCanceled WorkflowState = "canceled"
-
+const (
+	WorkflowQueued    WorkflowState = "queued"
+	WorkflowAcquiring WorkflowState = "acquiring"
+	WorkflowRunning   WorkflowState = "running"
+	// WorkflowVMCompleted means the job finished on the local VM (the runner
+	// exited and the VM was stopped) but GitHub has not yet acknowledged
+	// completion via a workflow_job "completed" webhook.
+	WorkflowVMCompleted WorkflowState = "vm_completed"
+	// WorkflowCompleted means GitHub has delivered the workflow_job "completed"
+	// webhook, i.e. the run is finished end-to-end.
+	WorkflowCompleted WorkflowState = "completed"
+	WorkflowFailed    WorkflowState = "failed"
+	WorkflowCanceled  WorkflowState = "canceled"
+)
 ```
 
 
