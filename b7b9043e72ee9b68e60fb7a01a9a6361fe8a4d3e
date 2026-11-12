@@ -1,0 +1,35 @@
+--- Overview
+Refactors the orchestrator's VM pool layer onto the upstream cloudeng.io/vms/vmspool Set, CompletionQueue, StatusTracker and CachingProvider, and removes the local copies of the completion queue, status tracker, provider abstraction and image-reference parsing. The pool set now owns the completion queue, and each VM carries a reference to it.
+
+--- Key Changes
+vmsclient
+  * Pools now embeds *vmspool.Set, which provides lookup by name, Acquire, Refresh, Subscribe, Names/Len and Close. NewPools accepts ...Option and is all-or-nothing: if one pool fails to start, the pools that did start are closed.
+  * New BackendConfig interface (Validate, Backend(pool) vmspool.ProviderNew), implemented by TartConfig and MockConfig. PoolConfig.Backend lets code build a pool config directly instead of reading one from a file.
+  * New options: WithBaseOptions, WithCompletionOutcomes (creates a completion queue shared by all pools in the set) and WithEventBuffer.
+  * Removed Capacity and its Any() method in favour of Pools.HasCapacity(). A set with no pools, or a closed set, now reports no capacity.
+  * Status reporting is split into GetSnapshot and PoolStatus. Pools use CachingProvider for VM details. PoolSnapshot gains a Completing count, and resource figures fall back to the backend's DefaultResources. If a single VM can't be inspected, the pool is still reported instead of the whole snapshot being dropped.
+  * TartConfig embeds ociimage.Source and vmspool.VMResources, replacing the separate Image and pull fields and tartvm.ResourceConfig. Image references are parsed and checked by ociimage when the config is validated. Pulling goes through ociimage.Pull.
+  * MockConfig.Image must now parse as an OCI image reference.
+  * New constants TartKind, MockKind and DefaultEventBuffer. New error ErrNocachingProvider.
+  * Deleted: completion_queue.go, pool_status.go, provider.go, Provider, Pool, PoolStatusTracker, bareImageName and isRemoteImage.
+
+githubclient
+  * CompletionQueue is now an alias for vmspool.CompletionQueue. NewCompletionQueue is replaced by WithCompletionQueue(size, successRetention, failedRetention), which sets up two outcomes, OutcomeSuccess and OutcomeFailure.
+  * NewWorkflowEventHandler no longer takes a queue. It takes poolOpts ...vmsclient.Option and gets the queue from the pools.
+  * WorkflowInstance.RunJob and newSelfHostedRunner no longer take a queue. Finished jobs are pushed through vm.CompletionQueue() by the new pushCompletion; if the VM's pool has no queue, the VM is deleted straight away.
+  * Capacity() is replaced by HasCapacity() bool. RefreshPool now calls Pools.Refresh.
+  * DrainCompletionQueue loops over each outcome and calls the new releaseCompleted. Close no longer closes the queue, because closing the pools does that.
+
+orchestrator
+  * run_cmd.go passes githubclient.WithCompletionQueue(...) to NewWorkflowEventHandler.
+  * Follows the upstream rename patterns.New -> patterns.NewPubSub.
+  * Tests are updated for the new APIs, and new tests cover backends, completion-queue ownership, status snapshots and capacity.
+  * The regenerated READMEs now show constants grouped in const (...) blocks.
+
+--- Breaking Changes
+  * vmsclient: removed Capacity, CompletionQueue[T], CompletionEvent[T], CompletionEventPayload, NewCompletionQueue, Provider, Pool, PoolStatusTracker and Pools.RefreshPool (now Refresh). NewPools signature changed to add ...Option. ListPoolVMs now returns vmspool.VMInfo.
+  * vmsclient config: TartConfig fields are restructured: PullConcurrency is now Concurrency (from ociimage.Source), and ResourceConfig is now VMResources. Invalid image references in tart_config.image and mock_config.image are now rejected when the config is validated. The YAML keys checked in tests (image, pull_remote_on_run, pull_insecure, pull_concurrency) still decode.
+  * githubclient: NewCompletionQueue removed. NewWorkflowEventHandler, WorkflowInstance.RunJob and WorkflowEventHandler.Capacity (now HasCapacity) signatures changed. Completion events are now vmspool.CompletionEvent, read with Out(outcome) and with the payload in the VM field.
+  * Behaviour: a set with no pools now reports no capacity; before, it reported capacity.
+
+ Generated with Claude Code (https://claude.com/claude-code)
