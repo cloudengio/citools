@@ -42,11 +42,16 @@ func newCancelHarness(t *testing.T) *cancelHarness {
 		StagingBehaviour: vmspool.StagingBehaviourRunning}
 	poolCfg.CreateBackoff.InitialDelay = time.Millisecond
 	poolCfg.CreateBackoff.Steps = 5
+	// The queue is the pools', as NewWorkflowEventHandler has it, so that the
+	// VMs they hand out report it: that is how a finished job reaches the
+	// queue it is parked in.
 	pools, err := vmsclient.NewPools(ctx, map[string]vmsclient.PoolConfig{testPoolName: poolCfg},
-		func(string) io.Writer { return io.Discard })
+		func(string) io.Writer { return io.Discard },
+		WithCompletionQueue(10, time.Minute, time.Minute))
 	if err != nil {
 		t.Fatalf("NewPools: %v", err)
 	}
+	cq := pools.CompletionQueue()
 	t.Cleanup(func() {
 		if err := pools.Close(context.Background()); err != nil {
 			t.Errorf("closing pools: %v", err)
@@ -64,17 +69,11 @@ func newCancelHarness(t *testing.T) *cancelHarness {
 		workflowManager: newWorkflowInstanceManager(lm),
 		vmPools:         pools,
 		poolConfigs:     map[string]vmsclient.PoolConfig{testPoolName: poolCfg},
-		completeQueue:   NewCompletionQueue(ctx, 10, time.Minute, time.Minute),
+		completeQueue:   cq,
 		lm:              lm,
 		clients:         NewRepoClients(),
 		status:          newStatusTracker(time.Minute),
 	}
-	t.Cleanup(func() {
-		if err := h.completeQueue.Close(context.Background()); err != nil {
-			t.Errorf("closing the completion queue: %v", err)
-		}
-	})
-
 	runner := &RunnerConfig{NamePrefix: "go-mock", VMPoolName: testPoolName,
 		Labels: []string{"self-hosted", "mock"}, Timeout: time.Minute}
 	inst := h.workflowManager.newInstance(ctx, runner, &poolCfg, jobEvent("queued", 0, ""))
@@ -187,11 +186,15 @@ func TestCancelWebhookStopsRunningJob(t *testing.T) {
 
 	// The instance is reported as a failure so that its VM is reclaimed.
 	select {
-	case ce := <-h.handler.completeQueue.Failure():
+	case ce := <-h.handler.completeQueue.Out(OutcomeFailure):
 		if ce.Err == nil {
 			t.Error("the completion event carries no error")
 		}
-		if got, want := ce.Payload.Name, h.instance.Name; got != want {
+		inst, ok := ce.VM.(*WorkflowInstance)
+		if !ok {
+			t.Fatalf("the completion event carries %T, want a workflow instance", ce.VM)
+		}
+		if got, want := inst.Name, h.instance.Name; got != want {
 			t.Errorf("completion event for %q, want %q", got, want)
 		}
 	case <-time.After(5 * time.Second):
