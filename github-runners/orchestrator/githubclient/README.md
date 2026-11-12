@@ -20,6 +20,13 @@ separate queues with retention periods of their own.
 
 
 ## Variables
+### CompletionOutcomes
+```go
+CompletionOutcomes = []string{OutcomeSuccess, OutcomeFailure}
+
+```
+CompletionOutcomes lists the outcomes configured for finished jobs.
+
 ### ErrWorkflowNotRunning
 ```go
 ErrWorkflowNotRunning = errors.New("no such running workflow")

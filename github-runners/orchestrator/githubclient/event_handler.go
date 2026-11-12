@@ -45,6 +45,9 @@ const (
 	OutcomeFailure = "failure"
 )
 
+// CompletionOutcomes lists the outcomes configured for finished jobs.
+var CompletionOutcomes = []string{OutcomeSuccess, OutcomeFailure}
+
 // WithCompletionQueue configures the queue the orchestrator parks finished
 // jobs in: one outcome for a job that succeeded and one for a job that failed,
 // each holding at most size of them for its own retention period.
@@ -573,14 +576,21 @@ func (r *WorkflowEventHandler) DrainCompletionQueue(ctx context.Context, waitFor
 		return
 	}
 	for {
-		select {
-		case e := <-r.completeQueue.Out(OutcomeSuccess):
-			r.releaseCompleted(ctx, e, waitForInput)
-		case e := <-r.completeQueue.Out(OutcomeFailure):
-			r.releaseCompleted(ctx, e, waitForInput)
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return
-		default:
+		}
+		drained := false
+		for _, outcome := range CompletionOutcomes {
+			select {
+			case e := <-r.completeQueue.Out(outcome):
+				r.releaseCompleted(ctx, e, waitForInput)
+				drained = true
+			case <-ctx.Done():
+				return
+			default:
+			}
+		}
+		if !drained {
 			return
 		}
 	}
