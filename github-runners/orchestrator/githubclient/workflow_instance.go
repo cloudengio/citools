@@ -75,12 +75,13 @@ func newWorkflowInstance(ctx context.Context, lm *internal.LogFileManager, runne
 	return wfi
 }
 
-// GetVM implements the CompletionEventPayload interface, returning the VM associated with this workflow instance.
+// GetVM implements vmspool.CompletedVM, returning the VM associated with this
+// workflow instance, or nil if it never acquired one.
 func (wi *WorkflowInstance) GetVM() *vmspool.VM {
 	return wi.vm
 }
 
-// GetLogger implements the CompletionEventPayload interface, returning a logger enriched with workflow instance details.
+// GetLogger implements vmspool.CompletedVM, returning a logger enriched with workflow instance details.
 func (wi *WorkflowInstance) GetLogger(logger *slog.Logger) *slog.Logger {
 	logger = LoggerWithEvent(logger, wi.Event)
 	logger = LoggerWithWorkflowInstance(logger, wi)
@@ -151,7 +152,7 @@ func (wi *WorkflowInstance) ExtractLogs(ctx context.Context) error {
 	if wi.PoolConfig == nil || wi.RunnerConfig == nil {
 		return nil
 	}
-	shr := newSelfHostedRunner(wi, nil, wi.RepoURL, "")
+	shr := newSelfHostedRunner(wi, wi.RepoURL, "")
 
 	jobStarted, rawData, jsErr := shr.readJobStarted(ctx, wi.vm)
 	if jsErr != nil {
@@ -200,12 +201,14 @@ func (wi *WorkflowInstance) StopAndReleaseVM(ctx context.Context, timeout time.D
 // the jobStarted data reported by the VM's start hook, compares it with the
 // workflow instance values (reporting errors to logs and UI if they differ), and
 // ensures that the job status on GitHub is completed or canceled.
-func (wi *WorkflowInstance) RunJob(ctx context.Context, cq *CompletionQueue, clients *RepoClients, status *statusTracker) error {
+// The job is parked in the completion queue of the pool its VM came from, see
+// vmspool.VM.CompletionQueue, so the queue is not a parameter: the VM is.
+func (wi *WorkflowInstance) RunJob(ctx context.Context, clients *RepoClients, status *statusTracker) error {
 	if wi.vm == nil || wi.token == nil {
 		ctxlog.Error(ctx, "VM or token not initialized for workflow instance", "workflow_instance", wi.Name)
 		return fmt.Errorf("VM or token not initialized for workflow instance %s", wi.Name)
 	}
-	shr := newSelfHostedRunner(wi, cq, wi.RepoURL, wi.token.GetToken())
+	shr := newSelfHostedRunner(wi, wi.RepoURL, wi.token.GetToken())
 	jobStarted, runErr := shr.runQueuedJob(ctx, wi)
 
 	var errs errors.M

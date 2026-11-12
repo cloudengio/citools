@@ -16,7 +16,6 @@ import (
 	"cloudeng.io/errors"
 	"cloudeng.io/logging/ctxlog"
 	"cloudeng.io/vms/vmspool"
-	"github.com/cloudengio/citools/runners/macos/orchestrator/vmsclient"
 )
 
 type execCommand struct {
@@ -27,20 +26,18 @@ type execCommand struct {
 }
 
 type selfHostedRunner struct {
-	inst            *WorkflowInstance
-	runnerDir       string
-	repoURL         string
-	token           string
-	completionQueue *CompletionQueue
+	inst      *WorkflowInstance
+	runnerDir string
+	repoURL   string
+	token     string
 }
 
-func newSelfHostedRunner(inst *WorkflowInstance, cq *CompletionQueue, repoURL, token string) *selfHostedRunner {
+func newSelfHostedRunner(inst *WorkflowInstance, repoURL, token string) *selfHostedRunner {
 	return &selfHostedRunner{
-		inst:            inst,
-		runnerDir:       inst.PoolConfig.RunnerDir(),
-		repoURL:         repoURL,
-		token:           token,
-		completionQueue: cq,
+		inst:      inst,
+		runnerDir: inst.PoolConfig.RunnerDir(),
+		repoURL:   repoURL,
+		token:     token,
 	}
 }
 
@@ -156,13 +153,11 @@ func (shr *selfHostedRunner) runQueuedJob(ctx context.Context, inst *WorkflowIns
 	errs.Append(runErr)
 	errs.Append(stopErr)
 
-	ce := vmsclient.CompletionEvent[*WorkflowInstance]{Payload: inst}
-	if err := errs.Err(); err != nil {
-		shr.completionQueue.PushFailure(ce, err)
-		return inst.JobStarted, err
-	}
-	shr.completionQueue.PushSuccess(ce)
-	return inst.JobStarted, nil
+	// The VM carries the queue it is parked in, so the job is filed through
+	// the VM it ran on rather than through a queue passed down to here.
+	err = errs.Err()
+	pushCompletion(ctx, inst, err)
+	return inst.JobStarted, err
 }
 
 func (shr *selfHostedRunner) runCmds(ctx context.Context, vm *vmspool.VM, stdout, stderr io.Writer, cmds ...execCommand) error {

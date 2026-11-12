@@ -77,7 +77,7 @@ func newStatusTracker(retention time.Duration) *statusTracker {
 	return &statusTracker{
 		records:   make(map[string]*WorkflowSnapshot),
 		retention: retention,
-		pubsub:    patterns.New[struct{}](),
+		pubsub:    patterns.NewPubSub[struct{}](),
 	}
 }
 

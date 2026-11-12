@@ -44,13 +44,15 @@ application (with a Dock tile) or as an accessory/agent (menu bar only).
 ### Constants
 ### ModeAccessory, ModeRegular
 ```go
-// ModeAccessory runs the UI as an accessory/background agent:
-// it creates an NSStatusItem in the macOS menu bar but shows NO Dock icon.
-ModeAccessory Mode = iota
-// ModeRegular runs the UI as a standard foreground application:
-// it shows a Dock icon and can also display a menu bar item or dialogs.
-ModeRegular
+const (
+	// ModeAccessory runs the UI as an accessory/background agent:
+	// it creates an NSStatusItem in the macOS menu bar but shows NO Dock icon.
+	ModeAccessory Mode = iota
 
+	// ModeRegular runs the UI as a standard foreground application:
+	// it shows a Dock icon and can also display a menu bar item or dialogs.
+	ModeRegular
+)
 ```
 
 

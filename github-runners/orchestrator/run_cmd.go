@@ -171,7 +171,7 @@ type poolCapacity struct {
 }
 
 func (c poolCapacity) HasCapacity() bool {
-	return c.handler.Capacity().Any()
+	return c.handler.HasCapacity()
 }
 
 func (c poolCapacity) Changed() <-chan struct{} {
@@ -244,12 +244,11 @@ func (r RunCommand) runWithUIMode(ctx context.Context, fv *RunFlags, mode ui.Mod
 		sweepOrphanedVMs(ctx, cfg)
 	}
 
-	cq := githubclient.NewCompletionQueue(ctx,
-		cfg.Global.CompletionQueueSize,
-		cfg.Global.SuccessfulVMRetentionPeriod,
-		cfg.Global.FailedVMRetentionPeriod)
-
-	wh, err := githubclient.NewWorkflowEventHandler(ctx, cfg.Global.TmpDir, cq, statusRetention(cfg), cfg.VMPools, cfg.Repositories, repoClients)
+	wh, err := githubclient.NewWorkflowEventHandler(ctx, cfg.Global.TmpDir, statusRetention(cfg), cfg.VMPools, cfg.Repositories, repoClients,
+		githubclient.WithCompletionQueue(
+			cfg.Global.CompletionQueueSize,
+			cfg.Global.SuccessfulVMRetentionPeriod,
+			cfg.Global.FailedVMRetentionPeriod))
 	if err != nil {
 		return err
 	}
@@ -461,12 +460,11 @@ func (r RunCommand) RunJob(ctx context.Context, flags any, _ []string) error {
 		return err
 	}
 
-	cq := githubclient.NewCompletionQueue(ctx,
-		cfg.Global.CompletionQueueSize,
-		cfg.Global.SuccessfulVMRetentionPeriod,
-		cfg.Global.FailedVMRetentionPeriod)
-
-	wh, err := githubclient.NewWorkflowEventHandler(ctx, cfg.Global.TmpDir, cq, statusRetention(cfg), cfg.VMPools, []githubclient.RepositoryConfig{rc}, repoClients)
+	wh, err := githubclient.NewWorkflowEventHandler(ctx, cfg.Global.TmpDir, statusRetention(cfg), cfg.VMPools, []githubclient.RepositoryConfig{rc}, repoClients,
+		githubclient.WithCompletionQueue(
+			cfg.Global.CompletionQueueSize,
+			cfg.Global.SuccessfulVMRetentionPeriod,
+			cfg.Global.FailedVMRetentionPeriod))
 	if err != nil {
 		return err
 	}

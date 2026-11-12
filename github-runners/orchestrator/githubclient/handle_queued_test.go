@@ -34,10 +34,13 @@ func newQueuedHarness(t *testing.T) (*WorkflowEventHandler, *RunnerConfig, *vmsc
 	poolCfg.CreateBackoff.InitialDelay = time.Millisecond
 	poolCfg.CreateBackoff.Steps = 5
 	pools, err := vmsclient.NewPools(ctx, map[string]vmsclient.PoolConfig{testPoolName: poolCfg},
-		func(string) io.Writer { return io.Discard })
+		func(string) io.Writer { return io.Discard },
+		WithCompletionQueue(10, time.Minute, time.Minute))
 	if err != nil {
 		t.Fatalf("NewPools: %v", err)
 	}
+	// The queue is the pools', which close it, see vmsclient.Pools.Close.
+	cq := pools.CompletionQueue()
 	t.Cleanup(func() {
 		if err := pools.Close(context.Background()); err != nil {
 			t.Errorf("closing pools: %v", err)
@@ -55,17 +58,11 @@ func newQueuedHarness(t *testing.T) (*WorkflowEventHandler, *RunnerConfig, *vmsc
 		workflowManager: newWorkflowInstanceManager(lm),
 		vmPools:         pools,
 		poolConfigs:     map[string]vmsclient.PoolConfig{testPoolName: poolCfg},
-		completeQueue:   NewCompletionQueue(ctx, 10, time.Minute, time.Minute),
+		completeQueue:   cq,
 		lm:              lm,
 		clients:         NewRepoClients(),
 		status:          newStatusTracker(time.Minute),
 	}
-	t.Cleanup(func() {
-		if err := h.completeQueue.Close(context.Background()); err != nil {
-			t.Errorf("closing the completion queue: %v", err)
-		}
-	})
-
 	runner := &RunnerConfig{
 		NamePrefix: "go-mock", VMPoolName: testPoolName,
 		Labels: []string{"self-hosted", "mock"}, Timeout: time.Minute,

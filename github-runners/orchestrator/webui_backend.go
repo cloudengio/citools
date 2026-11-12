@@ -45,7 +45,7 @@ func newWebUIBackend(cfg Config, configPath string) *webuiBackend {
 	return &webuiBackend{
 		cfg:        cfg,
 		configPath: configPath,
-		changes:    patterns.New[struct{}](),
+		changes:    patterns.NewPubSub[struct{}](),
 	}
 }
 

@@ -16,8 +16,7 @@ are generated from openapi.yaml.
 ## Constants
 ### BasePath
 ```go
-BasePath = "/api/v1"
-
+const BasePath = "/api/v1"
 ```
 BasePath is the URL prefix under which the JSON API is served.
 
@@ -418,10 +417,11 @@ EventType defines model for Event.Type.
 ### Constants
 ### EventTypeHello, EventTypePool, EventTypeWorkflow
 ```go
-EventTypeHello EventType = "hello"
-EventTypePool EventType = "pool"
-EventTypeWorkflow EventType = "workflow"
-
+const (
+	EventTypeHello    EventType = "hello"
+	EventTypePool     EventType = "pool"
+	EventTypeWorkflow EventType = "workflow"
+)
 ```
 Defines values for EventType.
 
@@ -1489,9 +1489,10 @@ VMLocation Location of a VM (in the pool or in the completion queue).
 ### Constants
 ### VMLocationCompletionQueue, VMLocationPool
 ```go
-VMLocationCompletionQueue VMLocation = "completion_queue"
-VMLocationPool VMLocation = "pool"
-
+const (
+	VMLocationCompletionQueue VMLocation = "completion_queue"
+	VMLocationPool            VMLocation = "pool"
+)
 ```
 Defines values for VMLocation.
 
@@ -1516,16 +1517,17 @@ VMState State of a VM as reported by the pool.
 ### Constants
 ### VMStateAcquired, VMStateAvailable, VMStateCompletionQueue, VMStateCreating, VMStateDeleted, VMStateFailed, VMStateStaging, VMStateStopped, VMStateUnknown
 ```go
-VMStateAcquired VMState = "acquired"
-VMStateAvailable VMState = "available"
-VMStateCompletionQueue VMState = "completion_queue"
-VMStateCreating VMState = "creating"
-VMStateDeleted VMState = "deleted"
-VMStateFailed VMState = "failed"
-VMStateStaging VMState = "staging"
-VMStateStopped VMState = "stopped"
-VMStateUnknown VMState = "unknown"
-
+const (
+	VMStateAcquired        VMState = "acquired"
+	VMStateAvailable       VMState = "available"
+	VMStateCompletionQueue VMState = "completion_queue"
+	VMStateCreating        VMState = "creating"
+	VMStateDeleted         VMState = "deleted"
+	VMStateFailed          VMState = "failed"
+	VMStateStaging         VMState = "staging"
+	VMStateStopped         VMState = "stopped"
+	VMStateUnknown         VMState = "unknown"
+)
 ```
 Defines values for VMState.
 
@@ -1603,14 +1605,15 @@ completion.
 ### Constants
 ### WorkflowStateAcquiring, WorkflowStateCanceled, WorkflowStateCompleted, WorkflowStateFailed, WorkflowStateQueued, WorkflowStateRunning, WorkflowStateVmCompleted
 ```go
-WorkflowStateAcquiring WorkflowState = "acquiring"
-WorkflowStateCanceled WorkflowState = "canceled"
-WorkflowStateCompleted WorkflowState = "completed"
-WorkflowStateFailed WorkflowState = "failed"
-WorkflowStateQueued WorkflowState = "queued"
-WorkflowStateRunning WorkflowState = "running"
-WorkflowStateVmCompleted WorkflowState = "vm_completed"
-
+const (
+	WorkflowStateAcquiring   WorkflowState = "acquiring"
+	WorkflowStateCanceled    WorkflowState = "canceled"
+	WorkflowStateCompleted   WorkflowState = "completed"
+	WorkflowStateFailed      WorkflowState = "failed"
+	WorkflowStateQueued      WorkflowState = "queued"
+	WorkflowStateRunning     WorkflowState = "running"
+	WorkflowStateVmCompleted WorkflowState = "vm_completed"
+)
 ```
 Defines values for WorkflowState.
 

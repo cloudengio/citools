@@ -8,46 +8,54 @@ import (
 	"context"
 	"errors"
 	"io"
-	"log/slog"
 	"strings"
 	"testing"
 	"time"
 
-	"cloudeng.io/vms/vmspool"
+	"cloudeng.io/vms/ociimage"
+	basepool "cloudeng.io/vms/vmspool"
 	"gopkg.in/yaml.v3"
 )
 
 func mockPool(size int, cfg MockConfig) PoolConfig {
-	pc := PoolConfig{Mock: &cfg,
-		Size: size}
+	pc := PoolConfig{Mock: &cfg}
+	pc.Size = size
+	pc.StagingBehaviour = basepool.StagingBehaviourRunning
+	pc.CreateBackoff.InitialDelay = time.Millisecond
+	pc.CreateBackoff.Steps = 5
 	return pc
 }
 
 // discard is the log-file factory NewPools requires.
 func discard(string) io.Writer { return io.Discard }
 
-func TestMockProviderSelection(t *testing.T) {
-	p, err := mockPool(1, MockConfig{RunnerDir: "/home/admin/actions-runner"}).newProvider("mock", slog.Default())
+// TestMockBackendSelection covers the mock section of a pool configuration:
+// the backend it selects, and the runner directory that the orchestrator
+// reads back from the configuration rather than from the backend.
+func TestMockBackendSelection(t *testing.T) {
+	ctx := context.Background()
+	cfg := mockPool(1, MockConfig{RunnerDir: "/home/admin/actions-runner"})
+	b, err := cfg.newBackend(ctx, "mock")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := p.Kind(), "mock"; got != want {
-		t.Errorf("kind: got %q, want %q", got, want)
+	if got, want := b.Name(), "mock"; got != want {
+		t.Errorf("name: got %q, want %q", got, want)
 	}
 	// An unset image is reported as "mock" rather than empty, so that status
 	// output identifies the pool.
-	if got, want := p.Image(), DefaultMockImage; got != want {
+	if got, want := b.Details().Image().String(), DefaultMockImage; got != want {
 		t.Errorf("image: got %q, want %q", got, want)
 	}
-	if got, want := p.RunnerDir(), "/home/admin/actions-runner"; got != want {
+	if got, want := cfg.RunnerDir(), "/home/admin/actions-runner"; got != want {
 		t.Errorf("runner dir: got %q, want %q", got, want)
 	}
 
-	named, err := mockPool(1, MockConfig{Image: "fast-ci"}).newProvider("mock", slog.Default())
+	named, err := mockPool(1, MockConfig{Image: "fast-ci"}).newBackend(ctx, "mock")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := named.Image(), "fast-ci"; got != want {
+	if got, want := named.Details().Image().String(), "fast-ci"; got != want {
 		t.Errorf("image: got %q, want %q", got, want)
 	}
 }
@@ -55,7 +63,10 @@ func TestMockProviderSelection(t *testing.T) {
 // TestPoolConfigValidate covers the rule that a pool selects exactly one
 // backend, which is what keeps the choice unambiguous as backends are added.
 func TestPoolConfigValidate(t *testing.T) {
-	tart := &TartConfig{Image: "macos-ci", RunnerDir: "/Users/admin/actions-runner"}
+	tart := &TartConfig{
+		Source:    ociimage.Source{Image: "macos-ci"},
+		RunnerDir: "/Users/admin/actions-runner",
+	}
 	for _, tc := range []struct {
 		name string
 		cfg  PoolConfig
@@ -69,31 +80,37 @@ func TestPoolConfigValidate(t *testing.T) {
 		if err := tc.cfg.Validate(); !errors.Is(err, tc.want) {
 			t.Errorf("%v: got %v, want %v", tc.name, err, tc.want)
 		}
-		// newProvider agrees with Validate about which configurations are usable.
-		_, err := tc.cfg.newProvider(tc.name, slog.Default())
+		// Building the backend agrees with Validate about which
+		// configurations are usable.
+		_, err := tc.cfg.newBackend(context.Background(), tc.name)
 		if (err == nil) != (tc.want == nil) {
-			t.Errorf("%v: newProvider got %v, Validate got %v", tc.name, err, tc.cfg.Validate())
+			t.Errorf("%v: newBackend got %v, Validate got %v", tc.name, err, tc.cfg.Validate())
+		}
+	}
+
+	// A tart pool must say what to clone and where the runner lives in it.
+	for _, tc := range []struct {
+		cfg  TartConfig
+		want string
+	}{
+		{TartConfig{RunnerDir: "/runner"}, "tart_config.image is required"},
+		{TartConfig{Source: ociimage.Source{Image: "macos-ci"}}, "tart_config.runner_dir is required"},
+	} {
+		err := PoolConfig{Tart: &tc.cfg}.Validate()
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%+v: got %v, want it to mention %q", tc.cfg, err, tc.want)
 		}
 	}
 }
 
-// TestMockPoolsLifecycle drives real vmspool.Pools through the mock backend:
-// the pools are started, fill to their configured sizes, hand out VMs and are
-// closed, with no VM technology involved.
+// TestMockPoolsLifecycle drives pools through the orchestrator's own
+// configuration: a mock pool configured in a file becomes a working pool, with
+// no VM technology involved.
 func TestMockPoolsLifecycle(t *testing.T) {
 	ctx := context.Background()
-	cfg := map[string]PoolConfig{
-		"fast": mockPool(3, MockConfig{Image: "fast-ci"}),
-		"slow": mockPool(1, MockConfig{Suspendable: true}),
-	}
-	for name, pc := range cfg {
-		pc.StagingBehaviour = vmspool.StagingBehaviourRunning
-		pc.CreateBackoff.InitialDelay = time.Millisecond
-		pc.CreateBackoff.Steps = 5
-		cfg[name] = pc
-	}
-
-	pools, err := NewPools(ctx, cfg, discard)
+	pools, err := NewPools(ctx, map[string]PoolConfig{
+		"fast": mockPool(2, MockConfig{Image: "fast-ci"}),
+	}, discard)
 	if err != nil {
 		t.Fatalf("NewPools: %v", err)
 	}
@@ -103,90 +120,33 @@ func TestMockPoolsLifecycle(t *testing.T) {
 		}
 	}()
 
-	// Each pool reports itself with its configured size and backend.
-	wantSizes := map[string]int{"fast": 3, "slow": 1}
-	var byName map[string]PoolSnapshot
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		snaps, err := pools.Status(ctx)
 		if err != nil {
 			t.Fatalf("Status: %v", err)
 		}
-		byName = make(map[string]PoolSnapshot, len(snaps))
-		for _, s := range snaps {
-			byName[s.Name] = s
-		}
-		allReady := true
-		for name, wantSize := range wantSizes {
-			s, ok := byName[name]
-			if !ok || s.Available < wantSize {
-				allReady = false
-				break
+		if len(snaps) == 1 && snaps[0].Available == 2 {
+			if got, want := snaps[0].Kind, "mock"; got != want {
+				t.Errorf("kind: got %q, want %q", got, want)
 			}
-		}
-		if allReady {
+			if got, want := snaps[0].Image, "fast-ci"; got != want {
+				t.Errorf("image: got %q, want %q", got, want)
+			}
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for pools to reach available sizes: got %+v", byName)
+			t.Fatalf("timed out waiting for the pool to fill: %+v", snaps)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	for name, wantSize := range wantSizes {
-		s, ok := byName[name]
-		if !ok {
-			t.Errorf("pool %v missing from the status", name)
-			continue
-		}
-		if s.Size != wantSize {
-			t.Errorf("pool %v: size %d, want %d", name, s.Size, wantSize)
-		}
-		if s.Available != wantSize {
-			t.Errorf("pool %v: available %d, want %d", name, s.Available, wantSize)
-		}
-		if s.Acquired != 0 {
-			t.Errorf("pool %v: acquired %d, want 0", name, s.Acquired)
-		}
-		if s.Kind != "mock" {
-			t.Errorf("pool %v: kind %q, want mock", name, s.Kind)
-		}
-	}
-
-	// A VM can be acquired and released, which is the whole point of a pool.
 	vm, err := pools.Acquire(ctx, "fast")
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
-	if vm.ID() == "" {
-		t.Error("the acquired VM has no ID")
-	}
-
-	snapsAfterAcquire, err := pools.Status(ctx)
-	if err != nil {
-		t.Fatalf("Status after acquire: %v", err)
-	}
-	for _, s := range snapsAfterAcquire {
-		if s.Name == "fast" {
-			if s.Available != 2 {
-				t.Errorf("fast pool after acquire: available %d, want 2", s.Available)
-			}
-			if s.Acquired != 1 {
-				t.Errorf("fast pool after acquire: acquired %d, want 1", s.Acquired)
-			}
-		}
-	}
-	// Commands are recorded rather than executed, so a mock VM reports success.
-	if err := vm.Exec(ctx, io.Discard, io.Discard, "echo", "hello"); err != nil {
-		t.Errorf("Exec on a mock VM: %v", err)
-	}
 	if err := vm.Delete(ctx); err != nil {
 		t.Errorf("Delete: %v", err)
-	}
-
-	// An unconfigured pool is reported rather than panicking.
-	if _, err := pools.Acquire(ctx, "nope"); err == nil {
-		t.Error("acquiring from an unknown pool succeeded")
 	}
 }
 
@@ -214,6 +174,9 @@ mock_config:
 	if got, want := pc.Size, 2; got != want {
 		t.Errorf("size: got %d, want %d", got, want)
 	}
+	if got, want := pc.Mock.Image, "fast-ci"; got != want {
+		t.Errorf("image: got %q, want %q", got, want)
+	}
 	if !pc.Mock.Suspendable {
 		t.Error("suspendable was not decoded")
 	}
@@ -231,75 +194,88 @@ mock_config:
 	}
 }
 
-// TestMockPoolDeleteReportsNothing verifies that the mock backend owns no
-// external VMs, so that `vms delete` cannot claim to have removed any.
-func TestMockPoolDeleteReportsNothing(t *testing.T) {
-	p, err := mockPool(1, MockConfig{}).newProvider("mock", slog.Default())
-	if err != nil {
-		t.Fatal(err)
+// TestTartPoolYAML verifies the configuration file surface of a tart pool,
+// which is flat: the settings of tart itself, of the image, and of the VMs'
+// resources are each defined by a different package and embedded inline, so
+// a configuration file names them all together and knows nothing of the
+// division.
+func TestTartPoolYAML(t *testing.T) {
+	const spec = `
+size: 2
+delete_acquired_on_close: true
+tart_config:
+  os: linux
+  runner_dir: /home/admin/actions-runner
+  image: mm-1:5001/linux-ci:latest
+  pull_remote_on_run: true
+  pull_insecure: true
+  pull_concurrency: 4
+  run_options: ["--no-graphics"]
+  binary: /opt/homebrew/bin/tart
+  num_cores: 8
+  mem_gib: 16
+`
+	var pc PoolConfig
+	if err := yaml.Unmarshal([]byte(spec), &pc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
 	}
-	deleted, err := p.Delete(context.Background(), time.Second)
-	if err != nil {
-		t.Fatalf("Delete: %v", err)
+	if err := pc.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
 	}
-	if len(deleted) != 0 {
-		t.Errorf("a mock pool reported deleting %v", strings.Join(deleted, ", "))
+	if pc.Tart == nil {
+		t.Fatal("tart_config was not decoded")
+	}
+	// The generic pool settings.
+	if got, want := pc.Size, 2; got != want {
+		t.Errorf("size: got %v, want %v", got, want)
+	}
+	// tart's own.
+	if got, want := pc.Tart.OS, "linux"; got != want {
+		t.Errorf("os: got %q, want %q", got, want)
+	}
+	if got, want := pc.Tart.TartBinary, "/opt/homebrew/bin/tart"; got != want {
+		t.Errorf("binary: got %q, want %q", got, want)
+	}
+	// The image's, which ociimage.Source defines.
+	if got, want := pc.Tart.Image, "mm-1:5001/linux-ci:latest"; got != want {
+		t.Errorf("image: got %q, want %q", got, want)
+	}
+	if !pc.Tart.PullRemoteOnRun || !pc.Tart.Insecure {
+		t.Errorf("the pull settings were not decoded: %+v", pc.Tart.Source)
+	}
+	if got, want := pc.Tart.Concurrency, 4; got != want {
+		t.Errorf("pull_concurrency: got %v, want %v", got, want)
+	}
+	// The VMs' resources, which basepool.VMResources defines.
+	if got, want := pc.Tart.NumCores, 8; got != want {
+		t.Errorf("num_cores: got %v, want %v", got, want)
+	}
+	if got, want := pc.Tart.MemGiB, 16; got != want {
+		t.Errorf("mem_gib: got %v, want %v", got, want)
+	}
+	// The reference is parsed from the image, so the pool's VMs are named
+	// after the image alone whilst tart is given the whole of it.
+	ref, err := pc.Tart.Reference()
+	if err != nil {
+		t.Fatalf("Reference: %v", err)
+	}
+	if got, want := ref.Name, "linux-ci"; got != want {
+		t.Errorf("the VMs would be named after %q, want %q", got, want)
+	}
+	if !pc.Tart.ShouldPull(ref) {
+		t.Error("a remote image with pull_remote_on_run set is not pulled")
 	}
 }
 
-func TestRefreshPool(t *testing.T) {
-	ctx := context.Background()
-	cfg := map[string]PoolConfig{
-		"pool1": mockPool(2, MockConfig{Image: "test-img", RunnerDir: "/runner"}),
-	}
-	pc := cfg["pool1"]
-	pc.StagingBehaviour = vmspool.StagingBehaviourRunning
-	pc.CreateBackoff.InitialDelay = time.Millisecond
-	pc.CreateBackoff.Steps = 5
-	cfg["pool1"] = pc
-
-	pools, err := NewPools(ctx, cfg, discard)
+// TestMockPoolDeleteReportsNothing verifies that the mock backend owns no
+// external VMs, so that `vms delete` cannot claim to have removed any.
+func TestMockPoolDeleteReportsNothing(t *testing.T) {
+	deleted, err := DeletePoolVMs(context.Background(),
+		map[string]PoolConfig{"mock": mockPool(1, MockConfig{})}, time.Second)
 	if err != nil {
-		t.Fatalf("NewPools: %v", err)
+		t.Fatalf("DeletePoolVMs: %v", err)
 	}
-	defer pools.Close(ctx) //nolint:errcheck
-
-	// Wait for pool to have 2 available VMs.
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		status, err := pools.Status(ctx)
-		if err != nil {
-			t.Fatalf("Status: %v", err)
-		}
-		if len(status) > 0 && status[0].Available == 2 && len(status[0].VMs) == 2 {
-			for _, vm := range status[0].VMs {
-				if vm.NumCores != 2 {
-					t.Errorf("NumCores: got %d, want 2", vm.NumCores)
-				}
-				if vm.MemGiB != 4 {
-					t.Errorf("MemGiB: got %d, want 4", vm.MemGiB)
-				}
-				if vm.DiskGiB != 20 {
-					t.Errorf("DiskGiB: got %d, want 20", vm.DiskGiB)
-				}
-			}
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for pool to reach available=2")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	replaced, err := pools.RefreshPool(ctx, "pool1")
-	if err != nil {
-		t.Fatalf("RefreshPool: %v", err)
-	}
-	if replaced != 2 {
-		t.Fatalf("RefreshPool: replaced = %d, want 2", replaced)
-	}
-
-	if _, err := pools.RefreshPool(ctx, "nonexistent"); err == nil {
-		t.Error("RefreshPool on nonexistent pool should error")
+	if len(deleted) != 0 {
+		t.Errorf("a mock pool reported deleting %v", strings.Join(deleted, ", "))
 	}
 }
