@@ -3,7 +3,7 @@ module github.com/cloudengio/citools/runners/macos/orchestrator
 go 1.27.0
 
 require (
-	cloudeng.io/algo v0.0.0-20261027225206-401592c3d504
+	cloudeng.io/algo v0.0.0-20261111225710-e0ef01d9df9b
 	cloudeng.io/cmdutil v0.0.0-20261027225206-401592c3d504
 	cloudeng.io/errors v0.0.14-0.20260312171538-61fcde6ce278
 	cloudeng.io/file v0.0.0-20261027220638-c457de45484b
@@ -13,7 +13,7 @@ require (
 	cloudeng.io/os v0.0.0-20261027225206-401592c3d504
 	cloudeng.io/sync v0.0.12-0.20260804222138-e9281ed260ba
 	cloudeng.io/text v0.0.16-0.20260624171915-da98fe9dec2b
-	cloudeng.io/vms v0.0.0-20261027225206-401592c3d504
+	cloudeng.io/vms v0.0.0-20261112002641-3f0b5fb85a24
 	cloudeng.io/webapi/clients/github v0.0.0-20261019151527-b728423ca3bc
 	cloudeng.io/webapi/operations v0.0.0-20261019151527-b728423ca3bc
 	cloudeng.io/webapp v0.0.0-20261020175408-a837605012e7
@@ -29,6 +29,7 @@ require (
 
 require (
 	cloudeng.io/cicd v0.0.0-20261026191912-bcd1dece5d6c // indirect
+	cloudeng.io/debug v0.0.0-20260527194618-4cb6d4558850 // indirect
 	cloudeng.io/encoding v0.0.0-20261027225206-401592c3d504 // indirect
 	cloudeng.io/io v0.0.0-20261026191912-bcd1dece5d6c // indirect
 	cloudeng.io/path v0.0.10-0.20260312171538-61fcde6ce278 // indirect
@@ -63,8 +64,8 @@ require (
 	golang.org/x/mod v0.42.0 // indirect
 	golang.org/x/net v0.61.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
-	golang.org/x/sync v0.24.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/sync v0.25.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/tools v0.52.0 // indirect
 )
