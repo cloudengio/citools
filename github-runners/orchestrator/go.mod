@@ -11,7 +11,7 @@ require (
 	cloudeng.io/macos v0.0.0-20261028020757-c9e3950b0d6c
 	cloudeng.io/net v0.0.0-20261026191912-bcd1dece5d6c
 	cloudeng.io/os v0.0.0-20261027225206-401592c3d504
-	cloudeng.io/sync v0.0.12-0.20260804222138-e9281ed260ba
+	cloudeng.io/sync v0.0.12-0.20261112002641-3f0b5fb85a24
 	cloudeng.io/text v0.0.16-0.20260624171915-da98fe9dec2b
 	cloudeng.io/vms v0.0.0-20261112002641-3f0b5fb85a24
 	cloudeng.io/webapi/clients/github v0.0.0-20261019151527-b728423ca3bc
