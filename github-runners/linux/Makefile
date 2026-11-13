@@ -32,9 +32,17 @@ build: init
 	  -var "pull_concurrency=$(PULL_CONCURRENCY)" \
 	  build.pkr.hcl
 
-push:
-	tart push $(IMAGE) $(REGISTRY)/$(IMAGE):$(TAG) --insecure --concurrency $(CONCURRENCY)
+# push publishes the image and then signs it in the registry, since a cosign
+# signature names the digest of an image that is already there.
+push: cosign-check
+	tart push $(IMAGE) $(IMAGE_REF) --insecure --concurrency $(CONCURRENCY)
+	$(MAKE) sign
 
 clean:
 	tart delete $(VM_NAME) || true
+
+# Signing of the pushed image: the sign, verify and cosign-keys targets, and
+# the COSIGN_* variables that configure them. Included last so that init stays
+# the default goal.
+include ../cosign.mk
 

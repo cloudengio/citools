@@ -77,9 +77,15 @@ type BundleFlags struct {
 func (BundleCommand) Run(ctx context.Context, fl any, _ []string) error {
 	fv := fl.(*BundleFlags)
 
-	cfg, undefined, err := loadBundleConfig(ctx, &fv.Config)
+	cfg, loc, undefined, err := loadBundleConfig(ctx, &fv.Config)
 	if err != nil {
 		return err
+	}
+	var configFiles []string
+	configFiles = append(configFiles, loc.Env...)
+	configFiles = append(configFiles, loc.YAML...)
+	if len(configFiles) > 0 {
+		fmt.Printf("config files: %s\n", strings.Join(configFiles, ", "))
 	}
 	if len(undefined) > 0 {
 		fmt.Printf("warning: these variables are not defined, in the environment variables file or the environment, and are empty: %s\n", strings.Join(undefined, ", "))
@@ -144,27 +150,27 @@ func bundleSpec() cmdconfig.Spec {
 // The references are expanded by the mapping of cmdconfig.Load, from the
 // environment and then the environment variables file, followed by an
 // envfile.Unresolved, which records those that it did not resolve, see
-// cmdconfig.Located.ExpandMapping. Expansion is textual, so a
-// reference in a YAML comment is recorded too.
-func loadBundleConfig(ctx context.Context, ff *cmdconfig.FilesFlag) (BundleConfig, []string, error) {
+// cmdconfig.Located.ExpandMapping. References in YAML comments are not
+// expanded.
+func loadBundleConfig(ctx context.Context, ff *cmdconfig.FilesFlag) (BundleConfig, *cmdconfig.Located, []string, error) {
 	loc, err := ff.Locate(bundleSpec())
 	if err != nil {
-		return BundleConfig{}, nil, fmt.Errorf("loading the bundle configuration: %w", err)
+		return BundleConfig{}, nil, nil, fmt.Errorf("loading the bundle configuration: %w", err)
 	}
 	var unresolved envfile.Unresolved
 	mapping, err := loc.ExpandMapping(unresolved.Mapping)
 	if err != nil {
-		return BundleConfig{}, nil, fmt.Errorf("loading the bundle configuration: %w", err)
+		return BundleConfig{}, nil, nil, fmt.Errorf("loading the bundle configuration: %w", err)
 	}
 	var cfg BundleConfig
 	if err := cmdconfig.LoadFiles(ctx, &cfg, loc, cmdyaml.WithUnresolvedEmpty(), cmdyaml.WithExpandMapping(mapping)); err != nil {
-		return BundleConfig{}, nil, fmt.Errorf("loading the bundle configuration: %w", err)
+		return BundleConfig{}, nil, nil, fmt.Errorf("loading the bundle configuration: %w", err)
 	}
 	if len(loc.YAML) == 0 {
-		return BundleConfig{}, nil, fmt.Errorf("no bundle configuration found, looked for %s in any of %s",
+		return BundleConfig{}, nil, nil, fmt.Errorf("no bundle configuration found, looked for %s in any of %s",
 			strings.Join(ff.Files(cmdconfig.FileTypeYAML, false), ", "), strings.Join(filepath.SplitList(loc.SearchPath), ", "))
 	}
-	return cfg, unresolved.Names(), nil
+	return cfg, loc, unresolved.Names(), nil
 }
 
 // SetDefaults fills in the values that are not set, and is called once the
