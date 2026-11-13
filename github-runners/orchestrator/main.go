@@ -11,7 +11,6 @@ import (
 	"os"
 	"runtime"
 	"syscall"
-	"time"
 
 	"cloudeng.io/cmdutil"
 	"cloudeng.io/cmdutil/cmdconfig"
@@ -19,7 +18,14 @@ import (
 	"cloudeng.io/macos/macosutils"
 	"cloudeng.io/webapi/clients/github/githubcmd"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/githubclient"
+	"github.com/cloudengio/citools/runners/macos/orchestrator/internal"
 )
+
+// stderr is the orchestrator's standard error with a timestamp on each line.
+// The login service captures standard error in its .err.log, which is read long
+// after the fact, and these messages can be written before slog is configured,
+// so each line carries its own time.
+var stderr = internal.NewTimestampWriter(os.Stderr)
 
 const CmdSpecYAML = `
 name: github-runner-orchestrator
@@ -257,9 +263,8 @@ func main() {
 		if isCleanShutdown(err) {
 			return
 		}
-		// This error may have occurred before slog is configured/enabled so
-		// log it to stderr with a timestamp.
-		fmt.Fprintf(os.Stderr, "%v error: %v\n", time.Now().Format(time.RFC3339), err)
+		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
+		_ = stderr.Flush()
 		os.Exit(1)
 	}
 }

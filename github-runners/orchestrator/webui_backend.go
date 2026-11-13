@@ -213,8 +213,8 @@ func (b *webuiBackend) Pools(ctx context.Context) ([]webui.PoolStatus, error) {
 				Os:        strPtr(osName),
 				RunnerDir: strPtr(runnerDir),
 			}
-			if vm.NumCores > 0 {
-				vmsItem.NumCores = new(vm.NumCores)
+			if vm.Cores > 0 {
+				vmsItem.NumCores = new(vm.Cores)
 			}
 			if vm.MemGiB > 0 {
 				vmsItem.MemGib = new(vm.MemGiB)
