@@ -212,8 +212,9 @@ tart_config:
   pull_concurrency: 4
   run_options: ["--no-graphics"]
   binary: /opt/homebrew/bin/tart
-  num_cores: 8
+  cores: 8
   mem_gib: 16
+  disk_gib: 100
 `
 	var pc PoolConfig
 	if err := yaml.Unmarshal([]byte(spec), &pc); err != nil {
@@ -247,11 +248,14 @@ tart_config:
 		t.Errorf("pull_concurrency: got %v, want %v", got, want)
 	}
 	// The VMs' resources, which basepool.VMResources defines.
-	if got, want := pc.Tart.NumCores, 8; got != want {
-		t.Errorf("num_cores: got %v, want %v", got, want)
+	if got, want := pc.Tart.Cores, 8; got != want {
+		t.Errorf("cores: got %v, want %v", got, want)
 	}
 	if got, want := pc.Tart.MemGiB, 16; got != want {
 		t.Errorf("mem_gib: got %v, want %v", got, want)
+	}
+	if got, want := pc.Tart.DiskGiB, 100; got != want {
+		t.Errorf("disk_gib: got %v, want %v", got, want)
 	}
 	// The reference is parsed from the image, so the pool's VMs are named
 	// after the image alone whilst tart is given the whole of it.

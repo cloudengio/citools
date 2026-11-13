@@ -60,7 +60,7 @@ notary:
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, undefined, err := loadBundleConfig(t.Context(), bundleFlag(t, path, envFile))
+	cfg, _, undefined, err := loadBundleConfig(t.Context(), bundleFlag(t, path, envFile))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestLoadBundleConfig(t *testing.T) {
 	if err := os.WriteFile(path, []byte("info_plist:\n  CFBundleVersion: \"9.9\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, _, err := loadBundleConfig(t.Context(), bundleFlag(t, path))
+	cfg, _, _, err := loadBundleConfig(t.Context(), bundleFlag(t, path))
 	if err != nil {
 		t.Fatalf("loadBundleConfig: %v", err)
 	}
@@ -165,19 +165,19 @@ func TestLoadBundleConfig(t *testing.T) {
 	}
 
 	// A file that is named and not there is an error, as is there being none.
-	if _, _, err := loadBundleConfig(t.Context(), bundleFlag(t, filepath.Join(t.TempDir(), "absent.yaml"))); err == nil {
+	if _, _, _, err := loadBundleConfig(t.Context(), bundleFlag(t, filepath.Join(t.TempDir(), "absent.yaml"))); err == nil {
 		t.Error("a missing bundle configuration was accepted")
 	}
 	t.Chdir(t.TempDir())
 	t.Setenv("HOME", t.TempDir())
-	if _, _, err := loadBundleConfig(t.Context(), bundleFlag(t)); err == nil {
+	if _, _, _, err := loadBundleConfig(t.Context(), bundleFlag(t)); err == nil {
 		t.Error("no bundle configuration was accepted")
 	}
 	// Unknown fields are rejected.
 	if err := os.WriteFile(path, []byte("bundel: x\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := loadBundleConfig(t.Context(), bundleFlag(t, path)); err == nil {
+	if _, _, _, err := loadBundleConfig(t.Context(), bundleFlag(t, path)); err == nil {
 		t.Error("an unknown field was accepted")
 	}
 }
@@ -189,7 +189,7 @@ func TestShippedBundleConfig(t *testing.T) {
 	if _, err := os.Stat("bundle-builder.yaml"); err != nil {
 		t.Skipf("no bundle-builder.yaml in the tree: %v", err)
 	}
-	cfg, _, err := loadBundleConfig(t.Context(), bundleFlag(t, "bundle-builder.yaml"))
+	cfg, _, _, err := loadBundleConfig(t.Context(), bundleFlag(t, "bundle-builder.yaml"))
 	if err != nil {
 		t.Fatalf("loadBundleConfig: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestBundleConfigPermissions(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, _, err := loadBundleConfig(t.Context(), bundleFlag(t, path))
+	cfg, _, _, err := loadBundleConfig(t.Context(), bundleFlag(t, path))
 	if err != nil {
 		t.Fatalf("loadBundleConfig: %v", err)
 	}
@@ -347,5 +347,34 @@ func TestBuildAppBundleDryRunIcon(t *testing.T) {
 	}
 	if err := buildAppBundle(context.Background(), cfg, info, "orchestrator", false, false, true, false); err != nil {
 		t.Fatalf("buildAppBundle dry run failed: %v", err)
+	}
+}
+
+// TestBundleCommandPrintsConfigFiles verifies that orchestrator bundle prints
+// the configuration and environment variables files it has read.
+func TestBundleCommandPrintsConfigFiles(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "bundle-builder.yaml")
+	envPath := filepath.Join(dir, "bundle-builder.env")
+	if err := os.WriteFile(cfgPath, []byte("info_plist:\n  CFBundleVersion: \"1.0\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(envPath, []byte("SOME_VAR=val\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fv := &BundleFlags{
+		DryRun:     true,
+		AllowDirty: true,
+		Binary:     "some-bin",
+	}
+	if err := fv.Config.Set(cfgPath + "," + envPath); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(func() {
+		cmd := BundleCommand{}
+		_ = cmd.Run(t.Context(), fv, nil)
+	})
+	if want := "config files: " + envPath + ", " + cfgPath; !strings.Contains(out, want) {
+		t.Errorf("output missing %q:\n%s", want, out)
 	}
 }
