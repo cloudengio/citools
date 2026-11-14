@@ -111,6 +111,10 @@ build {
   }
 
   provisioner "shell" {
+    script = "../scripts/cosign.sh"
+  }
+
+  provisioner "shell" {
     script = "scripts/11-tart.sh"
   }
 

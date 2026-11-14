@@ -12,6 +12,16 @@ IMAGE          ?= $(VM_NAME)
 CONCURRENCY       ?= 16
 PULL_CONCURRENCY  ?= 32
 
+# tart refuses to clone over a VM that already exists and tells you to use
+# --overwrite, but the packer plugin never passes that: it has no option for it
+# and does not act on packer's own -force either. So the VM is deleted here
+# before the build clones it. Set OVERWRITE empty to have a rebuild stop
+# instead, leaving the VM that is already there alone.
+OVERWRITE ?= yes
+
+# Extra flags for packer build, eg. -debug or -on-error=ask.
+BUILD_FLAGS ?=
+
 .PHONY: init validate build push clean
 
 init:
@@ -25,7 +35,10 @@ validate: init
 	  build.pkr.hcl
 
 build: init
-	packer build \
+ifneq ($(OVERWRITE),)
+	-tart delete $(VM_NAME) 2>/dev/null
+endif
+	packer build $(BUILD_FLAGS) \
 	  -var "vm_name=$(VM_NAME)" \
 	  -var "base_image=$(BASE_IMAGE)" \
 	  -var "ssh_public_key=$(VM_SSH_PUB_KEY)" \

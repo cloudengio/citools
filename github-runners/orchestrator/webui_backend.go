@@ -19,6 +19,7 @@ import (
 	"cloudeng.io/sync/patterns"
 	"cloudeng.io/vms/vmspool"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/githubclient"
+	"github.com/cloudengio/citools/runners/macos/orchestrator/vmsclient"
 	"github.com/cloudengio/citools/runners/macos/orchestrator/webui"
 )
 
@@ -87,6 +88,24 @@ func strPtr(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// imageVerification renders what a pool reports about its image's signature.
+// A pool that does not verify reports only that, since whether its image is
+// signed is then unknown rather than false.
+func imageVerification(v vmsclient.ImageVerification) *webui.ImageVerification {
+	out := &webui.ImageVerification{Required: v.Required}
+	if !v.Required {
+		return out
+	}
+	signed := v.Signed()
+	out.Signed = &signed
+	out.Signers = new(v.Signers)
+	out.TransparencyLog = new(v.TransparencyLog)
+	out.Verified = strPtr(v.Verified)
+	out.Error = strPtr(v.Err)
+	out.At = timePtr(v.At)
+	return out
 }
 
 func timePtr(t time.Time) *time.Time {
@@ -186,14 +205,15 @@ func (b *webuiBackend) Pools(ctx context.Context) ([]webui.PoolStatus, error) {
 		}
 		runnerDir := poolCfg.RunnerDir()
 		ps := webui.PoolStatus{
-			Name:      p.Name,
-			Kind:      strPtr(p.Kind),
-			Image:     strPtr(p.Image),
-			Size:      p.Size,
-			Available: new(p.Available),
-			Acquired:  new(p.Acquired),
-			Pending:   new(p.Pending),
-			Vms:       make([]webui.VMStatus, 0, len(p.VMs)),
+			Name:         p.Name,
+			Kind:         strPtr(p.Kind),
+			Image:        strPtr(p.Image),
+			Size:         p.Size,
+			Available:    new(p.Available),
+			Acquired:     new(p.Acquired),
+			Pending:      new(p.Pending),
+			Verification: imageVerification(p.Verification),
+			Vms:          make([]webui.VMStatus, 0, len(p.VMs)),
 		}
 		for _, vm := range p.VMs {
 			inCQ := cqVMs[vm.Name]

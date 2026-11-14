@@ -175,6 +175,59 @@ with, which Pools.Status uses to fill in the figures a VM does not report
 for itself.
 
 
+### Type ImageVerification
+```go
+type ImageVerification struct {
+	// Required is true when the pool's configuration requires the image to
+	// carry a signature that satisfies a policy, see TartConfig.Verify.
+	Required bool
+	// Signers is the number of signers that policy trusts and TransparencyLog
+	// whether it requires the signature to be in a transparency log.
+	Signers         int
+	TransparencyLog bool
+	// Verified is the image as it was last accepted, named by the digest that
+	// carried the signature. It is empty until a check succeeds, and empty
+	// again after one fails: it names an image that may be used, so it must
+	// not outlive the last verification that said so.
+	Verified string
+	// Err is why the most recent check failed, empty if it succeeded or if
+	// none has run yet.
+	Err string
+	// At is when the most recent check finished, zero if none has run. A pool
+	// verifies when it creates a VM, so this is also the last time one was
+	// created, or attempted.
+	At time.Time
+}
+```
+ImageVerification is what a pool reports about the signature of the image
+its VMs are created from: whether one is required of it, and what came of
+the most recent check.
+
+Required is the configuration and the rest is history, which is why an
+unverified pool reports nothing else: an image that is never checked is not
+known to be signed, and is not known to be unsigned either.
+
+### Methods
+
+```go
+func (v ImageVerification) Checked() bool
+```
+Checked reports whether any verification has been carried out, which
+distinguishes a pool that has not created a VM yet from one whose image was
+rejected.
+
+
+```go
+func (v ImageVerification) Signed() bool
+```
+Signed reports whether the image was accepted by the most recent check,
+which is the question "is the image this pool clones signed as it must be".
+It is false for a pool that does not verify, and for one that has not
+created a VM yet.
+
+
+
+
 ### Type MockConfig
 ```go
 type MockConfig struct {
@@ -333,6 +386,10 @@ type PoolSnapshot struct {
 	// VMs is the ground truth from the backend: the VMs that exist, whatever
 	// the pool believes about them.
 	VMs []basepool.VMDetail
+	// Verification is what the pool requires of its image's signature, and
+	// what came of the last check, for a backend that verifies one. Its zero
+	// value is a pool that does not, see ImageVerification.
+	Verification ImageVerification
 	// Counters counts the pool's lifecycle events by kind, see
 	// cloudeng.io/vms/vmspool.EventKind.
 	Counters map[string]int
@@ -453,6 +510,7 @@ type TartConfig struct {
 	ociimage.Source      `yaml:",inline"`
 	basepool.VMResources `yaml:",inline"`
 	RunnerDir            string `yaml:"runner_dir" doc:"directory on the VM in which the runner was installed, specific to each type of image."`
+	CosignBinary         string `yaml:"cosign_binary" doc:"the cosign command used to verify the image's signature, when the verify policy asks for one; defaults to cosign as found on PATH."`
 }
 ```
 TartConfig configures the tart VM backend for a pool: how tart itself is

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -213,5 +214,291 @@ func TestPullRemoteOnRunFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "pulling mm-1:5001/linux-ci:latest") {
 		t.Errorf("error %q does not name the image being pulled", err)
+	}
+}
+
+// verifiedDigest is the digest the stub cosign reports having verified.
+const verifiedDigest = "sha256:1b7c4f2e9d0a5c6e8f3b2a1d4c5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e"
+
+// fakeCosign puts a stub cosign on PATH that accepts the image and reports
+// verifiedDigest, or rejects it when accept is false. The returned function
+// reports the arguments of each invocation.
+func fakeCosign(t *testing.T, accept bool) func() []string {
+	t.Helper()
+	dir := t.TempDir()
+	calls := filepath.Join(dir, "calls")
+	payload := `[{"critical":{"image":{"docker-manifest-digest":"` + verifiedDigest + `"}},"optional":{}}]`
+	body := "echo 'Error: no matching signatures' >&2\nexit 1\n"
+	if accept {
+		body = "printf '%s' " + strconv.Quote(payload) + "\nexit 0\n"
+	}
+	script := "#!/bin/sh\necho \"$@\" >> " + strconv.Quote(calls) + "\n" + body
+	if err := os.WriteFile(filepath.Join(dir, "cosign"), []byte(script), 0700); err != nil { //nolint:gosec // test stub must be executable
+		t.Fatalf("writing cosign stub: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return func() []string {
+		buf, err := os.ReadFile(calls)
+		if err != nil {
+			return nil // never invoked
+		}
+		return strings.Split(strings.TrimSpace(string(buf)), "\n")
+	}
+}
+
+// tartVerified returns the configuration of a tart pool that requires the
+// image to be signed by the key held in the configuration itself.
+func tartVerified(image string) TartConfig {
+	cfg := tartImage(image)
+	cfg.Verify = &ociimage.Policy{Signers: []ociimage.Signer{{Key: "/keys/ci.pub"}}}
+	return cfg
+}
+
+// TestVerifiedCloneSource verifies that a pool with a verification policy
+// clones the digest that was verified rather than the tag it was configured
+// with: a tag can be moved between verifying it and cloning it.
+func TestVerifiedCloneSource(t *testing.T) {
+	tartCalls := fakeTart(t, 0)
+	cosignCalls := fakeCosign(t, true)
+	p := tartBackendFor(t, "linux", tartVerified("mm-1:5001/linux-ci:latest"))
+
+	inst, err := p.New(context.Background())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := inst.Clone(context.Background()); err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+	// The signature is verified by the configured key, once.
+	got := cosignCalls()
+	want := "verify --output json --key /keys/ci.pub --insecure-ignore-tlog=true mm-1:5001/linux-ci:latest"
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("cosign invocations: got %v, want [%v]", got, want)
+	}
+	// What is cloned is the digest, without the tag.
+	got = tartCalls()
+	want = "clone mm-1:5001/linux-ci@" + verifiedDigest + " " + inst.ID()
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("tart invocations: got %v, want [%v]", got, want)
+	}
+}
+
+// TestVerifiedCloneRejected verifies that an image whose signature is not
+// accepted is never cloned, so that a pool configured to verify cannot run a
+// VM from an unverified image.
+func TestVerifiedCloneRejected(t *testing.T) {
+	tartCalls := fakeTart(t, 0)
+	fakeCosign(t, false)
+	p := tartBackendFor(t, "linux", tartVerified("mm-1:5001/linux-ci:latest"))
+
+	inst, err := p.New(context.Background())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	err = inst.Clone(context.Background())
+	if err == nil {
+		t.Fatal("Clone: got nil error, want the rejected signature to be reported")
+	}
+	if !errors.Is(err, ociimage.ErrNotVerified) {
+		t.Errorf("Clone: got %v, want ErrNotVerified", err)
+	}
+	if got := tartCalls(); got != nil {
+		t.Errorf("tart was run for an image that was not verified: %v", got)
+	}
+}
+
+// TestVerifiedPull verifies that a pool that both pulls and verifies verifies
+// before pulling, pulls the digest that was verified rather than the tag, and
+// clones that digest without verifying a second time. A verification is quick
+// next to a pull, so an image that is not acceptable costs nothing to reject.
+func TestVerifiedPull(t *testing.T) {
+	tartCalls := fakeTart(t, 0)
+	cosignCalls := fakeCosign(t, true)
+	cfg := tartVerified("mm-1:5001/linux-ci:latest")
+	cfg.PullRemoteOnRun = true
+	p := tartBackendFor(t, "linux", cfg)
+
+	inst, err := p.New(context.Background())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := inst.Clone(context.Background()); err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+	// The tag is what is verified, since that is what the pool configures.
+	got := cosignCalls()
+	want := "verify --output json --key /keys/ci.pub --insecure-ignore-tlog=true mm-1:5001/linux-ci:latest"
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("cosign invocations: got %v, want [%v]", got, want)
+	}
+	// Both the pull and the clone name the digest that carries the signature.
+	pinned := "mm-1:5001/linux-ci@" + verifiedDigest
+	if got, want := tartCalls(), []string{"pull " + pinned, "clone " + pinned + " " + inst.ID()}; !slices.Equal(got, want) {
+		t.Errorf("tart invocations: got %v, want %v", got, want)
+	}
+}
+
+// TestVerifiedPullRejected verifies that an image whose signature is not
+// accepted is not pulled at all, rather than being fetched and then refused.
+func TestVerifiedPullRejected(t *testing.T) {
+	tartCalls := fakeTart(t, 0)
+	fakeCosign(t, false)
+	cfg := tartVerified("mm-1:5001/linux-ci:latest")
+	cfg.PullRemoteOnRun = true
+	p := tartBackendFor(t, "linux", cfg)
+
+	inst, err := p.New(context.Background())
+	if err == nil {
+		t.Fatal("New: got nil error, want the rejected signature to be reported")
+	}
+	if !errors.Is(err, ociimage.ErrNotVerified) {
+		t.Errorf("New: got %v, want ErrNotVerified", err)
+	}
+	if inst != nil {
+		t.Error("New returned an instance alongside the error")
+	}
+	if got := tartCalls(); got != nil {
+		t.Errorf("tart was run for an image that was not verified: %v", got)
+	}
+}
+
+// TestVerifiedNotConfigured verifies that a pool without a policy verifies
+// nothing: cosign is not run and the configured reference is cloned.
+func TestVerifiedNotConfigured(t *testing.T) {
+	tartCalls := fakeTart(t, 0)
+	cosignCalls := fakeCosign(t, true)
+	p := tartBackendFor(t, "linux", tartImage("mm-1:5001/linux-ci:latest"))
+
+	inst, err := p.New(context.Background())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := inst.Clone(context.Background()); err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+	if got := cosignCalls(); got != nil {
+		t.Errorf("cosign was run for a pool that does not verify: %v", got)
+	}
+	got := tartCalls()
+	want := "clone mm-1:5001/linux-ci:latest " + inst.ID()
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("tart invocations: got %v, want [%v]", got, want)
+	}
+}
+
+// TestImageVerificationReported covers what a pool reports about its image's
+// signature: that a signature is required of it, and what the last check
+// decided, which is how a running orchestrator shows whether the image it is
+// cloning is signed.
+func TestImageVerificationReported(t *testing.T) {
+	fakeTart(t, 0)
+	cosignCalls := fakeCosign(t, true)
+	p := tartBackendFor(t, "linux", tartVerified("mm-1:5001/linux-ci:latest"))
+
+	// The policy is reported before anything has been verified, since it is
+	// configuration rather than history.
+	got := p.ImageVerification()
+	if !got.Required || got.Signers != 1 || got.TransparencyLog {
+		t.Errorf("before any check: %+v", got)
+	}
+	if got.Checked() || got.Signed() || got.Verified != "" {
+		t.Errorf("a check was reported before one ran: %+v", got)
+	}
+
+	inst, err := p.New(context.Background())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := inst.Clone(context.Background()); err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+	got = p.ImageVerification()
+	if !got.Signed() || !got.Checked() {
+		t.Errorf("after a successful clone: %+v", got)
+	}
+	// What is reported is the digest that carried the signature, not the tag.
+	if want := "mm-1:5001/linux-ci:latest@" + verifiedDigest; got.Verified != want {
+		t.Errorf("verified: got %q, want %q", got.Verified, want)
+	}
+	if got.Err != "" {
+		t.Errorf("an error was reported for an image that was accepted: %v", got.Err)
+	}
+	if len(cosignCalls()) != 1 {
+		t.Errorf("cosign ran %v times, want once: reporting must not verify again", len(cosignCalls()))
+	}
+}
+
+// TestImageVerificationRejected covers a pool whose image is not signed as it
+// must be: the failure is reported, and no digest is left behind to suggest
+// the image may be used.
+func TestImageVerificationRejected(t *testing.T) {
+	fakeTart(t, 0)
+	fakeCosign(t, false)
+	p := tartBackendFor(t, "linux", tartVerified("mm-1:5001/linux-ci:latest"))
+
+	inst, err := p.New(context.Background())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := inst.Clone(context.Background()); err == nil {
+		t.Fatal("Clone succeeded for an image that was not verified")
+	}
+	got := p.ImageVerification()
+	if !got.Required || !got.Checked() {
+		t.Errorf("%+v", got)
+	}
+	if got.Signed() || got.Verified != "" {
+		t.Errorf("a rejected image was reported as signed: %+v", got)
+	}
+	if !strings.Contains(got.Err, "not verified") {
+		t.Errorf("the reported error does not say what happened: %q", got.Err)
+	}
+}
+
+// TestImageVerificationNotConfigured covers a pool that verifies nothing: it
+// says so, rather than claiming the image is unsigned, which is not something
+// it has any way of knowing.
+func TestImageVerificationNotConfigured(t *testing.T) {
+	p := tartBackendFor(t, "linux", tartImage("mm-1:5001/linux-ci:latest"))
+	got := p.ImageVerification()
+	if got.Required || got.Signed() || got.Checked() || got.Err != "" {
+		t.Errorf("%+v", got)
+	}
+}
+
+// TestValidateVerify covers the configurations that a verification policy
+// makes invalid, which are reported when the configuration file is read rather
+// than when the first VM fails to be created.
+func TestValidateVerify(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  TartConfig
+		want string
+	}{
+		{"no signers", func() TartConfig {
+			cfg := tartImage("mm-1:5001/linux-ci:latest")
+			cfg.Verify = &ociimage.Policy{}
+			return cfg
+		}(), "at least one signer"},
+		// A local image is held by no registry, so nothing holds a signature
+		// for it and no policy can ever be satisfied.
+		{"local image", tartVerified("linux-ci"), "names no registry"},
+		{"signer with neither key nor identity", func() TartConfig {
+			cfg := tartImage("mm-1:5001/linux-ci:latest")
+			cfg.Verify = &ociimage.Policy{Signers: []ociimage.Signer{{}}}
+			return cfg
+		}(), "needs a key"},
+	} {
+		err := tc.cfg.Validate()
+		if err == nil {
+			t.Errorf("%v: Validate succeeded", tc.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%v: got %v, want it to mention %q", tc.name, err, tc.want)
+		}
+		if !strings.Contains(err.Error(), "tart_config") {
+			t.Errorf("%v: the error does not say which section it is about: %v", tc.name, err)
+		}
 	}
 }
