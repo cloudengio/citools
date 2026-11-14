@@ -8,16 +8,17 @@ require (
 	cloudeng.io/errors v0.0.14-0.20260312171538-61fcde6ce278
 	cloudeng.io/file v0.0.0-20261112002641-3f0b5fb85a24
 	cloudeng.io/logging v0.0.0-20261112002641-3f0b5fb85a24
-	cloudeng.io/macos v0.0.0-20261113044148-fc3a06275300
+	cloudeng.io/macos v0.0.0-20261114001618-7acf5e24c602
 	cloudeng.io/net v0.0.0-20261026191912-bcd1dece5d6c
 	cloudeng.io/os v0.0.0-20261112002641-3f0b5fb85a24
 	cloudeng.io/sync v0.0.12-0.20261112002641-3f0b5fb85a24
 	cloudeng.io/text v0.0.16-0.20260624171915-da98fe9dec2b
-	cloudeng.io/vms v0.0.0-20261113043037-ff1d166f20de
+	cloudeng.io/vms v0.0.0-20261113223917-0169958b35e4
 	cloudeng.io/webapi/clients/github v0.0.0-20261019151527-b728423ca3bc
 	cloudeng.io/webapi/operations v0.0.0-20261019151527-b728423ca3bc
 	cloudeng.io/webapp v0.0.0-20261020175408-a837605012e7
 	github.com/getkin/kin-openapi v0.152.0
+	github.com/google/go-containerregistry v0.22.1
 	github.com/google/go-github/v89 v89.0.0
 	github.com/lestrrat-go/jwx/v3 v3.4.0
 	github.com/oapi-codegen/runtime v1.8.0
@@ -39,12 +40,15 @@ require (
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/cloudengio/go-keychain v0.0.0-20261014235732-bd9bcf9f8cd6 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
+	github.com/docker/cli v29.7.2+incompatible // indirect
+	github.com/docker/docker-credential-helpers v0.9.3 // indirect
 	github.com/dprotaso/go-yit v0.0.0-20220510233725-9ba8df137936 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/go-openapi/jsonpointer v1.0.2 // indirect
 	github.com/goccy/go-json v0.11.2 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/lestrrat-go/blackmagic v1.0.4 // indirect
 	github.com/lestrrat-go/dsig v1.4.0 // indirect
 	github.com/lestrrat-go/dsig-secp256k1 v1.0.0 // indirect
@@ -54,8 +58,11 @@ require (
 	github.com/oapi-codegen/oapi-codegen/v2 v2.8.0 // indirect
 	github.com/oasdiff/yaml v0.1.3 // indirect
 	github.com/oasdiff/yaml3 v0.0.16 // indirect
+	github.com/opencontainers/go-digest v1.0.0 // indirect
+	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
+	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/speakeasy-api/jsonpath v0.6.3 // indirect
 	github.com/speakeasy-api/openapi v1.24.0 // indirect
 	github.com/valyala/fastjson v1.6.10 // indirect
@@ -68,6 +75,7 @@ require (
 	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/tools v0.52.0 // indirect
+	gotest.tools/v3 v3.5.2 // indirect
 )
 
 tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen

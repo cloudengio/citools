@@ -3,7 +3,20 @@ import { refreshPool, type PoolStatus, type VMStatus } from '../api/client'
 import { Badge } from './Badge'
 import { fmtTime } from '../format'
 
-function VMPopup({ vm }: { vm: VMStatus }) {
+type ImageVerification = NonNullable<PoolStatus['verification']>
+
+// signatureLabel describes what is known about the signature of a pool's
+// image: whether one is required at all, and what the last check decided. A
+// pool that does not verify is reported as such rather than as unsigned, which
+// is not something it has any way of knowing.
+function signatureLabel(v?: ImageVerification): { text: string; kind: string } {
+  if (!v?.required) return { text: 'no verification', kind: 'unknown' }
+  if (v.signed) return { text: 'signed', kind: 'signed' }
+  if (v.error) return { text: 'unverified', kind: 'unsigned' }
+  return { text: 'unchecked', kind: 'unchecked' }
+}
+
+function VMPopup({ vm, verification }: { vm: VMStatus; verification?: ImageVerification }) {
   return (
     <div className="hover-menu-wrapper" tabIndex={0} aria-label={`Configuration for ${vm.name ?? vm.id}`}>
       <span className="chip sm chip-interactive" title="View VM configuration">
@@ -44,6 +57,26 @@ function VMPopup({ vm }: { vm: VMStatus }) {
               <span className="mono">{vm.image}</span>
             </>
           )}
+          <span className="muted">Signature</span>
+          <span className="mono">
+            {verification?.required
+              ? `${signatureLabel(verification).text}${
+                  verification.signers ? ` (${verification.signers} trusted signer(s))` : ''
+                }`
+              : 'verification disabled'}
+          </span>
+          {verification?.verified && (
+            <>
+              <span className="muted">Verified</span>
+              <span className="mono">{verification.verified}</span>
+            </>
+          )}
+          {verification?.error && (
+            <>
+              <span className="muted">Verify Error</span>
+              <span className="mono">{verification.error}</span>
+            </>
+          )}
           {vm.runner_dir && (
             <>
               <span className="muted">Runner Dir</span>
@@ -62,14 +95,14 @@ function VMPopup({ vm }: { vm: VMStatus }) {
   )
 }
 
-function VMRow({ vm }: { vm: VMStatus }) {
+function VMRow({ vm, verification }: { vm: VMStatus; verification?: ImageVerification }) {
   const isCQ = vm.location === 'completion_queue' || vm.state === 'completion_queue'
   return (
     <tr>
       <td className="mono">
         <div className="vm-name-cell">
           <span>{vm.name ?? vm.id}</span>
-          <VMPopup vm={vm} />
+          <VMPopup vm={vm} verification={verification} />
         </div>
       </td>
       <td>
@@ -126,6 +159,20 @@ function Pool({ pool, onRefresh }: { pool: PoolStatus; onRefresh?: () => Promise
         <h3>{pool.name}</h3>
         {pool.kind && <span className="chip">{pool.kind}</span>}
         <span className="muted mono">{pool.image ?? ''}</span>
+        <span
+          className={`badge badge-${signatureLabel(pool.verification).kind}`}
+          title={
+            pool.verification?.required
+              ? pool.verification.error
+                ? `Signature not verified: ${pool.verification.error}`
+                : pool.verification.verified
+                  ? `Verified ${pool.verification.verified}`
+                  : 'No VM has been created yet, so the signature has not been checked'
+              : 'This pool does not require the image to be signed'
+          }
+        >
+          {signatureLabel(pool.verification).text}
+        </span>
         <button
           className="btn btn-sm btn-replace-vms"
           onClick={handleReplace}
@@ -161,7 +208,9 @@ function Pool({ pool, onRefresh }: { pool: PoolStatus; onRefresh?: () => Promise
             </tr>
           </thead>
           <tbody>
-            {sortedVMs.map((vm) => <VMRow key={vm.id} vm={vm} />)}
+            {sortedVMs.map((vm) => (
+              <VMRow key={vm.id} vm={vm} verification={pool.verification} />
+            ))}
           </tbody>
         </table>
       )}

@@ -48,6 +48,21 @@ global:
   failed_vm_retention_period: 1h
   successful_vm_retention_period: 15m
 
+# The signature a pool's image has to carry, as made by github-runners/cosign.mk
+# and read by the cosignverify package. The key is the public half, so it
+# belongs in this file; "make cosign-pub-key" in github-runners/{macos,linux}
+# prints it. A pool that verifies needs an image in a registry, since a local
+# image has nowhere to keep a signature.
+image_verification: &image_verification
+  cosign_binary: /opt/homebrew/bin/cosign   # optional, defaults to cosign on PATH
+  verify:
+    signers:
+      - key: |
+          -----BEGIN PUBLIC KEY-----
+          MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECSFFjrcY0qEQPcZHYZCNpgxWZqv3
+          8fAICZMn9VfyZvhuPDOF2QYyL6oPnGBswPGnnq5YT/Gd9bvR1807MYs/kQ==
+          -----END PUBLIC KEY-----
+
 vm_pools:
   macos:
     size: 2
@@ -55,8 +70,10 @@ vm_pools:
     tart_config:
       os: macos
       runner_dir: /Users/admin/actions-runner
-      image: macos-ci
+      image: mm-1:5001/macos-ci:latest
+      pull_insecure: true
       binary: /opt/homebrew/bin/tart
+      <<: *image_verification
 
   linux:
     size: 2
@@ -64,9 +81,11 @@ vm_pools:
     tart_config:
       os: linux
       runner_dir: "/home/admin/actions-runner"
-      image: linux-ci
+      image: mm-1:5001/linux-ci:latest
+      pull_insecure: true
       run_options: ["--no-graphics", "--no-audio", "--nested"]
       binary: /opt/homebrew/bin/tart
+      <<: *image_verification
 
 icloud_keychain:
   keychain_type: all

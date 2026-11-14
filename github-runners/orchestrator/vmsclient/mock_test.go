@@ -212,9 +212,18 @@ tart_config:
   pull_concurrency: 4
   run_options: ["--no-graphics"]
   binary: /opt/homebrew/bin/tart
+  cosign_binary: /opt/homebrew/bin/cosign
   cores: 8
   mem_gib: 16
   disk_gib: 100
+  verify:
+    signers:
+      - key: |
+          -----BEGIN PUBLIC KEY-----
+          MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEtest
+          -----END PUBLIC KEY-----
+    annotations:
+      tier: trusted
 `
 	var pc PoolConfig
 	if err := yaml.Unmarshal([]byte(spec), &pc); err != nil {
@@ -256,6 +265,24 @@ tart_config:
 	}
 	if got, want := pc.Tart.DiskGiB, 100; got != want {
 		t.Errorf("disk_gib: got %v, want %v", got, want)
+	}
+	// The signature policy, which ociimage.Source defines. The public key is
+	// carried in the configuration itself, so that there is no key file to
+	// distribute to the hosts that verify.
+	if pc.Tart.Verify == nil {
+		t.Fatal("verify was not decoded")
+	}
+	if got, want := len(pc.Tart.Verify.Signers), 1; got != want {
+		t.Fatalf("signers: got %v, want %v", got, want)
+	}
+	if got, want := pc.Tart.Verify.Signers[0].Key, "-----BEGIN PUBLIC KEY-----"; !strings.HasPrefix(got, want) {
+		t.Errorf("key: got %q, want it to start with %q", got, want)
+	}
+	if got, want := pc.Tart.Verify.Annotations["tier"], "trusted"; got != want {
+		t.Errorf("annotations: got %v, want %v", got, want)
+	}
+	if got, want := pc.Tart.CosignBinary, "/opt/homebrew/bin/cosign"; got != want {
+		t.Errorf("cosign_binary: got %v, want %v", got, want)
 	}
 	// The reference is parsed from the image, so the pool's VMs are named
 	// after the image alone whilst tart is given the whole of it.

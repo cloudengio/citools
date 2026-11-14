@@ -12,22 +12,23 @@ set -euo pipefail
 # Homebrew is installed by 01-homebrew.sh; make it available in this session.
 eval "$(/opt/homebrew/bin/brew shellenv)"
 
+# The tap that publishes tart. It moved from cirruslabs/cli to openai/tools
+# when tart moved to github.com/openai/tart: the old formula now redirects to
+# this one, so installing from the old tap fails on the new tap's trust.
+TART_TAP="${TART_TAP:-openai/tools}"
+
 if command -v tart >/dev/null 2>&1; then
   echo "==> tart already installed: $(tart --version)"
 else
-  echo "==> Installing tart via Homebrew"
-  # Newer Homebrew enforces tap trust. tart pulls in the softnet formula from the
-  # same cirruslabs/cli tap, which isn't auto-trusted, so trust the tap first or
-  # `brew install` aborts refusing to load softnet.
-  brew tap cirruslabs/cli
-  brew trust cirruslabs/cli
-  # Newer Homebrew versions disallow the legacy `depends_on :macos => :<version>` syntax.
-  # Remove deprecated macos version constraints from tapped formulas in cirruslabs/cli.
-  tap_dir="$(brew --prefix)/Library/Taps/cirruslabs/homebrew-cli"
-  if [ -d "$tap_dir" ]; then
-    sed -i '' '/depends_on :macos =>/d' "$tap_dir"/*.rb
+  echo "==> Installing tart from ${TART_TAP} via Homebrew"
+  brew tap "${TART_TAP}"
+  # Homebrew will not load a formula from a tap that is not official unless the
+  # tap is trusted. The whole tap is trusted rather than the formula alone,
+  # since tart depends on softnet from the same tap and that has to load too.
+  if brew trust --help >/dev/null 2>&1; then
+    brew trust "${TART_TAP}"
   fi
-  brew install cirruslabs/cli/tart
+  brew install "${TART_TAP}/tart"
 fi
 
 echo "==> tart version: $(tart --version)"
