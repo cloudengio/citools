@@ -1,0 +1,36 @@
+--- Overview
+Tart pools can now be set to accept only images signed with cosign. The verifier runs the cosign CLI, and the web UI shows each pool's signature status.
+
+--- Key Changes
+  * cosignverify (new package)
+    * Implements ociimage.Verifier by running cosign verify once for each trusted signer. The image is accepted as soon as one signer accepts it.
+    * Returns the verified digest, so callers use that exact image rather than the tag.
+    * Accepts keys as an inline PEM (written to a temp file that is removed afterwards), a path (with ~ expanded), a URL or a KMS URI. Also supports keyless identities, by exact value or regexp.
+    * Maps policy settings to cosign flags: annotations (sorted), --insecure-ignore-tlog when no transparency log is required, and insecure/HTTP registry flags.
+    * Classifies failures from cosign's stderr:
+      * Unsigned images return ErrNotVerified and ErrUnsigned.
+      * Network, TLS and auth errors are infrastructure errors, not ErrNotVerified.
+      * Any other failure is treated as a rejection, so the next signer is still tried if cosign rewords its messages.
+    * Cancelled runs report the context error, and WaitDelay stops a cancelled cosign from hanging.
+    * Unit tests use a stub cosign. Integration tests run the real cosign (skipped if it isn't installed) against an in-process registry.
+  * internal/testregistry (new package)
+    * Runs an in-memory OCI registry over loopback HTTP using go-containerregistry. It can push random images, and has options for the referrers API and logging.
+  * vmsclient
+    * Adds TartConfig.CosignBinary. When verify is set, Validate checks the policy through ociimage.Source.Validate, which rejects local images that name no registry.
+    * When pulling, the tart backend calls ociimage.PullVerified, which checks the signature before anything is fetched and then pulls and clones the verified digest. When not pulling, it verifies at clone time via tartvm.WithVerification.
+    * A new recordingVerifier keeps the result of the last check. It is reported as ImageVerification (Required, Signers, TransparencyLog, Verified, Err, At) in PoolSnapshot.Verification, and it looks through CachingProvider to find the backend.
+  * webui
+    * OpenAPI: adds an ImageVerification schema and a PoolStatus.verification field. The backend fills only required for pools that don't verify.
+    * Frontend: a signature badge on each pool (signed, unverified, unchecked or no verification), plus signature, verified digest and error details in the VM popup.
+    * Rebuilt dist assets, and bumped brace-expansion, source-map-js and vite in the lockfile.
+  * config.yaml
+    * Adds a shared image_verification anchor containing an inline public key and the cosign binary path.
+    * The macOS and Linux pools now use mm-1:5001/*-ci:latest with pull_insecure: true and verification turned on.
+    * Adds the go.aws, go.google and idu repositories.
+  * Dependencies: bumps cloudeng.io/macos and cloudeng.io/vms, and adds github.com/google/go-containerregistry.
+
+--- Breaking Changes
+  * Pools that verify need cosign installed on the host and an image in a registry; a local image name fails validation.
+  * The example config has moved from local images (macos-ci, linux-ci) to registry references.
+
+ Generated with Claude Code (https://claude.com/claude-code)
