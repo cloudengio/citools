@@ -103,6 +103,10 @@ build {
   }
 
   provisioner "shell" {
+    script = "../scripts/cosign.sh"
+  }
+
+  provisioner "shell" {
     script = "scripts/09-docker.sh"
   }
 

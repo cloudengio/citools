@@ -327,7 +327,28 @@ export interface components {
             acquired?: number;
             /** @description Number of VMs being created or replenished in the pool. */
             pending?: number;
+            verification?: components["schemas"]["ImageVerification"];
             vms: components["schemas"]["VMStatus"][];
+        };
+        /** @description What the pool requires of its image's signature, and what came of the most recent check. A pool that does not verify reports required=false and nothing else: an image that is never checked is not known to be signed, nor known to be unsigned. */
+        ImageVerification: {
+            /** @description Whether the image must carry a signature that satisfies the pool's policy. */
+            required: boolean;
+            /** @description Whether the most recent check accepted the image. */
+            signed?: boolean;
+            /** @description How many signers the policy trusts; an image is accepted if any one of them signed it. */
+            signers?: number;
+            /** @description Whether the policy requires the signature to be recorded in a transparency log. */
+            transparency_log?: boolean;
+            /** @description The image as it was last accepted, named by the digest that carried the signature. Empty until a check succeeds, and empty again after one fails. */
+            verified?: string;
+            /** @description Why the most recent check failed, empty if it succeeded or has not run. */
+            error?: string;
+            /**
+             * Format: date-time
+             * @description When the most recent check finished, absent if none has run.
+             */
+            at?: string;
         };
         VMStatus: {
             id: string;

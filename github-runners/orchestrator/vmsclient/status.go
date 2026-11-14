@@ -35,6 +35,10 @@ type PoolSnapshot struct {
 	// VMs is the ground truth from the backend: the VMs that exist, whatever
 	// the pool believes about them.
 	VMs []basepool.VMDetail
+	// Verification is what the pool requires of its image's signature, and
+	// what came of the last check, for a backend that verifies one. Its zero
+	// value is a pool that does not, see ImageVerification.
+	Verification ImageVerification
 	// Counters counts the pool's lifecycle events by kind, see
 	// cloudeng.io/vms/vmspool.EventKind.
 	Counters map[string]int
@@ -106,15 +110,16 @@ func GetSnapshot(ctx context.Context, pool *basepool.Pool) (PoolSnapshot, []stri
 	}
 	stats := pool.Stats()
 	return PoolSnapshot{
-		Name:       pool.Name(),
-		Kind:       provider.Name(),
-		Image:      imageOf(provider).String(),
-		Size:       pool.Size(),
-		Available:  stats.Available,
-		Acquired:   stats.Acquired,
-		Pending:    stats.Pending,
-		Completing: completing,
-		VMs:        vms,
+		Name:         pool.Name(),
+		Kind:         provider.Name(),
+		Image:        imageOf(provider).String(),
+		Verification: verificationOf(provider),
+		Size:         pool.Size(),
+		Available:    stats.Available,
+		Acquired:     stats.Acquired,
+		Pending:      stats.Pending,
+		Completing:   completing,
+		VMs:          vms,
 	}, failed, err
 }
 

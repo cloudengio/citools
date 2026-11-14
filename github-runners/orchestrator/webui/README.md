@@ -582,6 +582,37 @@ type GlobalConfigSummary struct {
 GlobalConfigSummary defines model for GlobalConfigSummary.
 
 
+### Type ImageVerification
+```go
+type ImageVerification struct {
+	// At When the most recent check finished, absent if none has run.
+	At *time.Time `json:"at,omitempty"`
+
+	// Error Why the most recent check failed, empty if it succeeded or has not run.
+	Error *string `json:"error,omitempty"`
+
+	// Required Whether the image must carry a signature that satisfies the pool's policy.
+	Required bool `json:"required"`
+
+	// Signed Whether the most recent check accepted the image.
+	Signed *bool `json:"signed,omitempty"`
+
+	// Signers How many signers the policy trusts; an image is accepted if any one of them signed it.
+	Signers *int `json:"signers,omitempty"`
+
+	// TransparencyLog Whether the policy requires the signature to be recorded in a transparency log.
+	TransparencyLog *bool `json:"transparency_log,omitempty"`
+
+	// Verified The image as it was last accepted, named by the digest that carried the signature. Empty until a check succeeds, and empty again after one fails.
+	Verified *string `json:"verified,omitempty"`
+}
+```
+ImageVerification What the pool requires of its image's signature,
+and what came of the most recent check. A pool that does not verify reports
+required=false and nothing else: an image that is never checked is not known
+to be signed, nor known to be unsigned.
+
+
 ### Type InvalidParamFormatError
 ```go
 type InvalidParamFormatError struct {
@@ -770,8 +801,11 @@ type PoolStatus struct {
 	Pending *int `json:"pending,omitempty"`
 
 	// Size Configured pool size (target number of warm VMs).
-	Size int        `json:"size"`
-	Vms  []VMStatus `json:"vms"`
+	Size int `json:"size"`
+
+	// Verification What the pool requires of its image's signature, and what came of the most recent check. A pool that does not verify reports required=false and nothing else: an image that is never checked is not known to be signed, nor known to be unsigned.
+	Verification *ImageVerification `json:"verification,omitempty"`
+	Vms          []VMStatus         `json:"vms"`
 }
 ```
 PoolStatus defines model for PoolStatus.

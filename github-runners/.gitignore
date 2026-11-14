@@ -7,3 +7,4 @@ orchestrator/orchestrator-launcher
 chrome-for-testing/chrome-for-testing
 linux/runner-env
 macos/runner-env
+cosign-signing-config.json

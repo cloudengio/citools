@@ -448,10 +448,46 @@ components:
         pending:
           type: integer
           description: Number of VMs being created or replenished in the pool.
+        verification:
+          $ref: "#/components/schemas/ImageVerification"
         vms:
           type: array
           items:
             $ref: "#/components/schemas/VMStatus"
+    ImageVerification:
+      type: object
+      description: >-
+        What the pool requires of its image's signature, and what came of the
+        most recent check. A pool that does not verify reports required=false
+        and nothing else: an image that is never checked is not known to be
+        signed, nor known to be unsigned.
+      required: [required]
+      properties:
+        required:
+          type: boolean
+          description: Whether the image must carry a signature that satisfies the pool's policy.
+        signed:
+          type: boolean
+          description: Whether the most recent check accepted the image.
+        signers:
+          type: integer
+          description: How many signers the policy trusts; an image is accepted if any one of them signed it.
+        transparency_log:
+          type: boolean
+          description: Whether the policy requires the signature to be recorded in a transparency log.
+        verified:
+          type: string
+          description: >-
+            The image as it was last accepted, named by the digest that carried
+            the signature. Empty until a check succeeds, and empty again after
+            one fails.
+        error:
+          type: string
+          description: Why the most recent check failed, empty if it succeeded or has not run.
+        at:
+          type: string
+          format: date-time
+          description: When the most recent check finished, absent if none has run.
     VMStatus:
       type: object
       required: [id, state]
