@@ -131,6 +131,12 @@ repositories:
     <<: *cloudeng_repos
   - repo: "go.linux"
     <<: *cloudeng_repos
+  - repo: "go.aws"
+    <<: *cloudeng_repos
+  - repo: "go.google"
+    <<: *cloudeng_repos
+  - repo: "idu"
+    <<: *cloudeng_repos
   - repo: "citools"
     <<: *cloudeng_repos
   - owner: "onyourbehalf"
