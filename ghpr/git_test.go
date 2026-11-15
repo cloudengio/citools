@@ -312,6 +312,28 @@ func TestGitRewriteHelpers(t *testing.T) {
 	run.assertNoUnexpected()
 }
 
+func TestGitNotesListAndLogSubjects(t *testing.T) {
+	run := newFakeRunner(t).
+		expect("git notes list", "note1 sha2\nnote2 sha1\n", nil).
+		expect("git log --format=%H%x09%s HEAD", "sha3\tthird\nsha2\tsecond\nsha1\tfirst\n", nil)
+
+	g := NewGit(run)
+	noted := must(g.NotesList(t.Context()))
+	if len(noted) != 2 || !noted["sha1"] || !noted["sha2"] {
+		t.Errorf("NotesList = %v", noted)
+	}
+	commits := must(g.LogSubjects(t.Context(), "HEAD"))
+	want := []CommitSummary{
+		{SHA: "sha3", Subject: "third"},
+		{SHA: "sha2", Subject: "second"},
+		{SHA: "sha1", Subject: "first"},
+	}
+	if !slices.Equal(commits, want) {
+		t.Errorf("LogSubjects = %v, want %v", commits, want)
+	}
+	run.assertNoUnexpected()
+}
+
 // must returns the value of a call that this test requires to succeed. It
 // takes exactly the two results of such a call, so that it can be written as
 // must(g.CurrentBranch(ctx)); a panic in a test is reported as a failure, and

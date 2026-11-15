@@ -586,6 +586,31 @@ func (a *App) rewriteCommits(ctx context.Context, commits []string, targetCommit
 	return newHead, nil
 }
 
+// ListCommitsWithNotes prints every commit reachable from rev (defaulting to
+// HEAD) that has a git note, ordered from newest to oldest.
+func (a *App) ListCommitsWithNotes(ctx context.Context, rev string) error {
+	if rev == "" {
+		rev = "HEAD"
+	}
+	noted, err := a.Git.NotesList(ctx)
+	if err != nil {
+		return err
+	}
+	if len(noted) == 0 {
+		return nil
+	}
+	commits, err := a.Git.LogSubjects(ctx, rev)
+	if err != nil {
+		return err
+	}
+	for _, c := range commits {
+		if noted[c.SHA] {
+			a.printf("%s %s\n", c.SHA, c.Subject)
+		}
+	}
+	return nil
+}
+
 // shortSHA abbreviates a hash for a message, leaving anything that is not one
 // alone.
 func shortSHA(sha string) string {
