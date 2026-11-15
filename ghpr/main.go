@@ -60,6 +60,10 @@ commands:
     summary: rewrite history from a commit onward to replace its commit body with its git note
     args:
       - "<rev> - the commit whose git note will be written into its commit message"
+  - name: list-commits-with-notes
+    summary: list commits that have git notes, newest first, as candidates for write-notes-as-commits
+    args:
+      - "[<rev>] - revision or range to inspect; defaults to HEAD"
   {{range subcmdExtension "config"}}{{.}}
   {{end}}
 `
@@ -121,6 +125,9 @@ type PostNoteFlags struct {
 type WriteNotesFlags struct {
 	Push bool `subcmd:"push,false,push the rewritten branch to origin with --force-with-lease"`
 }
+
+// ListCommitsWithNotesFlags are the flags for list-commits-with-notes.
+type ListCommitsWithNotesFlags struct{}
 
 // UpdateFlags are the flags for update-summary.
 type UpdateFlags struct {
@@ -278,6 +285,17 @@ func writeNotesAsCommits(ctx context.Context, flags any, args []string) error {
 	return newApp(ctx).WriteNotesAsCommits(ctx, args[0], wf.Push)
 }
 
+func listCommitsWithNotes(ctx context.Context, _ any, args []string) error {
+	if len(args) > 1 {
+		return fmt.Errorf("list-commits-with-notes takes at most one revision or range")
+	}
+	var rev string
+	if len(args) == 1 {
+		rev = args[0]
+	}
+	return newApp(ctx).ListCommitsWithNotes(ctx, rev)
+}
+
 func createCLI() *subcmd.CommandSetYAML {
 	configCmds := cmdconfig.ConfigCommands[Config]{Summary: "root configuration options\n"}
 	cmdSet := subcmd.MustFromYAMLTemplate(cmdSpec, cmdconfig.ConfigExtension(configCmds))
@@ -292,6 +310,8 @@ func createCLI() *subcmd.CommandSetYAML {
 	cmdSet.Set("post-note").MustSetPreHooks(configPrehook)
 	cmdSet.Set("write-notes-as-commits").MustRunner(writeNotesAsCommits, &WriteNotesFlags{})
 	cmdSet.Set("write-notes-as-commits").MustSetPreHooks(configPrehook)
+	cmdSet.Set("list-commits-with-notes").MustRunner(listCommitsWithNotes, &ListCommitsWithNotesFlags{})
+	cmdSet.Set("list-commits-with-notes").MustSetPreHooks(configPrehook)
 
 	cmdSet.Set("config").MustSetPreHooks(configPrehook)
 	return cmdSet

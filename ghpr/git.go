@@ -164,6 +164,49 @@ func (g *Git) PushNotes(ctx context.Context) error {
 	return err
 }
 
+// NotesList returns the set of commit SHAs that have a git note attached.
+func (g *Git) NotesList(ctx context.Context) (map[string]bool, error) {
+	out, err := g.output(ctx, "notes", "list")
+	if err != nil {
+		return nil, err
+	}
+	noted := map[string]bool{}
+	for line := range strings.SplitSeq(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			noted[fields[1]] = true
+		}
+	}
+	return noted, nil
+}
+
+// CommitSummary holds a commit SHA and its subject line.
+type CommitSummary struct {
+	SHA     string
+	Subject string
+}
+
+// LogSubjects returns commit SHAs and subjects reachable from rev, ordered from
+// newest to oldest.
+func (g *Git) LogSubjects(ctx context.Context, rev string) ([]CommitSummary, error) {
+	out, err := g.output(ctx, "log", "--format=%H%x09%s", rev)
+	if err != nil {
+		return nil, err
+	}
+	if out == "" {
+		return nil, nil
+	}
+	var commits []CommitSummary
+	for line := range strings.SplitSeq(out, "\n") {
+		if line == "" {
+			continue
+		}
+		sha, subject, _ := strings.Cut(line, "\t")
+		commits = append(commits, CommitSummary{SHA: sha, Subject: subject})
+	}
+	return commits, nil
+}
+
 // DeleteBranch deletes the local branch. It uses git's own safety check,
 // which refuses a branch that has not been merged, rather than forcing it:
 // the caller has established that the content is already on the base branch,

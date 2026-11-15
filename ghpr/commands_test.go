@@ -1166,3 +1166,108 @@ func TestWriteNotesAsCommitsRealRepo(t *testing.T) {
 		t.Error("expected rewritten commits to have new SHAs")
 	}
 }
+
+func TestListCommitsWithNotes(t *testing.T) {
+	t.Run("filters unreachable and keeps newest first", func(t *testing.T) {
+		run := newFakeRunner(t).
+			expect("git notes list", "n1 sha1\nn2 sha3\nn3 orphan\n", nil).
+			expect("git log --format=%H%x09%s HEAD", "sha3\tthird\nsha2\tsecond\nsha1\tfirst\n", nil)
+
+		app, out := testApp(t, run, "")
+		if err := app.ListCommitsWithNotes(t.Context(), ""); err != nil {
+			t.Fatalf("ListCommitsWithNotes: %v", err)
+		}
+		want := "sha3 third\nsha1 first\n"
+		if out.String() != want {
+			t.Errorf("got %q, want %q", out.String(), want)
+		}
+		run.assertNoUnexpected()
+	})
+
+	t.Run("no notes skips log", func(t *testing.T) {
+		run := newFakeRunner(t).expect("git notes list", "", nil)
+		app, out := testApp(t, run, "")
+		if err := app.ListCommitsWithNotes(t.Context(), "main"); err != nil {
+			t.Fatalf("ListCommitsWithNotes: %v", err)
+		}
+		if out.String() != "" {
+			t.Errorf("got %q, want empty output", out.String())
+		}
+		run.assertNoUnexpected()
+	})
+}
+
+func TestListAndRewriteMultipleNotesRealRepo(t *testing.T) {
+	dir := t.TempDir()
+	r := dirRunner{dir: dir}
+	gitRun := func(args ...string) string {
+		t.Helper()
+		out, err := r.RunEnv(t.Context(), nil, nil, "git", args...)
+		if err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	gitRun("init", "-b", "main")
+	gitRun("config", "user.name", "Test User")
+	gitRun("config", "user.email", "test@example.com")
+
+	commit := func(file, content, msg string) string {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		gitRun("add", file)
+		gitRun("commit", "-m", msg)
+		return gitRun("rev-parse", "HEAD")
+	}
+
+	c1 := commit("a.txt", "1\n", "first (#1)")
+	c2 := commit("b.txt", "2\n", "second (#2)")
+	c3 := commit("c.txt", "3\n", "third (#3)")
+	gitRun("notes", "add", "-m", "note one", c1)
+	gitRun("notes", "add", "-m", "note three", c3)
+	_ = c2
+
+	var out bytes.Buffer
+	app := &App{
+		Git:       NewGit(r),
+		GH:        NewGH(r),
+		Base:      "main",
+		Stdout:    &out,
+		Stdin:     strings.NewReader(""),
+		AssumeYes: true,
+	}
+	if err := app.ListCommitsWithNotes(t.Context(), ""); err != nil {
+		t.Fatalf("ListCommitsWithNotes: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	wantLines := []string{c3 + " third (#3)", c1 + " first (#1)"}
+	if !slices.Equal(lines, wantLines) {
+		t.Fatalf("candidates = %v, want %v", lines, wantLines)
+	}
+
+	// Rewrite each candidate in the listed newest-to-oldest order locally.
+	for _, line := range lines {
+		sha, _, _ := strings.Cut(line, " ")
+		if err := app.WriteNotesAsCommits(t.Context(), sha, false); err != nil {
+			t.Fatalf("WriteNotesAsCommits(%s): %v", sha, err)
+		}
+	}
+
+	// Afterward no reachable commits have notes and both notes live in messages.
+	out.Reset()
+	if err := app.ListCommitsWithNotes(t.Context(), ""); err != nil {
+		t.Fatalf("ListCommitsWithNotes after rewrite: %v", err)
+	}
+	if out.String() != "" {
+		t.Errorf("expected no remaining candidates, got %q", out.String())
+	}
+	if got := gitRun("log", "-1", "--format=%B", "HEAD"); got != "third (#3)\n\nnote three" {
+		t.Errorf("HEAD message = %q", got)
+	}
+	if got := gitRun("log", "-1", "--format=%B", "HEAD~2"); got != "first (#1)\n\nnote one" {
+		t.Errorf("HEAD~2 message = %q", got)
+	}
+}
