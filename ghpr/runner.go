@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -23,11 +24,31 @@ type Runner interface {
 	Run(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error)
 }
 
+type envRunner interface {
+	RunEnv(ctx context.Context, env []string, stdin []byte, name string, args ...string) ([]byte, error)
+}
+
+func runWithEnv(ctx context.Context, r Runner, env []string, stdin []byte, name string, args ...string) ([]byte, error) {
+	if len(env) > 0 {
+		if er, ok := r.(envRunner); ok {
+			return er.RunEnv(ctx, env, stdin, name, args...)
+		}
+	}
+	return r.Run(ctx, stdin, name, args...)
+}
+
 // execRunner runs commands with os/exec.
 type execRunner struct{}
 
-func (execRunner) Run(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+func (e execRunner) Run(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+	return e.RunEnv(ctx, nil, stdin, name, args...)
+}
+
+func (execRunner) RunEnv(ctx context.Context, env []string, stdin []byte, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	if len(stdin) > 0 {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
@@ -89,6 +110,11 @@ type dryRunner struct {
 }
 
 func (d dryRunner) Run(_ context.Context, _ []byte, name string, args ...string) ([]byte, error) {
+	d.announce(commandLine(name, args))
+	return nil, nil
+}
+
+func (d dryRunner) RunEnv(_ context.Context, _ []string, _ []byte, name string, args ...string) ([]byte, error) {
 	d.announce(commandLine(name, args))
 	return nil, nil
 }

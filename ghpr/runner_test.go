@@ -143,3 +143,25 @@ func TestFormatCommand(t *testing.T) {
 		})
 	}
 }
+
+func TestExecRunnerEnv(t *testing.T) {
+	var r execRunner
+	out, err := runWithEnv(t.Context(), r, []string{"GHPR_TEST_VAR=hello"}, nil, "printenv", "GHPR_TEST_VAR")
+	if err != nil {
+		t.Fatalf("printenv: %v", err)
+	}
+	if got, want := strings.TrimSpace(string(out)), "hello"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestDryRunnerEnv(t *testing.T) {
+	var announced []string
+	d := dryRunner{announce: func(cmd string) { announced = append(announced, cmd) }}
+	if _, err := runWithEnv(t.Context(), d, []string{"A=1"}, []byte("msg"), "git", "commit-tree", "t", "-F", "-"); err != nil {
+		t.Fatalf("dry runWithEnv: %v", err)
+	}
+	if len(announced) != 1 || announced[0] != "git commit-tree t -F -" {
+		t.Errorf("got %v", announced)
+	}
+}

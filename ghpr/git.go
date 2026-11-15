@@ -6,7 +6,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 )
 
@@ -120,6 +122,20 @@ func (g *Git) Fetch(ctx context.Context, refspecs ...string) error {
 	return err
 }
 
+// MergeFFOnly fast-forwards the current branch to ref, failing if a merge commit
+// would be needed.
+func (g *Git) MergeFFOnly(ctx context.Context, ref string) error {
+	_, err := g.write.Run(ctx, nil, "git", "merge", "--ff-only", ref)
+	return err
+}
+
+// FetchUpdateBranch fetches branch from origin and fast-forwards the local
+// branch of the same name without checking it out.
+func (g *Git) FetchUpdateBranch(ctx context.Context, branch string) error {
+	_, err := g.write.Run(ctx, nil, "git", "fetch", "origin", branch+":"+branch)
+	return err
+}
+
 // PushBranch pushes branch to origin and sets it as the upstream.
 func (g *Git) PushBranch(ctx context.Context, branch string) error {
 	_, err := g.write.Run(ctx, nil, "git", "push", "--set-upstream", "origin", branch)
@@ -162,4 +178,167 @@ func (g *Git) DeleteBranch(ctx context.Context, branch string) error {
 func (g *Git) DeleteRemoteBranch(ctx context.Context, branch string) error {
 	_, err := g.write.Run(ctx, nil, "git", "push", "origin", "--delete", branch)
 	return err
+}
+
+// CommitIdentity holds the name, email, and raw timestamp of a commit author
+// or committer.
+type CommitIdentity struct {
+	Name  string
+	Email string
+	Date  string
+}
+
+// Commit holds the parsed structure of a git commit object as returned by
+// git cat-file commit.
+type Commit struct {
+	Tree      string
+	Parents   []string
+	Author    CommitIdentity
+	Committer CommitIdentity
+	Message   string
+}
+
+// Subject returns the first line of the commit message.
+func (c *Commit) Subject() string {
+	first, _, _ := strings.Cut(c.Message, "\n")
+	return strings.TrimSpace(first)
+}
+
+// WorkingTreeDirty reports whether the working tree or index has uncommitted
+// changes.
+func (g *Git) WorkingTreeDirty(ctx context.Context) (bool, error) {
+	out, err := g.output(ctx, "status", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	return out != "", nil
+}
+
+// IsAncestor reports whether ancestor (which must be a full commit SHA) is an
+// ancestor of descendant.
+func (g *Git) IsAncestor(ctx context.Context, ancestor, descendant string) (bool, error) {
+	out, err := g.output(ctx, "merge-base", ancestor, descendant)
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return false, nil
+		}
+		return false, err
+	}
+	return out == ancestor, nil
+}
+
+// RevList returns commit SHAs on the direct ancestry path in revRange, ordered
+// from oldest to newest.
+func (g *Git) RevList(ctx context.Context, revRange string) ([]string, error) {
+	out, err := g.output(ctx, "rev-list", "--ancestry-path", "--reverse", "--topo-order", revRange)
+	if err != nil {
+		return nil, err
+	}
+	if out == "" {
+		return nil, nil
+	}
+	return strings.Split(out, "\n"), nil
+}
+
+// ReadCommit reads and parses the git commit object at rev.
+func (g *Git) ReadCommit(ctx context.Context, rev string) (*Commit, error) {
+	out, err := g.read.Run(ctx, nil, "git", "cat-file", "commit", rev)
+	if err != nil {
+		return nil, err
+	}
+	return parseCommit(string(out))
+}
+
+// CommitTree writes a new commit object with c's tree, authorship, and
+// timestamps, the given parents and commit message, and returns its SHA.
+func (g *Git) CommitTree(ctx context.Context, c *Commit, parents []string, message string) (string, error) {
+	args := []string{"commit-tree", c.Tree}
+	for _, p := range parents {
+		args = append(args, "-p", p)
+	}
+	args = append(args, "-F", "-")
+	env := []string{
+		"GIT_AUTHOR_NAME=" + c.Author.Name,
+		"GIT_AUTHOR_EMAIL=" + c.Author.Email,
+		"GIT_AUTHOR_DATE=" + c.Author.Date,
+		"GIT_COMMITTER_NAME=" + c.Committer.Name,
+		"GIT_COMMITTER_EMAIL=" + c.Committer.Email,
+		"GIT_COMMITTER_DATE=" + c.Committer.Date,
+	}
+	out, err := runWithEnv(ctx, g.write, env, []byte(message), "git", args...)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// ResetKeep moves the current branch and index to sha while preserving any
+// unrelated checks via git reset --keep.
+func (g *Git) ResetKeep(ctx context.Context, sha string) error {
+	_, err := g.write.Run(ctx, nil, "git", "reset", "--keep", sha)
+	return err
+}
+
+// PushForceWithLease force-pushes branch to origin with --force-with-lease.
+func (g *Git) PushForceWithLease(ctx context.Context, branch string) error {
+	_, err := g.write.Run(ctx, nil, "git", "push", "--force-with-lease", "origin", branch)
+	return err
+}
+
+func parseCommit(raw string) (*Commit, error) {
+	header, message, found := strings.Cut(raw, "\n\n")
+	if !found {
+		return nil, fmt.Errorf("malformed commit object: missing header separator")
+	}
+	c := &Commit{Message: message}
+	for line := range strings.SplitSeq(header, "\n") {
+		// Multi-line headers such as gpgsig continue with a leading space.
+		if strings.HasPrefix(line, " ") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, " ")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "tree":
+			c.Tree = val
+		case "parent":
+			c.Parents = append(c.Parents, val)
+		case "author":
+			id, err := parseIdentity(val)
+			if err != nil {
+				return nil, fmt.Errorf("commit author: %w", err)
+			}
+			c.Author = id
+		case "committer":
+			id, err := parseIdentity(val)
+			if err != nil {
+				return nil, fmt.Errorf("commit committer: %w", err)
+			}
+			c.Committer = id
+		}
+	}
+	if c.Tree == "" {
+		return nil, fmt.Errorf("malformed commit object: missing tree")
+	}
+	return c, nil
+}
+
+func parseIdentity(s string) (CommitIdentity, error) {
+	lt := strings.LastIndexByte(s, '<')
+	if lt < 0 {
+		return CommitIdentity{}, fmt.Errorf("missing email in %q", s)
+	}
+	gtOff := strings.IndexByte(s[lt:], '>')
+	if gtOff < 0 {
+		return CommitIdentity{}, fmt.Errorf("unterminated email in %q", s)
+	}
+	gt := lt + gtOff
+	return CommitIdentity{
+		Name:  strings.TrimSpace(s[:lt]),
+		Email: s[lt+1 : gt],
+		Date:  strings.TrimSpace(s[gt+1:]),
+	}, nil
 }

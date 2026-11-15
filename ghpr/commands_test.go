@@ -5,7 +5,13 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -629,5 +635,534 @@ func TestShortSHA(t *testing.T) {
 		if got := shortSHA(tc.in); got != tc.want {
 			t.Errorf("%q: got %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+func openPRJSON(title, body string) string {
+	return openPRWithChecksJSON(title, body, "[]")
+}
+
+func openPRWithChecksJSON(title, body, checksJSON string) string {
+	return `{"number":42,"state":"OPEN","title":` + quoteJSON(title) + `,"body":` + quoteJSON(body) +
+		`,"url":"u","headRefName":"my-feature","headRefOid":"feature1","mergeCommit":null,"statusCheckRollup":` + checksJSON + `}`
+}
+
+func mergedPRJSON(title, body string) string {
+	return `{"number":42,"state":"MERGED","title":` + quoteJSON(title) + `,"body":` + quoteJSON(body) +
+		`,"url":"u","headRefName":"my-feature","headRefOid":"feature1","mergeCommit":{"oid":"squash1234567890"}}`
+}
+
+func TestMergeWithSummaryOnBaseBranch(t *testing.T) {
+	body := "## Overview\n\nUses **claude** and `agy` \u2014 see [docs](d)."
+	mergeCmd := `gh pr merge 42 --squash --subject "feat: add summary (#42)" --body-file - --match-head-commit feature1`
+	run := newFakeRunner(t).
+		expect("git rev-parse --abbrev-ref HEAD", "main\n", nil).
+		expect(viewCmd("my-feature"), openPRJSON("feat: add summary", body), nil).
+		expect(mergeCmd, "", nil).
+		expect("git fetch origin main", "", nil).
+		expect("git merge --ff-only origin/main", "", nil)
+
+	app, out := testApp(t, run, "y\n")
+	if err := app.MergeWithSummary(t.Context(), "my-feature", true, false, false); err != nil {
+		t.Fatalf("MergeWithSummary: %v", err)
+	}
+
+	gotBody := run.stdinFor("gh pr merge")
+	wantBody := "--- Overview\n\nUses claude and agy -- see docs (d)."
+	if gotBody != wantBody {
+		t.Errorf("got commit body %q, want %q", gotBody, wantBody)
+	}
+	if !isASCII(gotBody) {
+		t.Errorf("commit body is not ascii: %q", gotBody)
+	}
+	for _, msg := range []string{"feat: add summary (#42)", "squash-merged #42 (my-feature) into main", "updated local main from origin"} {
+		if !strings.Contains(out.String(), msg) {
+			t.Errorf("output missing %q:\n%v", msg, out)
+		}
+	}
+	run.assertNoUnexpected()
+}
+
+func TestMergeWithSummaryOnFeatureBranch(t *testing.T) {
+	mergeCmd := `gh pr merge 42 --squash --subject "fix: bug (#42)" --body-file - --match-head-commit feature1`
+	run := newFakeRunner(t).
+		expect("git rev-parse --abbrev-ref HEAD", "my-feature\n", nil).
+		expect(viewCmd("my-feature"), openPRJSON("fix: bug", "fixed the bug"), nil).
+		expect(mergeCmd, "", nil).
+		expect("git fetch origin main:main", "", nil)
+
+	app, _ := testApp(t, run, "y\n")
+	if err := app.MergeWithSummary(t.Context(), "", true, false, false); err != nil {
+		t.Fatalf("MergeWithSummary: %v", err)
+	}
+	if got, want := run.stdinFor("gh pr merge"), "fixed the bug"; got != want {
+		t.Errorf("got commit body %q, want %q", got, want)
+	}
+	run.assertNoUnexpected()
+}
+
+func TestMergeWithSummaryChecksPassed(t *testing.T) {
+	checks := `[{"__typename":"CheckRun","name":"test","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"StatusContext","context":"ci/lint","state":"SUCCESS"}]`
+	mergeCmd := `gh pr merge 42 --squash --subject "feat: checks (#42)" --body-file - --match-head-commit feature1`
+	run := newFakeRunner(t).
+		expect("git rev-parse --abbrev-ref HEAD", "main\n", nil).
+		expect(viewCmd("my-feature"), openPRWithChecksJSON("feat: checks", "summary text", checks), nil).
+		expect(mergeCmd, "", nil).
+		expect("git fetch origin main", "", nil).
+		expect("git merge --ff-only origin/main", "", nil)
+
+	app, out := testApp(t, run, "y\n")
+	if err := app.MergeWithSummary(t.Context(), "my-feature", true, false, false); err != nil {
+		t.Fatalf("MergeWithSummary: %v", err)
+	}
+	if !strings.Contains(out.String(), "all 2 status check(s) passed for #42") {
+		t.Errorf("output missing status check confirmation:\n%v", out)
+	}
+	run.assertNoUnexpected()
+}
+
+func TestMergeWithSummaryBypassChecks(t *testing.T) {
+	checks := `[{"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"FAILURE"}]`
+	mergeCmd := `gh pr merge 42 --squash --subject "feat: bypass (#42)" --body-file - --match-head-commit feature1`
+	run := newFakeRunner(t).
+		expect("git rev-parse --abbrev-ref HEAD", "main\n", nil).
+		expect(viewCmd("my-feature"), openPRWithChecksJSON("feat: bypass", "summary text", checks), nil).
+		expect(mergeCmd, "", nil).
+		expect("git fetch origin main", "", nil).
+		expect("git merge --ff-only origin/main", "", nil)
+
+	app, _ := testApp(t, run, "y\n")
+	if err := app.MergeWithSummary(t.Context(), "my-feature", false, false, false); err != nil {
+		t.Fatalf("MergeWithSummary: %v", err)
+	}
+	run.assertNoUnexpected()
+}
+
+func TestMergeWithSummaryByNumberWithDeleteRemote(t *testing.T) {
+	mergeCmd := `gh pr merge 42 --squash --subject "feat: add summary (#42)" --body-file - --match-head-commit feature1`
+	run := newFakeRunner(t).
+		expect("git rev-parse --abbrev-ref HEAD", "main\n", nil).
+		expectSeq(viewCmd("42"),
+			fakeResult{out: openPRJSON("feat: add summary", "summary text")},
+			fakeResult{out: mergedPRJSON("feat: add summary", "summary text")},
+		).
+		expect(mergeCmd, "", nil).
+		expect("git fetch origin main", "", nil).
+		expect("git merge --ff-only origin/main", "", nil).
+		expect("git rev-parse my-feature^{tree}", "sametree1\n", nil).
+		expect("git rev-parse squash1234567890^{tree}", "sametree1\n", nil).
+		expect("git branch --delete my-feature", "", nil).
+		expect("git ls-remote --heads origin my-feature", "feature1\trefs/heads/my-feature\n", nil).
+		expect("git push origin --delete my-feature", "", nil)
+
+	app, out := testApp(t, run, "y\n")
+	if err := app.MergeWithSummary(t.Context(), "42", true, true, true); err != nil {
+		t.Fatalf("MergeWithSummary: %v", err)
+	}
+	for _, msg := range []string{"deleted the local branch my-feature", "deleted my-feature from origin"} {
+		if !strings.Contains(out.String(), msg) {
+			t.Errorf("output missing %q:\n%v", msg, out)
+		}
+	}
+	run.assertNoUnexpected()
+}
+
+func TestMergeWithSummaryDeleteBranchFallbackRevParse(t *testing.T) {
+	mergeCmd := `gh pr merge 42 --squash --subject "feat: add summary (#42)" --body-file - --match-head-commit feature1`
+	// Merged PR without mergeCommit populated falls back to rev-parse on base.
+	noMergeCommitPR := `{"number":42,"state":"MERGED","title":"feat: add summary","body":"summary text","url":"u","headRefName":"my-feature","headRefOid":"feature1","mergeCommit":null}`
+	run := newFakeRunner(t).
+		expect("git rev-parse --abbrev-ref HEAD", "main\n", nil).
+		expect(viewCmd("my-feature"), openPRJSON("feat: add summary", "summary text"), nil).
+		expect(mergeCmd, "", nil).
+		expect("git fetch origin main", "", nil).
+		expect("git merge --ff-only origin/main", "", nil).
+		expect(viewCmd("42"), noMergeCommitPR, nil).
+		expect("git rev-parse main", "basesha99\n", nil).
+		expect("git rev-parse my-feature^{tree}", "sametree1\n", nil).
+		expect("git rev-parse basesha99^{tree}", "sametree1\n", nil).
+		expect("git branch --delete my-feature", "", nil)
+
+	app, _ := testApp(t, run, "y\n")
+	if err := app.MergeWithSummary(t.Context(), "my-feature", true, true, false); err != nil {
+		t.Fatalf("MergeWithSummary: %v", err)
+	}
+	run.assertNoUnexpected()
+}
+
+func TestMergeWithSummaryErrors(t *testing.T) {
+	t.Run("on base without target", func(t *testing.T) {
+		run := newFakeRunner(t).expect("git rev-parse --abbrev-ref HEAD", "main\n", nil)
+		app, _ := testApp(t, run, "")
+		err := app.MergeWithSummary(t.Context(), "", true, false, false)
+		if err == nil || !strings.Contains(err.Error(), "needs a branch or pull request number") {
+			t.Errorf("got %v, want target-required error", err)
+		}
+	})
+
+	t.Run("not open", func(t *testing.T) {
+		run := newFakeRunner(t).
+			expect("git rev-parse --abbrev-ref HEAD", "main\n", nil).
+			expect(viewCmd("my-feature"), mergedPRJSON("t", "body"), nil)
+		app, _ := testApp(t, run, "")
+		err := app.MergeWithSummary(t.Context(), "my-feature", true, false, false)
+		if err == nil || !strings.Contains(err.Error(), "requires an open pull request") {
+			t.Errorf("got %v, want open-PR error", err)
+		}
+	})
+
+	t.Run("empty body", func(t *testing.T) {
+		run := newFakeRunner(t).
+			expect("git rev-parse --abbrev-ref HEAD", "main\n", nil).
+			expect(viewCmd("my-feature"), openPRJSON("t", "   \n"), nil)
+		app, _ := testApp(t, run, "")
+		err := app.MergeWithSummary(t.Context(), "my-feature", true, false, false)
+		if err == nil || !strings.Contains(err.Error(), "empty description") {
+			t.Errorf("got %v, want empty-description error", err)
+		}
+	})
+
+	t.Run("failing and pending status checks", func(t *testing.T) {
+		checks := `[{"__typename":"CheckRun","name":"test","status":"COMPLETED","conclusion":"FAILURE"},{"__typename":"StatusContext","context":"ci/lint","state":"PENDING"}]`
+		run := newFakeRunner(t).
+			expect("git rev-parse --abbrev-ref HEAD", "main\n", nil).
+			expect(viewCmd("my-feature"), openPRWithChecksJSON("t", "body", checks), nil)
+		app, _ := testApp(t, run, "y\n")
+		err := app.MergeWithSummary(t.Context(), "my-feature", true, false, false)
+		if err == nil || !strings.Contains(err.Error(), "test (failure)") || !strings.Contains(err.Error(), "ci/lint (pending)") || !strings.Contains(err.Error(), "--check-status=false") {
+			t.Errorf("got %v, want status check failure/pending error", err)
+		}
+		if run.ranPrefix("gh pr merge") {
+			t.Error("merged even though status checks failed/pending")
+		}
+	})
+
+	t.Run("delete checked out branch refused", func(t *testing.T) {
+		run := newFakeRunner(t).
+			expect("git rev-parse --abbrev-ref HEAD", "my-feature\n", nil).
+			expect(viewCmd("my-feature"), openPRJSON("t", "body"), nil)
+		app, _ := testApp(t, run, "y\n")
+		err := app.MergeWithSummary(t.Context(), "", true, true, false)
+		if err == nil || !strings.Contains(err.Error(), "cannot delete my-feature while it is checked out") {
+			t.Errorf("got %v, want checked-out error", err)
+		}
+		if run.ranPrefix("gh pr merge") {
+			t.Error("merged even though delete-branch check failed")
+		}
+	})
+
+	t.Run("declined", func(t *testing.T) {
+		run := newFakeRunner(t).
+			expect("git rev-parse --abbrev-ref HEAD", "main\n", nil).
+			expect(viewCmd("my-feature"), openPRJSON("t", "body"), nil)
+		app, _ := testApp(t, run, "n\n")
+		if err := app.MergeWithSummary(t.Context(), "my-feature", true, false, false); err != nil {
+			t.Fatalf("MergeWithSummary: %v", err)
+		}
+		if run.ranPrefix("gh pr merge") {
+			t.Error("merged after user declined")
+		}
+	})
+
+	t.Run("ff-only failure after merge", func(t *testing.T) {
+		mergeCmd := `gh pr merge 42 --squash --subject "t (#42)" --body-file - --match-head-commit feature1`
+		run := newFakeRunner(t).
+			expect("git rev-parse --abbrev-ref HEAD", "main\n", nil).
+			expect(viewCmd("my-feature"), openPRJSON("t", "body"), nil).
+			expect(mergeCmd, "", nil).
+			expect("git fetch origin main", "", nil).
+			expect("git merge --ff-only origin/main", "", errors.New("not possible to fast-forward"))
+		app, _ := testApp(t, run, "y\n")
+		err := app.MergeWithSummary(t.Context(), "my-feature", true, false, false)
+		if err == nil || !strings.Contains(err.Error(), "failed to fast-forward main") {
+			t.Errorf("got %v, want fast-forward error", err)
+		}
+	})
+}
+
+func TestMergeWithSummaryDryRun(t *testing.T) {
+	run := newFakeRunner(t).
+		expect("git rev-parse --abbrev-ref HEAD", "main\n", nil).
+		expect(viewCmd("my-feature"), openPRJSON("feat: dry", "body text"), nil)
+
+	app, out := testApp(t, run, "")
+	announce := func(cmd string) { app.printf("would run: %v\n", cmd) }
+	app.DryRun = true
+	app.Git = app.Git.DryRun(announce)
+	app.GH = app.GH.DryRun(announce)
+	if err := app.MergeWithSummary(t.Context(), "my-feature", true, true, true); err != nil {
+		t.Fatalf("MergeWithSummary dry run: %v", err)
+	}
+	if run.ranPrefix("gh pr merge") || run.ranPrefix("git fetch") || run.ranPrefix("git branch") {
+		t.Errorf("dry run ran unexpected commands: %v", run.ranCommands())
+	}
+	for _, want := range []string{
+		`gh pr merge 42 --squash --subject "feat: dry (#42)" --body-file - --match-head-commit feature1`,
+		"git merge --ff-only origin/main",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("dry run output missing %q:\n%v", want, out)
+		}
+	}
+	run.assertNoUnexpected()
+}
+
+func TestWriteNotesAsCommits(t *testing.T) {
+	c1Raw := "tree tree111\nparent base000\nauthor A <a@b> 100 +0000\ncommitter C <c@d> 100 +0000\n\nfeat: squash (#42)\n\n* wip 1\n* wip 2\n"
+	c2Raw := "tree tree222\nparent targetsha1\nauthor B <b@b> 200 +0000\ncommitter B <b@b> 200 +0000\n\nchore: later\n\nlater body\n"
+
+	t.Run("local only rewrites target and descendants", func(t *testing.T) {
+		run := newFakeRunner(t).
+			expect("git rev-parse --abbrev-ref HEAD", "main\n", nil).
+			expect("git status --porcelain", "", nil).
+			expect("git rev-parse abc123^{commit}", "targetsha1\n", nil).
+			expect("git rev-parse HEAD", "headsha2\n", nil).
+			expect("git merge-base targetsha1 HEAD", "targetsha1\n", nil).
+			expect("git notes show targetsha1", "summary from note\n", nil).
+			expect("git cat-file commit targetsha1", c1Raw, nil).
+			expect("git rev-list --ancestry-path --reverse --topo-order targetsha1..HEAD", "headsha2\n", nil).
+			expect("git commit-tree tree111 -p base000 -F -", "newtarget1\n", nil).
+			expect("git cat-file commit headsha2", c2Raw, nil).
+			expect("git commit-tree tree222 -p newtarget1 -F -", "newhead2\n", nil).
+			expect("git reset --keep newhead2", "", nil)
+
+		app, out := testApp(t, run, "y\n")
+		if err := app.WriteNotesAsCommits(t.Context(), "abc123", false); err != nil {
+			t.Fatalf("WriteNotesAsCommits: %v", err)
+		}
+		if run.ranPrefix("git push") {
+			t.Error("local-only run pushed to origin")
+		}
+		if got := run.stdinFor("git commit-tree tree111"); got != "feat: squash (#42)\n\nsummary from note\n" {
+			t.Errorf("target commit message = %q", got)
+		}
+		if got := run.stdinFor("git commit-tree tree222"); got != "chore: later\n\nlater body\n" {
+			t.Errorf("descendant commit message = %q", got)
+		}
+		if !strings.Contains(out.String(), "updated main to newhead2 (previous tip was headsha2") {
+			t.Errorf("unexpected output:\n%v", out)
+		}
+		run.assertNoUnexpected()
+	})
+
+	t.Run("with push", func(t *testing.T) {
+		run := newFakeRunner(t).
+			expect("git rev-parse --abbrev-ref HEAD", "main\n", nil).
+			expect("git status --porcelain", "", nil).
+			expect("git rev-parse HEAD^{commit}", "targetsha1\n", nil).
+			expect("git rev-parse HEAD", "targetsha1\n", nil).
+			expect("git merge-base targetsha1 HEAD", "targetsha1\n", nil).
+			expect("git notes show targetsha1", "summary from note\n", nil).
+			expect("git cat-file commit targetsha1", c1Raw, nil).
+			expect("git commit-tree tree111 -p base000 -F -", "newtarget1\n", nil).
+			expect("git reset --keep newtarget1", "", nil).
+			expect("git push --force-with-lease origin main", "", nil)
+
+		app, out := testApp(t, run, "y\n")
+		if err := app.WriteNotesAsCommits(t.Context(), "HEAD", true); err != nil {
+			t.Fatalf("WriteNotesAsCommits --push: %v", err)
+		}
+		if !strings.Contains(out.String(), "pushed main to origin with --force-with-lease") {
+			t.Errorf("missing push message:\n%v", out)
+		}
+		run.assertNoUnexpected()
+	})
+}
+
+func TestWriteNotesAsCommitsErrors(t *testing.T) {
+	t.Run("detached head", func(t *testing.T) {
+		run := newFakeRunner(t).expect("git rev-parse --abbrev-ref HEAD", "HEAD\n", nil)
+		app, _ := testApp(t, run, "")
+		err := app.WriteNotesAsCommits(t.Context(), "abc", false)
+		if err == nil || !strings.Contains(err.Error(), "detached HEAD") {
+			t.Errorf("got %v, want detached HEAD error", err)
+		}
+	})
+
+	t.Run("dirty working tree", func(t *testing.T) {
+		run := newFakeRunner(t).
+			expect("git rev-parse --abbrev-ref HEAD", "main\n", nil).
+			expect("git status --porcelain", " M foo.go\n", nil)
+		app, _ := testApp(t, run, "")
+		err := app.WriteNotesAsCommits(t.Context(), "abc", false)
+		if err == nil || !strings.Contains(err.Error(), "uncommitted changes") {
+			t.Errorf("got %v, want dirty tree error", err)
+		}
+	})
+
+	t.Run("not ancestor", func(t *testing.T) {
+		run := newFakeRunner(t).
+			expect("git rev-parse --abbrev-ref HEAD", "main\n", nil).
+			expect("git status --porcelain", "", nil).
+			expect("git rev-parse other^{commit}", "othersha1\n", nil).
+			expect("git rev-parse HEAD", "headsha1\n", nil).
+			expect("git merge-base othersha1 HEAD", "common0\n", nil)
+		app, _ := testApp(t, run, "")
+		err := app.WriteNotesAsCommits(t.Context(), "other", false)
+		if err == nil || !strings.Contains(err.Error(), "not an ancestor") {
+			t.Errorf("got %v, want non-ancestor error", err)
+		}
+	})
+
+	t.Run("no git note", func(t *testing.T) {
+		run := newFakeRunner(t).
+			expect("git rev-parse --abbrev-ref HEAD", "main\n", nil).
+			expect("git status --porcelain", "", nil).
+			expect("git rev-parse abc^{commit}", "targetsha1\n", nil).
+			expect("git rev-parse HEAD", "targetsha1\n", nil).
+			expect("git merge-base targetsha1 HEAD", "targetsha1\n", nil).
+			expect("git notes show targetsha1", "", errors.New("no note found"))
+		app, _ := testApp(t, run, "")
+		err := app.WriteNotesAsCommits(t.Context(), "abc", false)
+		if err == nil || !strings.Contains(err.Error(), "has no git note") {
+			t.Errorf("got %v, want missing note error", err)
+		}
+	})
+}
+
+func TestWriteNotesAsCommitsDryRun(t *testing.T) {
+	c1Raw := "tree tree111\nparent base000\nauthor A <a@b> 100 +0000\ncommitter C <c@d> 100 +0000\n\nfeat: squash (#42)\n"
+	c2Raw := "tree tree222\nparent targetsha1\nauthor B <b@b> 200 +0000\ncommitter B <b@b> 200 +0000\n\nchore: later\n"
+	run := newFakeRunner(t).
+		expect("git rev-parse --abbrev-ref HEAD", "main\n", nil).
+		expect("git status --porcelain", "", nil).
+		expect("git rev-parse abc123^{commit}", "targetsha1\n", nil).
+		expect("git rev-parse HEAD", "headsha2\n", nil).
+		expect("git merge-base targetsha1 HEAD", "targetsha1\n", nil).
+		expect("git notes show targetsha1", "note body", nil).
+		expect("git cat-file commit targetsha1", c1Raw, nil).
+		expect("git rev-list --ancestry-path --reverse --topo-order targetsha1..HEAD", "headsha2\n", nil).
+		expect("git cat-file commit headsha2", c2Raw, nil)
+
+	app, out := testApp(t, run, "")
+	announce := func(cmd string) { app.printf("would run: %v\n", cmd) }
+	app.DryRun = true
+	app.Git = app.Git.DryRun(announce)
+	app.GH = app.GH.DryRun(announce)
+
+	if err := app.WriteNotesAsCommits(t.Context(), "abc123", true); err != nil {
+		t.Fatalf("WriteNotesAsCommits dry run: %v", err)
+	}
+	if run.ranPrefix("git commit-tree") || run.ranPrefix("git reset") || run.ranPrefix("git push") {
+		t.Errorf("dry run ran mutating commands: %v", run.ranCommands())
+	}
+	for _, want := range []string{
+		"git commit-tree tree111 -p base000 -F -",
+		"git commit-tree tree222 -p <rewritten-targetsh> -F -",
+		"git reset --keep <rewritten-headsha2>",
+		"git push --force-with-lease origin main",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("dry run output missing %q:\n%v", want, out)
+		}
+	}
+	run.assertNoUnexpected()
+}
+
+type dirRunner struct {
+	dir string
+}
+
+func (d dirRunner) Run(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+	return d.RunEnv(ctx, nil, stdin, name, args...)
+}
+
+func (d dirRunner) RunEnv(ctx context.Context, env []string, stdin []byte, name string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = d.dir
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
+	if len(stdin) > 0 {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return stdout.Bytes(), errors.New(strings.TrimSpace(stderr.String()))
+	}
+	return stdout.Bytes(), nil
+}
+
+func TestWriteNotesAsCommitsRealRepo(t *testing.T) {
+	dir := t.TempDir()
+	r := dirRunner{dir: dir}
+	gitRun := func(env []string, args ...string) string {
+		t.Helper()
+		out, err := r.RunEnv(t.Context(), env, nil, "git", args...)
+		if err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	gitRun(nil, "init", "-b", "main")
+	gitRun(nil, "config", "user.name", "Test User")
+	gitRun(nil, "config", "user.email", "test@example.com")
+
+	write := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	write("a.txt", "one\n")
+	gitRun(nil, "add", "a.txt")
+	gitRun([]string{"GIT_AUTHOR_DATE=1700000000 +0000", "GIT_COMMITTER_DATE=1700000000 +0000"}, "commit", "-m", "init")
+	c1 := gitRun(nil, "rev-parse", "HEAD")
+
+	write("b.txt", "two\n")
+	gitRun(nil, "add", "b.txt")
+	gitRun([]string{
+		"GIT_AUTHOR_NAME=Original Author",
+		"GIT_AUTHOR_EMAIL=orig@example.com",
+		"GIT_AUTHOR_DATE=1700000100 -0800",
+		"GIT_COMMITTER_DATE=1700000200 -0800",
+	}, "commit", "-m", "feat: squash (#10)", "-m", "* wip commit 1\n* wip commit 2")
+	c2 := gitRun(nil, "rev-parse", "HEAD")
+	gitRun(nil, "notes", "add", "-m", "Detailed ASCII note body.", c2)
+
+	write("c.txt", "three\n")
+	gitRun(nil, "add", "c.txt")
+	gitRun([]string{"GIT_AUTHOR_DATE=1700000300 +0000", "GIT_COMMITTER_DATE=1700000300 +0000"}, "commit", "-m", "chore: follow-up", "-m", "Keep this body.")
+	c3 := gitRun(nil, "rev-parse", "HEAD")
+	c3Tree := gitRun(nil, "rev-parse", c3+"^{tree}")
+
+	var out bytes.Buffer
+	app := &App{
+		Git:    NewGit(r),
+		GH:     NewGH(r),
+		Base:   "main",
+		Stdout: &out,
+		Stdin:  strings.NewReader("y\n"),
+	}
+	if err := app.WriteNotesAsCommits(t.Context(), c2, false); err != nil {
+		t.Fatalf("WriteNotesAsCommits: %v", err)
+	}
+
+	newC3 := gitRun(nil, "rev-parse", "HEAD")
+	newC2 := gitRun(nil, "rev-parse", "HEAD~1")
+	if got := gitRun(nil, "rev-parse", "HEAD~2"); got != c1 {
+		t.Errorf("ancestor commit changed: got %s, want %s", got, c1)
+	}
+	if got := gitRun(nil, "rev-parse", newC3+"^{tree}"); got != c3Tree {
+		t.Errorf("tree changed: got %s, want %s", got, c3Tree)
+	}
+	if got := gitRun(nil, "log", "-1", "--format=%B", newC2); got != "feat: squash (#10)\n\nDetailed ASCII note body." {
+		t.Errorf("rewritten target message = %q", got)
+	}
+	if got := gitRun(nil, "log", "-1", "--format=%an|%ae|%at", newC2); got != "Original Author|orig@example.com|1700000100" {
+		t.Errorf("rewritten target author/date = %q", got)
+	}
+	if got := gitRun(nil, "log", "-1", "--format=%B", newC3); got != "chore: follow-up\n\nKeep this body." {
+		t.Errorf("descendant message = %q", got)
+	}
+	if dirty := gitRun(nil, "status", "--porcelain"); dirty != "" {
+		t.Errorf("working tree dirty after rewrite: %q", dirty)
+	}
+	if slices.Equal([]string{c2, c3}, []string{newC2, newC3}) {
+		t.Error("expected rewritten commits to have new SHAs")
 	}
 }

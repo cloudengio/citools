@@ -260,11 +260,7 @@ func (a *App) PostNote(ctx context.Context, branch string, pushNotes, deleteBran
 		actions = append(actions, "push refs/notes/* to origin")
 	}
 	if deleteBranch {
-		what := "the local branch " + branch
-		if deleteRemote {
-			what = "the local and origin branch " + branch
-		}
-		actions = append(actions, "delete "+what+" if its content is what was merged")
+		actions = append(actions, deleteBranchAction(branch, deleteRemote))
 	}
 	ok, err := a.confirm("about to " + strings.Join(actions, ", then ") + ". proceed?")
 	if err != nil || !ok {
@@ -286,6 +282,131 @@ func (a *App) PostNote(ctx context.Context, branch string, pushNotes, deleteBran
 		return a.deleteMergedBranch(ctx, branch, mergeSHA, deleteRemote)
 	}
 	return nil
+}
+
+// MergeWithSummary squash-merges an open pull request using its description
+// as the commit body, updates the local base branch, and optionally deletes
+// the feature branch it came from. When checkStatus is true, any pending or
+// failing status check prevents the merge.
+func (a *App) MergeWithSummary(ctx context.Context, target string, checkStatus, deleteBranch, deleteRemote bool) error {
+	current, err := a.Git.CurrentBranch(ctx)
+	if err != nil {
+		return err
+	}
+	if target == "" {
+		if current == a.Base {
+			return fmt.Errorf("merge-with-summary needs a branch or pull request number when run on %v", a.Base)
+		}
+		target = current
+	}
+	pr, err := a.GH.View(ctx, target)
+	if err != nil {
+		return err
+	}
+	if pr.State != "OPEN" {
+		return fmt.Errorf("#%v is %s; merge-with-summary requires an open pull request", pr.Number, strings.ToLower(pr.State))
+	}
+	if strings.TrimSpace(pr.Body) == "" {
+		return fmt.Errorf("#%v has an empty description: run update-summary or edit it on github first", pr.Number)
+	}
+	summary := MarkdownToASCII(pr.Body)
+	if strings.TrimSpace(summary) == "" {
+		return fmt.Errorf("#%v has no text in its description after stripping markdown", pr.Number)
+	}
+	if checkStatus {
+		if err := a.verifyChecks(pr); err != nil {
+			return err
+		}
+	}
+	if deleteBranch && current == pr.HeadRefName {
+		return fmt.Errorf("cannot delete %v while it is checked out: switch to %v first", pr.HeadRefName, a.Base)
+	}
+
+	subject := fmt.Sprintf("%s (#%d)", pr.Title, pr.Number)
+	a.show(fmt.Sprintf("commit summary for #%d", pr.Number), subject+"\n\n"+summary)
+
+	actions := []string{
+		fmt.Sprintf("squash-merge #%d (%v) into %v with this commit summary", pr.Number, pr.HeadRefName, a.Base),
+		fmt.Sprintf("update local %v from origin", a.Base),
+	}
+	if deleteBranch {
+		actions = append(actions, deleteBranchAction(pr.HeadRefName, deleteRemote))
+	}
+	ok, err := a.confirm("about to " + strings.Join(actions, ", then ") + ". proceed?")
+	if err != nil || !ok {
+		return err
+	}
+
+	if err := a.GH.SquashMerge(ctx, pr.Number, subject, summary, pr.HeadRefOid); err != nil {
+		return err
+	}
+	a.printf("squash-merged #%v (%v) into %v\n", pr.Number, pr.HeadRefName, a.Base)
+
+	if err := a.updateLocalBase(ctx, current); err != nil {
+		return err
+	}
+	a.printf("updated local %v from origin\n", a.Base)
+
+	if a.DryRun || !deleteBranch {
+		return nil
+	}
+	mergedPR, err := a.GH.View(ctx, fmt.Sprintf("%d", pr.Number))
+	if err != nil {
+		return fmt.Errorf("squash-merged #%v, but could not fetch merge commit: %w", pr.Number, err)
+	}
+	mergeSHA := mergedPR.MergeSHA()
+	if mergeSHA == "" {
+		mergeSHA, err = a.Git.RevParse(ctx, a.Base)
+		if err != nil {
+			return fmt.Errorf("squash-merged #%v, but could not determine merge commit: %w", pr.Number, err)
+		}
+	}
+	return a.deleteMergedBranch(ctx, pr.HeadRefName, mergeSHA, deleteRemote)
+}
+
+func (a *App) verifyChecks(pr *PR) error {
+	pending, failed := pr.PendingOrFailedChecks()
+	var problems []string
+	if len(failed) > 0 {
+		problems = append(problems, "failed: "+strings.Join(failed, ", "))
+	}
+	if len(pending) > 0 {
+		problems = append(problems, "pending: "+strings.Join(pending, ", "))
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("#%v status checks have not passed (%s); pass --check-status=false to merge anyway",
+			pr.Number, strings.Join(problems, "; "))
+	}
+	if len(pr.StatusCheckRollup) > 0 {
+		a.printf("all %d status check(s) passed for #%v\n", len(pr.StatusCheckRollup), pr.Number)
+	}
+	return nil
+}
+
+func (a *App) updateLocalBase(ctx context.Context, current string) error {
+	if current == a.Base {
+		if !a.DryRun {
+			if err := a.Git.Fetch(ctx, a.Base); err != nil {
+				return fmt.Errorf("squash-merged, but failed to fetch %v: %w", a.Base, err)
+			}
+		}
+		if err := a.Git.MergeFFOnly(ctx, "origin/"+a.Base); err != nil {
+			return fmt.Errorf("squash-merged, but failed to fast-forward %v: %w", a.Base, err)
+		}
+		return nil
+	}
+	if err := a.Git.FetchUpdateBranch(ctx, a.Base); err != nil {
+		return fmt.Errorf("squash-merged, but failed to update local %v: %w", a.Base, err)
+	}
+	return nil
+}
+
+func deleteBranchAction(branch string, deleteRemote bool) string {
+	what := "the local branch " + branch
+	if deleteRemote {
+		what = "the local and origin branch " + branch
+	}
+	return "delete " + what + " if its content is what was merged"
 }
 
 // deleteMergedBranch deletes the branch if the content it holds is the
@@ -333,6 +454,136 @@ func (a *App) deleteMergedBranch(ctx context.Context, branch, mergeSHA string, a
 	}
 	a.printf("deleted %v from origin\n", branch)
 	return nil
+}
+
+// WriteNotesAsCommits rewrites the commit at rev to replace its commit body
+// with its git note (keeping the original subject line), re-parents all
+// descendants up to HEAD onto the rewritten commit, updates the checked-out
+// branch, and optionally force-pushes it to origin.
+func (a *App) WriteNotesAsCommits(ctx context.Context, rev string, push bool) error {
+	branch, targetSHA, headSHA, targetCommit, newMsg, err := a.prepareWriteNotes(ctx, rev)
+	if err != nil {
+		return err
+	}
+	commits := []string{targetSHA}
+	if targetSHA != headSHA {
+		descendants, err := a.Git.RevList(ctx, targetSHA+"..HEAD")
+		if err != nil {
+			return err
+		}
+		commits = append(commits, descendants...)
+	}
+
+	a.show("commit message for "+shortSHA(targetSHA), strings.TrimRight(newMsg, "\n"))
+	action := fmt.Sprintf("about to rewrite %d commit(s) on %v starting at %s", len(commits), branch, shortSHA(targetSHA))
+	if push {
+		action += ", then push with --force-with-lease to origin"
+	}
+	ok, err := a.confirm(action + ". proceed?")
+	if err != nil || !ok {
+		return err
+	}
+
+	newHead, err := a.rewriteCommits(ctx, commits, targetCommit, newMsg)
+	if err != nil {
+		return err
+	}
+	if err := a.Git.ResetKeep(ctx, newHead); err != nil {
+		return fmt.Errorf("rewrote commit chain to %s, but failed to update %v: %w", shortSHA(newHead), branch, err)
+	}
+	a.printf("updated %v to %s (previous tip was %s; undo with: git reset --hard %s)\n",
+		branch, shortSHA(newHead), shortSHA(headSHA), headSHA)
+	if push {
+		if err := a.Git.PushForceWithLease(ctx, branch); err != nil {
+			return fmt.Errorf("updated local %v to %s, but push failed: %w", branch, shortSHA(newHead), err)
+		}
+		a.printf("pushed %v to origin with --force-with-lease\n", branch)
+	}
+	return nil
+}
+
+func (a *App) prepareWriteNotes(ctx context.Context, rev string) (branch, targetSHA, headSHA string, targetCommit *Commit, newMsg string, err error) {
+	branch, err = a.Git.CurrentBranch(ctx)
+	if err != nil {
+		return "", "", "", nil, "", err
+	}
+	if branch == "HEAD" {
+		return "", "", "", nil, "", fmt.Errorf("write-notes-as-commits requires a checked-out branch, not a detached HEAD")
+	}
+	dirty, err := a.Git.WorkingTreeDirty(ctx)
+	if err != nil {
+		return "", "", "", nil, "", err
+	}
+	if dirty {
+		return "", "", "", nil, "", fmt.Errorf("working tree has uncommitted changes: commit or stash them before rewriting history")
+	}
+	targetSHA, err = a.Git.RevParse(ctx, rev+"^{commit}")
+	if err != nil {
+		return "", "", "", nil, "", err
+	}
+	headSHA, err = a.Git.RevParse(ctx, "HEAD")
+	if err != nil {
+		return "", "", "", nil, "", err
+	}
+	anc, err := a.Git.IsAncestor(ctx, targetSHA, "HEAD")
+	if err != nil {
+		return "", "", "", nil, "", err
+	}
+	if !anc {
+		return "", "", "", nil, "", fmt.Errorf("%v (%s) is not an ancestor of %v", rev, shortSHA(targetSHA), branch)
+	}
+	note := a.Git.Note(ctx, targetSHA)
+	if strings.TrimSpace(note) == "" {
+		return "", "", "", nil, "", fmt.Errorf("%v (%s) has no git note (if notes live on origin, fetch them with: git fetch origin 'refs/notes/*:refs/notes/*')", rev, shortSHA(targetSHA))
+	}
+	targetCommit, err = a.Git.ReadCommit(ctx, targetSHA)
+	if err != nil {
+		return "", "", "", nil, "", err
+	}
+	return branch, targetSHA, headSHA, targetCommit, formatNoteCommitMessage(targetCommit.Subject(), note), nil
+}
+
+func formatNoteCommitMessage(subject, note string) string {
+	body := strings.TrimSpace(note)
+	if subject == "" {
+		return body + "\n"
+	}
+	return subject + "\n\n" + body + "\n"
+}
+
+func (a *App) rewriteCommits(ctx context.Context, commits []string, targetCommit *Commit, newMsg string) (string, error) {
+	remap := make(map[string]string, len(commits))
+	var newHead string
+	for i, oldSHA := range commits {
+		c := targetCommit
+		msg := newMsg
+		if i > 0 {
+			var err error
+			c, err = a.Git.ReadCommit(ctx, oldSHA)
+			if err != nil {
+				return "", err
+			}
+			msg = c.Message
+		}
+		parents := make([]string, len(c.Parents))
+		for j, p := range c.Parents {
+			if np, ok := remap[p]; ok {
+				parents[j] = np
+			} else {
+				parents[j] = p
+			}
+		}
+		newSHA, err := a.Git.CommitTree(ctx, c, parents, msg)
+		if err != nil {
+			return "", err
+		}
+		if newSHA == "" && a.DryRun {
+			newSHA = "<rewritten-" + shortSHA(oldSHA) + ">"
+		}
+		remap[oldSHA] = newSHA
+		newHead = newSHA
+	}
+	return newHead, nil
 }
 
 // shortSHA abbreviates a hash for a message, leaving anything that is not one
