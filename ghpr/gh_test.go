@@ -277,3 +277,95 @@ func TestGHViewRetryRespectsContext(t *testing.T) {
 		t.Errorf("got %v, want context.Canceled", err)
 	}
 }
+
+func TestGHSquashMerge(t *testing.T) {
+	t.Run("with head sha", func(t *testing.T) {
+		cmd := `gh pr merge 42 --squash --subject "feat: something (#42)" --body-file - --match-head-commit abc123`
+		run := newFakeRunner(t).expect(cmd, "", nil)
+		gh := NewGH(run)
+		if err := gh.SquashMerge(t.Context(), 42, "feat: something (#42)", "plain body\n", "abc123"); err != nil {
+			t.Fatalf("SquashMerge: %v", err)
+		}
+		if got, want := run.stdinFor(cmd), "plain body\n"; got != want {
+			t.Errorf("stdin: got %q, want %q", got, want)
+		}
+		run.assertNoUnexpected()
+	})
+
+	t.Run("without head sha", func(t *testing.T) {
+		cmd := `gh pr merge 42 --squash --subject "feat: something (#42)" --body-file -`
+		run := newFakeRunner(t).expect(cmd, "", nil)
+		gh := NewGH(run)
+		if err := gh.SquashMerge(t.Context(), 42, "feat: something (#42)", "plain body\n", ""); err != nil {
+			t.Fatalf("SquashMerge: %v", err)
+		}
+		run.assertNoUnexpected()
+	})
+
+	t.Run("dry run", func(t *testing.T) {
+		var announced []string
+		run := newFakeRunner(t)
+		gh := NewGH(run).DryRun(func(cmd string) { announced = append(announced, cmd) })
+		if err := gh.SquashMerge(t.Context(), 42, "feat: something (#42)", "plain body\n", "abc123"); err != nil {
+			t.Fatalf("SquashMerge: %v", err)
+		}
+		if run.ranPrefix("gh pr merge") {
+			t.Error("a dry run merged the pull request")
+		}
+		want := `gh pr merge 42 --squash --subject "feat: something (#42)" --body-file - --match-head-commit abc123`
+		if len(announced) != 1 || announced[0] != want {
+			t.Errorf("got %v, want %q", announced, want)
+		}
+		run.assertNoUnexpected()
+	})
+}
+
+func TestPRPendingOrFailedChecks(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		checks      []StatusCheck
+		wantPending int
+		wantFailed  int
+	}{
+		{
+			name: "no checks",
+		},
+		{
+			name: "all passed or skipped",
+			checks: []StatusCheck{
+				{TypeName: "CheckRun", Name: "test", Status: "COMPLETED", Conclusion: "SUCCESS"},
+				{TypeName: "CheckRun", Name: "lint", Status: "COMPLETED", Conclusion: "NEUTRAL"},
+				{TypeName: "CheckRun", Name: "deploy", Status: "COMPLETED", Conclusion: "SKIPPED"},
+				{TypeName: "StatusContext", Context: "ci/build", State: "SUCCESS"},
+			},
+		},
+		{
+			name: "pending check run and context",
+			checks: []StatusCheck{
+				{TypeName: "CheckRun", Name: "test", Status: "IN_PROGRESS"},
+				{TypeName: "StatusContext", Context: "ci/lint", State: "PENDING"},
+			},
+			wantPending: 2,
+		},
+		{
+			name: "failed check run and error context",
+			checks: []StatusCheck{
+				{TypeName: "CheckRun", Name: "test", Status: "COMPLETED", Conclusion: "FAILURE"},
+				{TypeName: "CheckRun", Name: "cancel", Status: "COMPLETED", Conclusion: "CANCELLED"},
+				{TypeName: "StatusContext", Context: "ci/build", State: "ERROR"},
+			},
+			wantFailed: 3,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pr := &PR{StatusCheckRollup: tc.checks}
+			pending, failed := pr.PendingOrFailedChecks()
+			if len(pending) != tc.wantPending {
+				t.Errorf("pending = %v, want %d", pending, tc.wantPending)
+			}
+			if len(failed) != tc.wantFailed {
+				t.Errorf("failed = %v, want %d", failed, tc.wantFailed)
+			}
+		})
+	}
+}

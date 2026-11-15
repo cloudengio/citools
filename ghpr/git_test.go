@@ -7,6 +7,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -179,6 +180,134 @@ func TestGitDryRun(t *testing.T) {
 		if announced[i] != want[i] {
 			t.Errorf("got %q, want %q", announced[i], want[i])
 		}
+	}
+	run.assertNoUnexpected()
+}
+
+func TestGitMergeFFOnly(t *testing.T) {
+	run := newFakeRunner(t).expect("git merge --ff-only origin/main", "", nil)
+	g := NewGit(run)
+	if err := g.MergeFFOnly(t.Context(), "origin/main"); err != nil {
+		t.Fatalf("MergeFFOnly: %v", err)
+	}
+	run.assertNoUnexpected()
+
+	var announced []string
+	dryRun := newFakeRunner(t)
+	dg := NewGit(dryRun).DryRun(func(cmd string) { announced = append(announced, cmd) })
+	if err := dg.MergeFFOnly(t.Context(), "origin/main"); err != nil {
+		t.Fatalf("dry MergeFFOnly: %v", err)
+	}
+	if len(announced) != 1 || announced[0] != "git merge --ff-only origin/main" {
+		t.Errorf("got %v, want dry-run announcement", announced)
+	}
+	dryRun.assertNoUnexpected()
+}
+
+func TestGitFetchUpdateBranch(t *testing.T) {
+	run := newFakeRunner(t).expect("git fetch origin main:main", "", nil)
+	g := NewGit(run)
+	if err := g.FetchUpdateBranch(t.Context(), "main"); err != nil {
+		t.Fatalf("FetchUpdateBranch: %v", err)
+	}
+	run.assertNoUnexpected()
+
+	var announced []string
+	dryRun := newFakeRunner(t)
+	dg := NewGit(dryRun).DryRun(func(cmd string) { announced = append(announced, cmd) })
+	if err := dg.FetchUpdateBranch(t.Context(), "main"); err != nil {
+		t.Fatalf("dry FetchUpdateBranch: %v", err)
+	}
+	if len(announced) != 1 || announced[0] != "git fetch origin main:main" {
+		t.Errorf("got %v, want dry-run announcement", announced)
+	}
+	dryRun.assertNoUnexpected()
+}
+
+func TestParseCommit(t *testing.T) {
+	raw := "tree tree111\n" +
+		"parent par111\n" +
+		"parent par222\n" +
+		"author Alice Example <alice@example.com> 1700000000 -0800\n" +
+		"committer Bob Bot <noreply@example.com> 1700000100 +0000\n" +
+		"gpgsig -----BEGIN PGP SIGNATURE-----\n" +
+		" \n" +
+		" abc123\n" +
+		" -----END PGP SIGNATURE-----\n" +
+		"\n" +
+		"feat: subject (#42)\n\nold body\n"
+
+	c := must(parseCommit(raw))
+	if c.Tree != "tree111" {
+		t.Errorf("tree = %q, want tree111", c.Tree)
+	}
+	if !slices.Equal(c.Parents, []string{"par111", "par222"}) {
+		t.Errorf("parents = %v, want [par111 par222]", c.Parents)
+	}
+	if c.Author != (CommitIdentity{Name: "Alice Example", Email: "alice@example.com", Date: "1700000000 -0800"}) {
+		t.Errorf("author = %+v", c.Author)
+	}
+	if c.Committer != (CommitIdentity{Name: "Bob Bot", Email: "noreply@example.com", Date: "1700000100 +0000"}) {
+		t.Errorf("committer = %+v", c.Committer)
+	}
+	if c.Subject() != "feat: subject (#42)" {
+		t.Errorf("subject = %q", c.Subject())
+	}
+	if c.Message != "feat: subject (#42)\n\nold body\n" {
+		t.Errorf("message = %q", c.Message)
+	}
+}
+
+func TestGitRewriteHelpers(t *testing.T) {
+	raw := "tree tree111\nparent par111\nauthor A <a@b> 100 +0000\ncommitter C <c@d> 200 +0000\n\nsubject\n"
+	commitCmd := "git commit-tree tree111 -p newpar111 -F -"
+	run := newFakeRunner(t).
+		expect("git status --porcelain", "", nil).
+		expect("git merge-base sha1 sha2", "sha1\n", nil).
+		expect("git merge-base sha3 sha2", "sha0\n", nil).
+		expect("git rev-list --ancestry-path --reverse --topo-order sha1..HEAD", "c1\nc2\n", nil).
+		expect("git cat-file commit sha1", raw, nil).
+		expect(commitCmd, "newsha1\n", nil).
+		expect("git reset --keep newsha1", "", nil).
+		expect("git push --force-with-lease origin main", "", nil)
+
+	g := NewGit(run)
+	if dirty := must(g.WorkingTreeDirty(t.Context())); dirty {
+		t.Error("expected clean working tree")
+	}
+	if !must(g.IsAncestor(t.Context(), "sha1", "sha2")) {
+		t.Error("expected sha1 to be ancestor of sha2")
+	}
+	if must(g.IsAncestor(t.Context(), "sha3", "sha2")) {
+		t.Error("expected sha3 not to be ancestor of sha2")
+	}
+	if got := must(g.RevList(t.Context(), "sha1..HEAD")); !slices.Equal(got, []string{"c1", "c2"}) {
+		t.Errorf("RevList = %v", got)
+	}
+	c := must(g.ReadCommit(t.Context(), "sha1"))
+	newSHA := must(g.CommitTree(t.Context(), c, []string{"newpar111"}, "subject\n\nnote\n"))
+	if newSHA != "newsha1" {
+		t.Errorf("CommitTree = %q, want newsha1", newSHA)
+	}
+	if got := run.stdinFor("git commit-tree"); got != "subject\n\nnote\n" {
+		t.Errorf("commit-tree stdin = %q", got)
+	}
+	wantEnv := []string{
+		"GIT_AUTHOR_NAME=A",
+		"GIT_AUTHOR_EMAIL=a@b",
+		"GIT_AUTHOR_DATE=100 +0000",
+		"GIT_COMMITTER_NAME=C",
+		"GIT_COMMITTER_EMAIL=c@d",
+		"GIT_COMMITTER_DATE=200 +0000",
+	}
+	if got := run.envFor("git commit-tree"); !slices.Equal(got, wantEnv) {
+		t.Errorf("commit-tree env = %v, want %v", got, wantEnv)
+	}
+	if err := g.ResetKeep(t.Context(), newSHA); err != nil {
+		t.Fatalf("ResetKeep: %v", err)
+	}
+	if err := g.PushForceWithLease(t.Context(), "main"); err != nil {
+		t.Fatalf("PushForceWithLease: %v", err)
 	}
 	run.assertNoUnexpected()
 }

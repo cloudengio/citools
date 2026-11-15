@@ -15,18 +15,31 @@ import (
 
 // prFields are the fields of a pull request that ghpr asks gh for. They are
 // requested together because gh makes one api call per view.
-const prFields = "number,state,body,title,url,headRefName,headRefOid,mergeCommit"
+const prFields = "number,state,body,title,url,headRefName,headRefOid,mergeCommit,statusCheckRollup"
+
+// StatusCheck is one entry from a pull request's statusCheckRollup. GitHub
+// returns both CheckRun objects (Name, Status, Conclusion) and legacy
+// StatusContext objects (Context, State).
+type StatusCheck struct {
+	TypeName   string `json:"__typename"`
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+	Context    string `json:"context"`
+	State      string `json:"state"`
+}
 
 // PR is the part of a GitHub pull request that ghpr uses.
 type PR struct {
-	Number      int    `json:"number"`
-	State       string `json:"state"` // OPEN, CLOSED or MERGED
-	Body        string `json:"body"`
-	Title       string `json:"title"`
-	URL         string `json:"url"`
-	HeadRefName string `json:"headRefName"`
-	HeadRefOid  string `json:"headRefOid"`
-	MergeCommit *struct {
+	Number            int           `json:"number"`
+	State             string        `json:"state"` // OPEN, CLOSED or MERGED
+	Body              string        `json:"body"`
+	Title             string        `json:"title"`
+	URL               string        `json:"url"`
+	HeadRefName       string        `json:"headRefName"`
+	HeadRefOid        string        `json:"headRefOid"`
+	StatusCheckRollup []StatusCheck `json:"statusCheckRollup"`
+	MergeCommit       *struct {
 		Oid string `json:"oid"`
 	} `json:"mergeCommit"`
 }
@@ -41,6 +54,48 @@ func (p *PR) MergeSHA() string {
 		return ""
 	}
 	return p.MergeCommit.Oid
+}
+
+// PendingOrFailedChecks returns human-readable descriptions of any status
+// checks in StatusCheckRollup that have not passed or been skipped.
+func (p *PR) PendingOrFailedChecks() (pending, failed []string) {
+	for _, c := range p.StatusCheckRollup {
+		name := c.Name
+		if name == "" {
+			name = c.Context
+		}
+		if name == "" {
+			name = "unnamed check"
+		}
+		if c.TypeName == "CheckRun" || c.Status != "" {
+			if c.Status != "COMPLETED" {
+				pending = append(pending, fmt.Sprintf("%s (%s)", name, strings.ToLower(c.Status)))
+				continue
+			}
+			switch c.Conclusion {
+			case "SUCCESS", "NEUTRAL", "SKIPPED":
+			default:
+				reason := strings.ToLower(c.Conclusion)
+				if reason == "" {
+					reason = "unknown"
+				}
+				failed = append(failed, fmt.Sprintf("%s (%s)", name, reason))
+			}
+			continue
+		}
+		switch c.State {
+		case "SUCCESS":
+		case "PENDING", "EXPECTED":
+			pending = append(pending, fmt.Sprintf("%s (%s)", name, strings.ToLower(c.State)))
+		default:
+			reason := strings.ToLower(c.State)
+			if reason == "" {
+				reason = "unknown"
+			}
+			failed = append(failed, fmt.Sprintf("%s (%s)", name, reason))
+		}
+	}
+	return pending, failed
 }
 
 // ErrNoPR reports that a branch has no pull request.
@@ -173,5 +228,18 @@ func (h *GH) Create(ctx context.Context, base, branch, title, body string, draft
 func (h *GH) UpdateBody(ctx context.Context, number int, body string) error {
 	_, err := h.write.Run(ctx, []byte(body), "gh", "pr", "edit",
 		fmt.Sprintf("%d", number), "--body-file", "-")
+	return err
+}
+
+// SquashMerge squash-merges the pull request with subject and body as the
+// squash commit message. If headSHA is non-empty, --match-head-commit ensures
+// the remote head still matches the commit whose description was reviewed.
+func (h *GH) SquashMerge(ctx context.Context, number int, subject, body, headSHA string) error {
+	args := []string{"pr", "merge", fmt.Sprintf("%d", number), "--squash",
+		"--subject", subject, "--body-file", "-"}
+	if headSHA != "" {
+		args = append(args, "--match-head-commit", headSHA)
+	}
+	_, err := h.write.Run(ctx, []byte(body), "gh", args...)
 	return err
 }

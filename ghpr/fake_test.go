@@ -17,6 +17,7 @@ import (
 type fakeCall struct {
 	cmd   string // as commandLine renders it
 	stdin string
+	env   []string
 }
 
 // fakeRunner answers commands from a script keyed by the command line, and
@@ -68,11 +69,15 @@ func (f *fakeRunner) expectPrefix(cmd, out string, err error) *fakeRunner {
 	return f
 }
 
-func (f *fakeRunner) Run(_ context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+func (f *fakeRunner) Run(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+	return f.RunEnv(ctx, nil, stdin, name, args...)
+}
+
+func (f *fakeRunner) RunEnv(_ context.Context, env []string, stdin []byte, name string, args ...string) ([]byte, error) {
 	cmd := commandLine(name, args)
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, fakeCall{cmd: cmd, stdin: string(stdin)})
+	f.calls = append(f.calls, fakeCall{cmd: cmd, stdin: string(stdin), env: append([]string(nil), env...)})
 	if q := f.queue[cmd]; len(q) > 0 {
 		res := q[0]
 		f.queue[cmd] = q[1:]
@@ -124,6 +129,18 @@ func (f *fakeRunner) stdinFor(prefix string) string {
 		}
 	}
 	return ""
+}
+
+// envFor returns the environment variables given to the first matching command.
+func (f *fakeRunner) envFor(prefix string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, call := range f.calls {
+		if strings.HasPrefix(call.cmd, prefix) {
+			return append([]string(nil), call.env...)
+		}
+	}
+	return nil
 }
 
 func (f *fakeRunner) ranCommands() []string {
