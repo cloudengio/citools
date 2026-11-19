@@ -37,7 +37,7 @@ func TestCreatePR(t *testing.T) {
 	run := newFakeRunner(t)
 	onFeatureBranch(run).
 		expect(viewCmd("my-feature"), "", errors.New(noPRErr)).
-		expect("git status --porcelain", "", nil)
+		expect("git status --short --untracked-files=no", "", nil)
 	readyToSummarize(run, "## Overview\nit does a thing\n").
 		expect(`gh pr create --base main --head my-feature --title "chore: update deps" --body-file -`,
 			"https://github.com/o/r/pull/7\n", nil)
@@ -64,7 +64,7 @@ func TestCreatePRDraft(t *testing.T) {
 	run := newFakeRunner(t)
 	onFeatureBranch(run).
 		expect(viewCmd("my-feature"), "", errors.New(noPRErr)).
-		expect("git status --porcelain", "", nil)
+		expect("git status --short --untracked-files=no", "", nil)
 	readyToSummarize(run, "a summary").
 		expectPrefix("gh pr create", "url\n", nil)
 
@@ -154,7 +154,7 @@ func TestCreatePRPushesBranch(t *testing.T) {
 	run := newFakeRunner(t)
 	onFeatureBranch(run).
 		expect(viewCmd("my-feature"), "", errors.New(noPRErr)).
-		expect("git status --porcelain", "", nil).
+		expect("git status --short --untracked-files=no", "", nil).
 		expect("git ls-remote --heads origin my-feature", "", nil).
 		expect("git push --set-upstream origin my-feature", "", nil).
 		expect("git merge-base my-feature origin/main", "mergebase\n", nil).
@@ -181,7 +181,7 @@ func TestCreatePRWithoutPush(t *testing.T) {
 	run := newFakeRunner(t)
 	onFeatureBranch(run).
 		expect(viewCmd("my-feature"), "", errors.New(noPRErr)).
-		expect("git status --porcelain", "", nil).
+		expect("git status --short --untracked-files=no", "", nil).
 		expect("git ls-remote --heads origin my-feature", "", nil)
 	app, _ := testApp(t, run, "")
 	err := app.CreatePR(t.Context(), "t", false, false)
@@ -197,7 +197,7 @@ func TestCreatePRDeclined(t *testing.T) {
 	run := newFakeRunner(t)
 	onFeatureBranch(run).
 		expect(viewCmd("my-feature"), "", errors.New(noPRErr)).
-		expect("git status --porcelain", "", nil)
+		expect("git status --short --untracked-files=no", "", nil)
 	readyToSummarize(run, "a summary")
 
 	// Answering no stops before anything is created, and is not an error.
@@ -218,9 +218,8 @@ func TestCreatePRCommitsUncommittedChanges(t *testing.T) {
 		run := newFakeRunner(t)
 		onFeatureBranch(run).
 			expect(viewCmd("my-feature"), "", errors.New(noPRErr)).
-			expect("git status --porcelain", " M a.go\n?? b.go\n", nil).
-			expect("git status --short", " M a.go\n?? b.go\n", nil).
-			expect("git add -A", "", nil).
+			expect("git status --short --untracked-files=no", " M a.go\n?? b.go\n", nil).
+			expect("git add -u", "", nil).
 			expect("git commit -F -", "", nil).
 			expect("git push --set-upstream origin my-feature", "", nil)
 		readyToSummarize(run, "## Overview\nincludes uncommitted work").
@@ -246,9 +245,8 @@ func TestCreatePRCommitsUncommittedChanges(t *testing.T) {
 		run := newFakeRunner(t)
 		onFeatureBranch(run).
 			expect(viewCmd("my-feature"), "", errors.New(noPRErr)).
-			expect("git status --porcelain", " M a.go\n", nil).
-			expect("git status --short", " M a.go\n", nil).
-			expect("git add -A", "", nil).
+			expect("git status --short --untracked-files=no", " M a.go\n", nil).
+			expect("git add -u", "", nil).
 			expect("git commit -F -", "", nil).
 			expect("git ls-remote --heads origin my-feature", "", nil).
 			expect("git push --set-upstream origin my-feature", "", nil).
@@ -271,9 +269,8 @@ func TestCreatePRCommitsUncommittedChanges(t *testing.T) {
 		run := newFakeRunner(t)
 		onFeatureBranch(run).
 			expect(viewCmd("my-feature"), "", errors.New(noPRErr)).
-			expect("git status --porcelain", " M a.go\n", nil).
-			expect("git status --short", " M a.go\n", nil).
-			expect("git add -A", "", nil).
+			expect("git status --short --untracked-files=no", " M a.go\n", nil).
+			expect("git add -u", "", nil).
 			expect("git commit -F -", "", nil).
 			expect("git ls-remote --heads origin my-feature", "sha\trefs/heads/my-feature\n", nil)
 
@@ -291,8 +288,7 @@ func TestCreatePRCommitsUncommittedChanges(t *testing.T) {
 		run := newFakeRunner(t)
 		onFeatureBranch(run).
 			expect(viewCmd("my-feature"), "", errors.New(noPRErr)).
-			expect("git status --porcelain", " M a.go\n", nil).
-			expect("git status --short", " M a.go\n", nil)
+			expect("git status --short --untracked-files=no", " M a.go\n", nil)
 
 		app, _ := testApp(t, run, "n\n")
 		err := app.CreatePR(t.Context(), "feat: declined", false, true)
@@ -308,7 +304,7 @@ func TestCreatePRCommitsUncommittedChanges(t *testing.T) {
 		run := newFakeRunner(t)
 		onFeatureBranch(run).
 			expect(viewCmd("my-feature"), "", errors.New(noPRErr)).
-			expect("git status --porcelain", " M a.go\n", nil)
+			expect("git status --short --untracked-files=no", " M a.go\n", nil)
 
 		app, _ := testApp(t, run, "")
 		err := app.CreatePR(t.Context(), "   ", false, true)
@@ -336,6 +332,9 @@ func TestCreatePRCommitUncommittedRealRepo(t *testing.T) {
 	gitRun("init", "-b", "main")
 	gitRun("config", "user.name", "Test User")
 	gitRun("config", "user.email", "test@example.com")
+	// Even with untracked files shown by default config, commitUncommitted must
+	// ignore untracked files and commit only tracked changes.
+	gitRun("config", "status.showUntrackedFiles", "all")
 
 	if err := os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("v1\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -350,6 +349,12 @@ func TestCreatePRCommitUncommittedRealRepo(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "untracked.txt"), []byte("new\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub", "nested.txt"), []byte("nested\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	var out bytes.Buffer
 	app := &App{
@@ -359,18 +364,40 @@ func TestCreatePRCommitUncommittedRealRepo(t *testing.T) {
 		Stdout: &out,
 		Stdin:  strings.NewReader("y\n"),
 	}
-	committed, err := app.commitUncommitted(t.Context(), "feature", "feat: commit working tree")
+	committed, err := app.commitUncommitted(t.Context(), "feature", "feat: commit tracked only")
 	if err != nil {
 		t.Fatalf("commitUncommitted: %v", err)
 	}
 	if !committed {
 		t.Fatal("expected committed == true")
 	}
-	if got := gitRun("log", "-1", "--format=%B"); got != "feat: commit working tree" {
+	if got := gitRun("log", "-1", "--format=%B"); got != "feat: commit tracked only" {
 		t.Errorf("commit message = %q", got)
 	}
-	if dirty := gitRun("status", "--porcelain"); dirty != "" {
-		t.Errorf("working tree still dirty: %q", dirty)
+	if got := gitRun("diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"); got != "tracked.txt" {
+		t.Errorf("committed files = %q, want only tracked.txt", got)
+	}
+	for _, excluded := range []string{"untracked.txt", "sub/nested.txt"} {
+		if strings.Contains(out.String(), excluded) {
+			t.Errorf("status preview unexpectedly included untracked file %q:\n%s", excluded, out.String())
+		}
+	}
+	// Untracked files must remain untracked in the working tree.
+	untracked := gitRun("ls-files", "--others", "--exclude-standard")
+	for _, want := range []string{"untracked.txt", "sub/nested.txt"} {
+		if !strings.Contains(untracked, want) {
+			t.Errorf("untracked file %q missing after commit:\n%s", want, untracked)
+		}
+	}
+
+	// Untracked-only working tree must not create a commit.
+	out.Reset()
+	committed, err = app.commitUncommitted(t.Context(), "feature", "feat: should not commit")
+	if err != nil {
+		t.Fatalf("commitUncommitted untracked-only: %v", err)
+	}
+	if committed {
+		t.Fatal("expected committed == false when only untracked files exist")
 	}
 }
 

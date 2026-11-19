@@ -336,17 +336,17 @@ func TestGitNotesListAndLogSubjects(t *testing.T) {
 
 func TestGitStageAndCommit(t *testing.T) {
 	run := newFakeRunner(t).
-		expect("git status --short", " M a.go\n?? b.go\n", nil).
-		expect("git add -A", "", nil).
+		expect("git status --short --untracked-files=no", " M a.go\n", nil).
+		expect("git add -u", "", nil).
 		expect("git commit -F -", "", nil)
 
 	g := NewGit(run)
 	status := must(g.StatusShort(t.Context()))
-	if status != " M a.go\n?? b.go" {
+	if status != " M a.go" {
 		t.Errorf("StatusShort = %q", status)
 	}
-	if err := g.StageAll(t.Context()); err != nil {
-		t.Fatalf("StageAll: %v", err)
+	if err := g.StageTracked(t.Context()); err != nil {
+		t.Fatalf("StageTracked: %v", err)
 	}
 	if err := g.Commit(t.Context(), "feat: new changes"); err != nil {
 		t.Fatalf("Commit: %v", err)
@@ -359,13 +359,13 @@ func TestGitStageAndCommit(t *testing.T) {
 	var announced []string
 	dry := newFakeRunner(t)
 	dg := NewGit(dry).DryRun(func(cmd string) { announced = append(announced, cmd) })
-	if err := dg.StageAll(t.Context()); err != nil {
-		t.Fatalf("dry StageAll: %v", err)
+	if err := dg.StageTracked(t.Context()); err != nil {
+		t.Fatalf("dry StageTracked: %v", err)
 	}
 	if err := dg.Commit(t.Context(), "feat: dry"); err != nil {
 		t.Fatalf("dry Commit: %v", err)
 	}
-	if !slices.Equal(announced, []string{"git add -A", "git commit -F -"}) {
+	if !slices.Equal(announced, []string{"git add -u", "git commit -F -"}) {
 		t.Errorf("dry announced = %v", announced)
 	}
 	dry.assertNoUnexpected()

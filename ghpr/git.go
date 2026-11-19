@@ -257,19 +257,20 @@ func (g *Git) WorkingTreeDirty(ctx context.Context) (bool, error) {
 	return out != "", nil
 }
 
-// StatusShort returns the short working tree status output.
+// StatusShort returns the short working tree status output, ignoring untracked
+// files.
 func (g *Git) StatusShort(ctx context.Context) (string, error) {
-	out, err := g.read.Run(ctx, nil, "git", "status", "--short")
+	out, err := g.read.Run(ctx, nil, "git", "status", "--short", "--untracked-files=no")
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimRight(string(out), "\n"), nil
 }
 
-// StageAll stages all modified, deleted, and untracked files in the working
-// tree.
-func (g *Git) StageAll(ctx context.Context) error {
-	_, err := g.write.Run(ctx, nil, "git", "add", "-A")
+// StageTracked stages modified and deleted tracked files in the working tree,
+// leaving untracked files alone.
+func (g *Git) StageTracked(ctx context.Context) error {
+	_, err := g.write.Run(ctx, nil, "git", "add", "-u")
 	return err
 }
 
