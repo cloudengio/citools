@@ -4,8 +4,8 @@ go 1.26.0
 
 require (
 	cloudeng.io/errors v0.0.14-0.20260312171538-61fcde6ce278
-	cloudeng.io/sync v0.0.12-0.20260804222138-e9281ed260ba
-	golang.org/x/mod v0.42.0
+	cloudeng.io/sync v0.0.12-0.20261112002641-3f0b5fb85a24
+	golang.org/x/mod v0.43.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
