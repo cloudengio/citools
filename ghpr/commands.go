@@ -70,9 +70,9 @@ func (a *App) confirm(question string) (bool, error) {
 }
 
 // CreatePR creates a pull request for the current branch, with a description
-// generated from what the branch changes. Any uncommitted changes on the branch
-// are staged and committed with title before pushing and creating the pull
-// request.
+// generated from what the branch changes. Any uncommitted changes to tracked
+// files on the branch (ignoring untracked files) are staged and committed with
+// title before pushing and creating the pull request.
 func (a *App) CreatePR(ctx context.Context, title string, draft, push bool) error {
 	branch, err := a.Git.CurrentBranch(ctx)
 	if err != nil {
@@ -133,9 +133,9 @@ func (a *App) CreatePR(ctx context.Context, title string, draft, push bool) erro
 	return nil
 }
 
-// commitUncommitted stages and commits any uncommitted changes (including
-// untracked files) on branch with title, reporting whether a commit was
-// created.
+// commitUncommitted stages and commits any uncommitted changes to tracked
+// files (ignoring untracked files) on branch with title, reporting whether a
+// commit was created.
 func (a *App) commitUncommitted(ctx context.Context, branch, title string) (bool, error) {
 	status, err := a.Git.StatusShort(ctx)
 	if err != nil {
@@ -155,7 +155,7 @@ func (a *App) commitUncommitted(ctx context.Context, branch, title string) (bool
 		}
 		return false, err
 	}
-	if err := a.Git.StageAll(ctx); err != nil {
+	if err := a.Git.StageTracked(ctx); err != nil {
 		return false, err
 	}
 	if err := a.Git.Commit(ctx, title); err != nil {

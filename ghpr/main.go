@@ -41,7 +41,7 @@ const cmdSpec = `name: ghpr
 summary: create and maintain github pull request descriptions with an ai agent
 commands:
   - name: create-pr
-    summary: create a pull request for the current branch, committing any uncommitted changes with the title first
+    summary: create a pull request for the current branch, committing any uncommitted tracked changes with the title first
     args:
       - "<title> - the title of the pull request, eg. 'chore: update deps'"
   - name: update-summary
