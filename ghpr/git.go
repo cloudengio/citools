@@ -257,9 +257,10 @@ func (g *Git) WorkingTreeDirty(ctx context.Context) (bool, error) {
 	return out != "", nil
 }
 
-// StatusShort returns the short working tree status output.
+// StatusShort returns the short working tree status output, including all
+// untracked files regardless of git status.showUntrackedFiles configuration.
 func (g *Git) StatusShort(ctx context.Context) (string, error) {
-	out, err := g.read.Run(ctx, nil, "git", "status", "--short")
+	out, err := g.read.Run(ctx, nil, "git", "status", "--short", "--untracked-files=all")
 	if err != nil {
 		return "", err
 	}

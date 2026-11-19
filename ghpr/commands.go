@@ -133,22 +133,19 @@ func (a *App) CreatePR(ctx context.Context, title string, draft, push bool) erro
 	return nil
 }
 
-// commitUncommitted stages and commits any uncommitted changes on branch with
-// title, reporting whether a commit was created.
+// commitUncommitted stages and commits any uncommitted changes (including
+// untracked files) on branch with title, reporting whether a commit was
+// created.
 func (a *App) commitUncommitted(ctx context.Context, branch, title string) (bool, error) {
-	dirty, err := a.Git.WorkingTreeDirty(ctx)
+	status, err := a.Git.StatusShort(ctx)
 	if err != nil {
 		return false, err
 	}
-	if !dirty {
+	if status == "" {
 		return false, nil
 	}
 	if strings.TrimSpace(title) == "" {
 		return false, fmt.Errorf("cannot commit uncommitted changes with an empty title")
-	}
-	status, err := a.Git.StatusShort(ctx)
-	if err != nil {
-		return false, err
 	}
 	a.show("uncommitted changes on "+branch, status)
 	ok, err := a.confirm(fmt.Sprintf("commit uncommitted changes on %v with message %q?", branch, title))

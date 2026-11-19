@@ -336,7 +336,7 @@ func TestGitNotesListAndLogSubjects(t *testing.T) {
 
 func TestGitStageAndCommit(t *testing.T) {
 	run := newFakeRunner(t).
-		expect("git status --short", " M a.go\n?? b.go\n", nil).
+		expect("git status --short --untracked-files=all", " M a.go\n?? b.go\n", nil).
 		expect("git add -A", "", nil).
 		expect("git commit -F -", "", nil)
 
