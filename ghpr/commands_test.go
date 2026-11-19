@@ -35,7 +35,9 @@ func readyToSummarize(run *fakeRunner, summary string) *fakeRunner {
 
 func TestCreatePR(t *testing.T) {
 	run := newFakeRunner(t)
-	onFeatureBranch(run).expect(viewCmd("my-feature"), "", errors.New(noPRErr))
+	onFeatureBranch(run).
+		expect(viewCmd("my-feature"), "", errors.New(noPRErr)).
+		expect("git status --porcelain", "", nil)
 	readyToSummarize(run, "## Overview\nit does a thing\n").
 		expect(`gh pr create --base main --head my-feature --title "chore: update deps" --body-file -`,
 			"https://github.com/o/r/pull/7\n", nil)
@@ -60,7 +62,9 @@ func TestCreatePR(t *testing.T) {
 
 func TestCreatePRDraft(t *testing.T) {
 	run := newFakeRunner(t)
-	onFeatureBranch(run).expect(viewCmd("my-feature"), "", errors.New(noPRErr))
+	onFeatureBranch(run).
+		expect(viewCmd("my-feature"), "", errors.New(noPRErr)).
+		expect("git status --porcelain", "", nil)
 	readyToSummarize(run, "a summary").
 		expectPrefix("gh pr create", "url\n", nil)
 
@@ -150,6 +154,7 @@ func TestCreatePRPushesBranch(t *testing.T) {
 	run := newFakeRunner(t)
 	onFeatureBranch(run).
 		expect(viewCmd("my-feature"), "", errors.New(noPRErr)).
+		expect("git status --porcelain", "", nil).
 		expect("git ls-remote --heads origin my-feature", "", nil).
 		expect("git push --set-upstream origin my-feature", "", nil).
 		expect("git merge-base my-feature origin/main", "mergebase\n", nil).
@@ -176,6 +181,7 @@ func TestCreatePRWithoutPush(t *testing.T) {
 	run := newFakeRunner(t)
 	onFeatureBranch(run).
 		expect(viewCmd("my-feature"), "", errors.New(noPRErr)).
+		expect("git status --porcelain", "", nil).
 		expect("git ls-remote --heads origin my-feature", "", nil)
 	app, _ := testApp(t, run, "")
 	err := app.CreatePR(t.Context(), "t", false, false)
@@ -189,7 +195,9 @@ func TestCreatePRWithoutPush(t *testing.T) {
 
 func TestCreatePRDeclined(t *testing.T) {
 	run := newFakeRunner(t)
-	onFeatureBranch(run).expect(viewCmd("my-feature"), "", errors.New(noPRErr))
+	onFeatureBranch(run).
+		expect(viewCmd("my-feature"), "", errors.New(noPRErr)).
+		expect("git status --porcelain", "", nil)
 	readyToSummarize(run, "a summary")
 
 	// Answering no stops before anything is created, and is not an error.
@@ -202,6 +210,167 @@ func TestCreatePRDeclined(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "aborted") {
 		t.Errorf("the output does not say it was aborted:\n%v", out)
+	}
+}
+
+func TestCreatePRCommitsUncommittedChanges(t *testing.T) {
+	t.Run("branch already on origin pushes new commit", func(t *testing.T) {
+		run := newFakeRunner(t)
+		onFeatureBranch(run).
+			expect(viewCmd("my-feature"), "", errors.New(noPRErr)).
+			expect("git status --porcelain", " M a.go\n?? b.go\n", nil).
+			expect("git status --short", " M a.go\n?? b.go\n", nil).
+			expect("git add -A", "", nil).
+			expect("git commit -F -", "", nil).
+			expect("git push --set-upstream origin my-feature", "", nil)
+		readyToSummarize(run, "## Overview\nincludes uncommitted work").
+			expect(`gh pr create --base main --head my-feature --title "feat: uncommitted" --body-file -`,
+				"https://github.com/o/r/pull/9\n", nil)
+
+		app, out := testApp(t, run, "y\ny\ny\n")
+		if err := app.CreatePR(t.Context(), "feat: uncommitted", false, true); err != nil {
+			t.Fatalf("CreatePR: %v", err)
+		}
+		if got := run.stdinFor("git commit -F -"); got != "feat: uncommitted" {
+			t.Errorf("commit message = %q, want %q", got, "feat: uncommitted")
+		}
+		for _, want := range []string{"uncommitted changes on my-feature", "committed changes on my-feature", "push the newly committed changes", "https://github.com/o/r/pull/9"} {
+			if !strings.Contains(out.String(), want) {
+				t.Errorf("output missing %q:\n%v", want, out)
+			}
+		}
+		run.assertNoUnexpected()
+	})
+
+	t.Run("branch not on origin yet commits and pushes once", func(t *testing.T) {
+		run := newFakeRunner(t)
+		onFeatureBranch(run).
+			expect(viewCmd("my-feature"), "", errors.New(noPRErr)).
+			expect("git status --porcelain", " M a.go\n", nil).
+			expect("git status --short", " M a.go\n", nil).
+			expect("git add -A", "", nil).
+			expect("git commit -F -", "", nil).
+			expect("git ls-remote --heads origin my-feature", "", nil).
+			expect("git push --set-upstream origin my-feature", "", nil).
+			expect("git merge-base my-feature origin/main", "mergebase\n", nil).
+			expect(diffCmd("mergebase", "my-feature"), "a diff\n", nil).
+			expect(`claude -p --allowedTools ""`, "summary", nil).
+			expectPrefix("gh pr create", "url\n", nil)
+
+		app, _ := testApp(t, run, "y\ny\ny\n")
+		if err := app.CreatePR(t.Context(), "feat: first push", false, true); err != nil {
+			t.Fatalf("CreatePR: %v", err)
+		}
+		if got := run.stdinFor("git commit -F -"); got != "feat: first push" {
+			t.Errorf("commit message = %q", got)
+		}
+		run.assertNoUnexpected()
+	})
+
+	t.Run("without push fails after committing locally", func(t *testing.T) {
+		run := newFakeRunner(t)
+		onFeatureBranch(run).
+			expect(viewCmd("my-feature"), "", errors.New(noPRErr)).
+			expect("git status --porcelain", " M a.go\n", nil).
+			expect("git status --short", " M a.go\n", nil).
+			expect("git add -A", "", nil).
+			expect("git commit -F -", "", nil).
+			expect("git ls-remote --heads origin my-feature", "sha\trefs/heads/my-feature\n", nil)
+
+		app, _ := testApp(t, run, "y\n")
+		err := app.CreatePR(t.Context(), "feat: local commit", false, false)
+		if err == nil || !strings.Contains(err.Error(), "new commits that are not on origin") {
+			t.Errorf("got %v, want new-commits push error", err)
+		}
+		if run.ranPrefix("git push") || run.ranPrefix("gh pr create") {
+			t.Errorf("unexpected push/create ran: %v", run.ranCommands())
+		}
+	})
+
+	t.Run("declined stops before staging or creating pr", func(t *testing.T) {
+		run := newFakeRunner(t)
+		onFeatureBranch(run).
+			expect(viewCmd("my-feature"), "", errors.New(noPRErr)).
+			expect("git status --porcelain", " M a.go\n", nil).
+			expect("git status --short", " M a.go\n", nil)
+
+		app, _ := testApp(t, run, "n\n")
+		err := app.CreatePR(t.Context(), "feat: declined", false, true)
+		if err == nil || !strings.Contains(err.Error(), "must be committed") {
+			t.Errorf("got %v, want commit-required error", err)
+		}
+		if run.ranPrefix("git add") || run.ranPrefix("git commit") || run.ranPrefix("gh pr create") {
+			t.Errorf("unexpected commands ran: %v", run.ranCommands())
+		}
+	})
+
+	t.Run("empty title refused when dirty", func(t *testing.T) {
+		run := newFakeRunner(t)
+		onFeatureBranch(run).
+			expect(viewCmd("my-feature"), "", errors.New(noPRErr)).
+			expect("git status --porcelain", " M a.go\n", nil)
+
+		app, _ := testApp(t, run, "")
+		err := app.CreatePR(t.Context(), "   ", false, true)
+		if err == nil || !strings.Contains(err.Error(), "empty title") {
+			t.Errorf("got %v, want empty-title error", err)
+		}
+		if run.ranPrefix("git add") || run.ranPrefix("git commit") {
+			t.Errorf("staged/committed despite empty title: %v", run.ranCommands())
+		}
+	})
+}
+
+func TestCreatePRCommitUncommittedRealRepo(t *testing.T) {
+	dir := t.TempDir()
+	r := dirRunner{dir: dir}
+	gitRun := func(args ...string) string {
+		t.Helper()
+		out, err := r.RunEnv(t.Context(), nil, nil, "git", args...)
+		if err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	gitRun("init", "-b", "main")
+	gitRun("config", "user.name", "Test User")
+	gitRun("config", "user.email", "test@example.com")
+
+	if err := os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("v1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitRun("add", "tracked.txt")
+	gitRun("commit", "-m", "initial")
+
+	gitRun("switch", "-c", "feature")
+	if err := os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("v2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "untracked.txt"), []byte("new\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	app := &App{
+		Git:    NewGit(r),
+		GH:     NewGH(r),
+		Base:   "main",
+		Stdout: &out,
+		Stdin:  strings.NewReader("y\n"),
+	}
+	committed, err := app.commitUncommitted(t.Context(), "feature", "feat: commit working tree")
+	if err != nil {
+		t.Fatalf("commitUncommitted: %v", err)
+	}
+	if !committed {
+		t.Fatal("expected committed == true")
+	}
+	if got := gitRun("log", "-1", "--format=%B"); got != "feat: commit working tree" {
+		t.Errorf("commit message = %q", got)
+	}
+	if dirty := gitRun("status", "--porcelain"); dirty != "" {
+		t.Errorf("working tree still dirty: %q", dirty)
 	}
 }
 

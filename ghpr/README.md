@@ -5,7 +5,7 @@ Usage of `ghpr`
 
     create and maintain github pull request descriptions with an ai agent
 
-                  create-pr - create a pull request for the current branch, with a description generated from its diff
+                  create-pr - create a pull request for the current branch, committing any uncommitted changes with the title first
              update-summary - regenerate the description of a pull request from what its branch now changes
          merge-with-summary - squash-merge a pull request with its description as the commit summary
                   post-note - [deprecated] attach the description of a merged pull request to the commit it created on the base branch

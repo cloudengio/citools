@@ -70,7 +70,9 @@ func (a *App) confirm(question string) (bool, error) {
 }
 
 // CreatePR creates a pull request for the current branch, with a description
-// generated from what the branch changes.
+// generated from what the branch changes. Any uncommitted changes on the branch
+// are staged and committed with title before pushing and creating the pull
+// request.
 func (a *App) CreatePR(ctx context.Context, title string, draft, push bool) error {
 	branch, err := a.Git.CurrentBranch(ctx)
 	if err != nil {
@@ -98,7 +100,12 @@ func (a *App) CreatePR(ctx context.Context, title string, draft, push bool) erro
 		return nil
 	}
 
-	if err := a.ensurePushed(ctx, branch, push); err != nil {
+	committed, err := a.commitUncommitted(ctx, branch, title)
+	if err != nil {
+		return err
+	}
+
+	if err := a.ensurePushed(ctx, branch, push, committed); err != nil {
 		return err
 	}
 
@@ -126,20 +133,62 @@ func (a *App) CreatePR(ctx context.Context, title string, draft, push bool) erro
 	return nil
 }
 
-// ensurePushed makes sure the branch is on origin, which GitHub requires
-// before a pull request can refer to it.
-func (a *App) ensurePushed(ctx context.Context, branch string, push bool) error {
+// commitUncommitted stages and commits any uncommitted changes on branch with
+// title, reporting whether a commit was created.
+func (a *App) commitUncommitted(ctx context.Context, branch, title string) (bool, error) {
+	dirty, err := a.Git.WorkingTreeDirty(ctx)
+	if err != nil {
+		return false, err
+	}
+	if !dirty {
+		return false, nil
+	}
+	if strings.TrimSpace(title) == "" {
+		return false, fmt.Errorf("cannot commit uncommitted changes with an empty title")
+	}
+	status, err := a.Git.StatusShort(ctx)
+	if err != nil {
+		return false, err
+	}
+	a.show("uncommitted changes on "+branch, status)
+	ok, err := a.confirm(fmt.Sprintf("commit uncommitted changes on %v with message %q?", branch, title))
+	if err != nil || !ok {
+		if err == nil {
+			err = fmt.Errorf("uncommitted changes on %v must be committed before creating a pull request", branch)
+		}
+		return false, err
+	}
+	if err := a.Git.StageAll(ctx); err != nil {
+		return false, err
+	}
+	if err := a.Git.Commit(ctx, title); err != nil {
+		return false, err
+	}
+	a.printf("committed changes on %v with message %q\n", branch, title)
+	return true, nil
+}
+
+// ensurePushed makes sure the branch (including any newly created commit) is on
+// origin, which GitHub requires before a pull request can refer to it.
+func (a *App) ensurePushed(ctx context.Context, branch string, push, committed bool) error {
 	onOrigin, err := a.Git.RemoteBranchExists(ctx, branch)
 	if err != nil {
 		return err
 	}
-	if onOrigin {
+	if onOrigin && !committed {
 		return nil
 	}
 	if !push {
+		if onOrigin {
+			return fmt.Errorf("%v has new commits that are not on origin: push them, or drop --push=false", branch)
+		}
 		return fmt.Errorf("%v is not on origin, which github needs it to be: push it, or drop --push=false", branch)
 	}
-	ok, err := a.confirm(fmt.Sprintf("%v is not on origin yet, push it?", branch))
+	prompt := fmt.Sprintf("%v is not on origin yet, push it?", branch)
+	if onOrigin {
+		prompt = fmt.Sprintf("push the newly committed changes on %v to origin?", branch)
+	}
+	ok, err := a.confirm(prompt)
 	if err != nil || !ok {
 		if err == nil {
 			err = fmt.Errorf("%v must be on origin before a pull request can be created for it", branch)

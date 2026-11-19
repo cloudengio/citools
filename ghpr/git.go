@@ -257,6 +257,28 @@ func (g *Git) WorkingTreeDirty(ctx context.Context) (bool, error) {
 	return out != "", nil
 }
 
+// StatusShort returns the short working tree status output.
+func (g *Git) StatusShort(ctx context.Context) (string, error) {
+	out, err := g.read.Run(ctx, nil, "git", "status", "--short")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(out), "\n"), nil
+}
+
+// StageAll stages all modified, deleted, and untracked files in the working
+// tree.
+func (g *Git) StageAll(ctx context.Context) error {
+	_, err := g.write.Run(ctx, nil, "git", "add", "-A")
+	return err
+}
+
+// Commit creates a new commit with message read from standard input.
+func (g *Git) Commit(ctx context.Context, message string) error {
+	_, err := g.write.Run(ctx, []byte(message), "git", "commit", "-F", "-")
+	return err
+}
+
 // IsAncestor reports whether ancestor (which must be a full commit SHA) is an
 // ancestor of descendant.
 func (g *Git) IsAncestor(ctx context.Context, ancestor, descendant string) (bool, error) {

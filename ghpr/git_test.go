@@ -334,6 +334,43 @@ func TestGitNotesListAndLogSubjects(t *testing.T) {
 	run.assertNoUnexpected()
 }
 
+func TestGitStageAndCommit(t *testing.T) {
+	run := newFakeRunner(t).
+		expect("git status --short", " M a.go\n?? b.go\n", nil).
+		expect("git add -A", "", nil).
+		expect("git commit -F -", "", nil)
+
+	g := NewGit(run)
+	status := must(g.StatusShort(t.Context()))
+	if status != " M a.go\n?? b.go" {
+		t.Errorf("StatusShort = %q", status)
+	}
+	if err := g.StageAll(t.Context()); err != nil {
+		t.Fatalf("StageAll: %v", err)
+	}
+	if err := g.Commit(t.Context(), "feat: new changes"); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if got := run.stdinFor("git commit -F -"); got != "feat: new changes" {
+		t.Errorf("commit stdin = %q", got)
+	}
+	run.assertNoUnexpected()
+
+	var announced []string
+	dry := newFakeRunner(t)
+	dg := NewGit(dry).DryRun(func(cmd string) { announced = append(announced, cmd) })
+	if err := dg.StageAll(t.Context()); err != nil {
+		t.Fatalf("dry StageAll: %v", err)
+	}
+	if err := dg.Commit(t.Context(), "feat: dry"); err != nil {
+		t.Fatalf("dry Commit: %v", err)
+	}
+	if !slices.Equal(announced, []string{"git add -A", "git commit -F -"}) {
+		t.Errorf("dry announced = %v", announced)
+	}
+	dry.assertNoUnexpected()
+}
+
 // must returns the value of a call that this test requires to succeed. It
 // takes exactly the two results of such a call, so that it can be written as
 // must(g.CurrentBranch(ctx)); a panic in a test is reported as a failure, and
