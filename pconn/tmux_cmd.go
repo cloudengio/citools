@@ -228,7 +228,7 @@ func connectionLost(err error) bool {
 // reconnecting will not fix occurs. If the connection is lost it waits for the
 // connection to be replaced and attaches again.
 func (a *attachment) run(ctx context.Context) error {
-	a.status("connecting to %s", a.name)
+	a.status("connecting to %s to run %s", a.name, a.cmd)
 	for {
 		if err := a.client.WaitConnected(ctx); err != nil {
 			return err
