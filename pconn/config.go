@@ -96,19 +96,13 @@ func (f *ForwardConfig) Validate() error {
 // TmuxConfig specifies how the tmux command runs tmux on the remote host.
 type TmuxConfig struct {
 	Command string   `yaml:"command,omitempty" doc:"tmux executable on the remote host, eg. /opt/homebrew/bin/tmux; defaults to tmux, found using the login shell's PATH"`
-	Options []string `yaml:"options,omitempty" doc:"options for tmux itself, placed before the tmux command, eg. [-u, -CC, -L, work]"`
-	Args    []string `yaml:"args,omitempty" doc:"tmux command and its arguments, placed after options, eg. [new, -A, -s, main]; required by pconn tmux"`
+	Args    []string `yaml:"args,omitempty" doc:"arguments to the tmux executable, eg. [-CC, new, -A, -s, main]; required by pconn tmux"`
 }
 
 // Validate checks the tmux configuration.
 func (t *TmuxConfig) Validate() error {
 	if t.Command != "" && strings.TrimSpace(t.Command) == "" {
 		return fmt.Errorf("tmux command must not be blank")
-	}
-	for _, o := range t.Options {
-		if o == "" {
-			return fmt.Errorf("tmux options must not include an empty option")
-		}
 	}
 	for _, a := range t.Args {
 		if a == "" {

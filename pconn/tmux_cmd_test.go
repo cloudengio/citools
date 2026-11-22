@@ -24,16 +24,16 @@ import (
 
 func TestTmuxCommandLine(t *testing.T) {
 	for _, tc := range []struct {
-		tmux          string
-		options, args []string
-		want          string
+		tmux string
+		args []string
+		want string
 	}{
-		{"tmux", nil, []string{"new"}, `'tmux' 'new'`},
-		{"/opt/homebrew/bin/tmux", nil, []string{"new", "-A", "-s", "it's"}, `'/opt/homebrew/bin/tmux' 'new' '-A' '-s' 'it'\''s'`},
-		{"tmux", []string{"-u", "-CC", "-L", "my work"}, []string{"new", "-A", "-s", "main"}, `'tmux' '-u' '-CC' '-L' 'my work' 'new' '-A' '-s' 'main'`},
+		{"tmux", []string{"new"}, `'tmux' 'new'`},
+		{"/opt/homebrew/bin/tmux", []string{"new", "-A", "-s", "it's"}, `'/opt/homebrew/bin/tmux' 'new' '-A' '-s' 'it'\''s'`},
+		{"tmux", []string{"-u", "-CC", "-L", "my work", "new", "-A", "-s", "main"}, `'tmux' '-u' '-CC' '-L' 'my work' 'new' '-A' '-s' 'main'`},
 	} {
-		if got := tmuxCommandLine(tc.tmux, tc.options, tc.args); got != tc.want {
-			t.Errorf("%v %v: got %s, want %s", tc.options, tc.args, got, tc.want)
+		if got := tmuxCommandLine(tc.tmux, tc.args); got != tc.want {
+			t.Errorf("%v: got %s, want %s", tc.args, got, tc.want)
 		}
 	}
 }
@@ -380,8 +380,7 @@ connections:
     user: auser
     tmux:
       command: /opt/homebrew/bin/tmux
-      options: [-u, -CC, -L, work]
-      args: [new, -A, -s, main]
+      args: [-u, -CC, -L, work, new, -A, -s, main]
 `
 	var cfg Config
 	if err := yaml.Unmarshal([]byte(cfgYAML), &cfg); err != nil {
@@ -397,10 +396,10 @@ connections:
 	if got, want := conn.Tmux.Command, "/opt/homebrew/bin/tmux"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
-	if got, want := strings.Join(conn.Tmux.Options, " "), "-u -CC -L work"; got != want {
+	if got, want := strings.Join(conn.Tmux.Args, " "), "-u -CC -L work new -A -s main"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
-	if got, want := tmuxCommandLine(tmuxExecutable(&TmuxFlags{}, conn), conn.Tmux.Options, conn.Tmux.Args),
+	if got, want := tmuxCommandLine(tmuxExecutable(&TmuxFlags{}, conn), conn.Tmux.Args),
 		`'/opt/homebrew/bin/tmux' '-u' '-CC' '-L' 'work' 'new' '-A' '-s' 'main'`; got != want {
 		t.Errorf("got %s, want %s", got, want)
 	}
@@ -409,7 +408,6 @@ connections:
 func TestTmuxConfigInvalid(t *testing.T) {
 	for _, tc := range []TmuxConfig{
 		{Command: "  "},
-		{Options: []string{"-u", ""}},
 		{Args: []string{"new", ""}},
 	} {
 		conn := ConnectionConfig{Name: "dev", Tmux: tc}

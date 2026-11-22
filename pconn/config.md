@@ -70,16 +70,14 @@ Each entry under `connections` supports the following settings:
 ### tmux Fields
 
 - `command` *(optional)*: The tmux executable to run, for example `/opt/homebrew/bin/tmux`. Defaults to `tmux`, which is looked up using the `PATH` of the user's login shell. That shell does not read interactive-only startup files such as `.zshrc` or `.bashrc`, so a tmux that is only on the `PATH` set there is not found unless its full path is given here.
-- `options` *(optional)*: Options for tmux itself, placed before its command, for example `[-u, -CC, -L, work]` to force UTF-8, use control mode and a socket named `work`. Each list item is passed as a single argument, so `-L work` is written as two items. Do not put the tmux command here.
-- `args` *(required by `pconn tmux`)*: The tmux command and its arguments, placed after `options`, for example `[new, -A, -s, main]` to create the session `main` or attach to it. Each list item is a single argument. There is no default.
+- `args` *(required by `pconn tmux`)*: The arguments to the tmux executable, for example `[-u, -CC, new, -A, -s, main]` to force UTF-8 and, in control mode, create the session `main` or attach to it. Each list item is a single argument, so `-L work` is written as two items. There is no default.
 
 ```yaml
 connections:
   - name: dev-web
     tmux:
       command: /opt/homebrew/bin/tmux
-      options: [-u, -CC, -L, work]
-      args: [new, -A, -s, main]
+      args: [-u, -CC, -L, work, new, -A, -s, main]
 ```
 
 `pconn tmux` then runs `/opt/homebrew/bin/tmux -u -CC -L work new -A -s main`.

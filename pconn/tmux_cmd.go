@@ -57,9 +57,9 @@ var tmuxLoggerPrehook = subcmd.LoggerHook("tmuxLoggerPrehook", func(ctx context.
 var tmuxPrehook = configPrehookWith(tmuxLoggerPrehook)
 
 // tmuxCommandLine returns the remote command to run: the tmux executable, its
-// options and then its command and arguments.
-func tmuxCommandLine(tmux string, options, args []string) string {
-	return pssh.ShellJoin(append(append([]string{tmux}, options...), args...)...)
+// arguments.
+func tmuxCommandLine(tmux string, args []string) string {
+	return pssh.ShellJoin(append([]string{tmux}, args...)...)
 }
 
 // tmuxExecutable returns the tmux to run: that of the flag, else of the
@@ -137,7 +137,7 @@ func (c TmuxCommand) Run(ctx context.Context, flags any, args []string) error {
 	a := &attachment{
 		client:     client,
 		name:       conn.Name,
-		cmd:        tmuxCommandLine(tmuxExecutable(tf, conn), conn.Tmux.Options, conn.Tmux.Args),
+		cmd:        tmuxCommandLine(tmuxExecutable(tf, conn), conn.Tmux.Args),
 		status:     status,
 		attached:   &attached,
 		in:         os.Stdin,

@@ -15,8 +15,7 @@ connections:
     forward_agent: true # make the local ssh agent available to commands run on the host, eg. by 'pconn tmux'
     tmux: # used by 'pconn tmux dev-web'
       command: /opt/homebrew/bin/tmux # defaults to tmux, found using the login shell's PATH
-      options: [-u, -CC] # options for tmux itself
-      args: [new, -A, -s, main] # required by 'pconn tmux': the tmux command to run
+      args: [-u, -CC, new, -A, -s, main] # required by 'pconn tmux': the arguments to tmux
 
   - name: db.dev.example.com:2222 # host is omitted, so name is used as the host
     type: ssh
