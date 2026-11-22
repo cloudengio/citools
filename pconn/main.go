@@ -6,14 +6,13 @@
 //
 // It establishes and maintains persistent connections based on a YAML configuration
 // file, automatically reconnecting dropped connections using exponential backoff.
-// The configuration has two sections: port_forwards, whose entries can belong to
-// multiple groups, allowing sets of related connections to be started and
-// maintained together by the connect command, and tmux, whose entries are used by
-// the tmux command. The config command shows and documents the configuration.
+// Each connection has two optional blocks: port_forward, whose connections can
+// belong to multiple groups, allowing sets of related connections to be started
+// and maintained together by the connect command, and tmux, which is used by the
+// tmux command. The config command shows and documents the configuration.
 //
-// The tmux command attaches to a tmux session over one of the connections in
-// the tmux section of the configuration, running the command line that its
-// command field configures,
+// The tmux command attaches to a tmux session over one of the configured
+// connections, running the command line that its tmux block configures,
 // eg. 'tmux -CC new -A -s main' to create or attach to a session using the control
 // mode supported by iTerm2. If the connection is lost it is reestablished and the
 // session reattached, which leaves the session itself, and what is running in
@@ -26,14 +25,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"syscall"
 
 	"cloudeng.io/cmdutil"
 	"cloudeng.io/cmdutil/cmdconfig"
 	"cloudeng.io/cmdutil/cmdyaml"
-	"cloudeng.io/cmdutil/structdoc"
 	"cloudeng.io/cmdutil/subcmd"
 	"cloudeng.io/net/pssh"
 )
@@ -43,13 +40,13 @@ name: pconn
 summary: manage persistent network connections
 commands:
   - name: connect
-    summary: maintain the port forwards in the port_forwards section of the configuration for one or more groups, or for all of them
+    summary: maintain the connections that have port forwards, for one or more groups or for all of them
     args:
       - "<group>... - optional group(s) of connections to connect (use 'all' for all connections); defaults to all if omitted"
   - name: tmux
-    summary: attach to a tmux session on a host in the tmux section of the configuration, reconnecting and reattaching if the connection is lost
+    summary: attach to a tmux session over a connection, reconnecting and reattaching if it is lost
     args:
-      - "<name> - name of the entry in the tmux section of the configuration to attach over"
+      - "<name> - name of the configured connection to attach over"
   {{range subcmdExtension "config"}}{{.}}
   {{end}}
 `
@@ -82,20 +79,7 @@ func createCLI() *subcmd.CommandSetYAML {
 
 // configCommands implements 'config show' and 'config describe'.
 var configCommands = cmdconfig.ConfigCommands[Config]{
-	Summary: "pconn is configured using a YAML file with the following fields. Each entry in the port_forwards and tmux sections says how to reach a host, and what to do once connected: 'pconn connect' maintains the port forwards, and 'pconn tmux <name>' runs a tmux session. Only port_forwards entries have groups.\n\n",
-	// The fields that say how to reach a host are common to both sections, so
-	// are described once rather than for each of them.
-	Describers: []func(io.Writer) error{describeSSHConfig},
-}
-
-func describeSSHConfig(w io.Writer) error {
-	desc, err := structdoc.Describe(SSHConfig{}, "doc",
-		"\nEach entry in port_forwards and tmux also has these fields, which say how to reach the host:\n\n")
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintln(w, desc)
-	return err
+	Summary: "pconn is configured using a YAML file with the following fields. Each connection says how to reach a host, and has a port_forward block, for 'pconn connect', and a tmux block, for 'pconn tmux <name>', that say what to do once connected. Only port forwards have groups.\n\n",
 }
 
 // appDir is pconn's own directory within each of the user's configuration

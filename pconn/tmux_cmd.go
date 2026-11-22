@@ -59,30 +59,30 @@ var tmuxPrehook = configPrehookWith(tmuxLoggerPrehook)
 
 // tmuxCommandLine returns the command line to run: that of the flag, else of
 // the tmux entry.
-func tmuxCommandLine(tf *TmuxFlags, conn TmuxConfig) string {
+func tmuxCommandLine(tf *TmuxFlags, conn ConnectionConfig) string {
 	if tf.Command != "" {
 		return tf.Command
 	}
-	return conn.Command
+	return conn.Tmux.Command
 }
 
 // Run executes the tmux command.
 func (c TmuxCommand) Run(ctx context.Context, flags any, args []string) error {
 	tf := flags.(*TmuxFlags)
 	if len(args) != 1 {
-		return fmt.Errorf("exactly one tmux entry must be named, got %d", len(args))
+		return fmt.Errorf("exactly one connection must be named, got %d", len(args))
 	}
 	cfg, ok := cmdutil.ContextValue[Config](ctx)
 	if !ok {
 		return fmt.Errorf("no configuration found in context")
 	}
-	conn, err := cfg.TmuxConnection(args[0])
+	conn, err := cfg.Connection(args[0])
 	if err != nil {
 		return err
 	}
 	cmdLine := tmuxCommandLine(tf, conn)
 	if strings.TrimSpace(cmdLine) == "" {
-		return fmt.Errorf("tmux %q: command or --command must specify the command line to run, eg. /opt/homebrew/bin/tmux -CC new -A -s main", conn.Name)
+		return fmt.Errorf("connection %q: tmux.command or --command must specify the command line to run, eg. /opt/homebrew/bin/tmux -CC new -A -s main", conn.Name)
 	}
 	if !term.IsTerminal(int(os.Stdin.Fd())) { //nolint:gosec // fds fit in an int.
 		return fmt.Errorf("tmux requires standard input to be a terminal")
@@ -98,7 +98,7 @@ func (c TmuxCommand) Run(ctx context.Context, flags any, args []string) error {
 	if tmuxLogPath != "" {
 		status("logging to %s", tmuxLogPath)
 	}
-	psshOpts := append(identityOptions(conn.SSHConfig),
+	psshOpts := append(identityOptions(conn, conn.Tmux.ForwardAgent),
 		pssh.WithDialTimeout(conn.DialTimeout),
 		pssh.WithKeepAlive(tf.KeepAlive),
 		// Only say why a connection cannot be made when nothing is attached,

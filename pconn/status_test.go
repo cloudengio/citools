@@ -43,14 +43,14 @@ func newTestLogger() (*slog.Logger, *syncBuffer) {
 }
 
 // testWaiterConfig is a connection whose attributes the diagnostics report.
-func testWaiterConfig(t *testing.T) PortForwardConfig {
+func testWaiterConfig(t *testing.T) ConnectionConfig {
 	t.Helper()
-	conn := PortForwardConfig{
+	conn := ConnectionConfig{
 		Name:        "pending-host",
 		Host:        "pending.example.com",
 		User:        "someone",
 		DialTimeout: 7 * time.Second,
-		Forwards:    []ForwardConfig{{LocalPort: 8080, RemotePort: 80}},
+		PortForward: PortForwardConfig{Forwards: []ForwardConfig{{LocalPort: 8080, RemotePort: 80}}},
 	}
 	if err := conn.Validate(); err != nil {
 		t.Fatalf("validate: %v", err)
@@ -61,7 +61,7 @@ func testWaiterConfig(t *testing.T) PortForwardConfig {
 // testConnLogger returns the logger that maintainConnections gives a waiter,
 // ie. one that already carries the connection's identifying attributes, which
 // the waiter relies on rather than repeating them in every line.
-func testConnLogger(logger *slog.Logger, conn PortForwardConfig) *slog.Logger {
+func testConnLogger(logger *slog.Logger, conn ConnectionConfig) *slog.Logger {
 	return logger.With("connection", conn.Name, "type", conn.Type, "ssh.addr", conn.HostPort())
 }
 

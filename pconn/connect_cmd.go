@@ -95,7 +95,7 @@ func (c ConnectCommand) Run(ctx context.Context, flags any, args []string) error
 	}
 	targets = append(targets, args...)
 
-	var connsToMaintain []PortForwardConfig
+	var connsToMaintain []ConnectionConfig
 	var targetDesc string
 
 	if len(targets) > 0 {
@@ -107,8 +107,8 @@ func (c ConnectCommand) Run(ctx context.Context, flags any, args []string) error
 			}
 			matched, err := cfg.ConnectionsForGroup(target)
 			if err != nil {
-				var byName []PortForwardConfig
-				for _, conn := range cfg.PortForwards {
+				var byName []ConnectionConfig
+				for _, conn := range cfg.ConnectConnections() {
 					if conn.Name == target {
 						byName = append(byName, conn)
 					}
@@ -151,10 +151,10 @@ func (c ConnectCommand) Run(ctx context.Context, flags any, args []string) error
 				return fmt.Errorf("multiple groups configured with conflicting port %d (between %q and %q); please specify a group to connect (available: %s)",
 					port, c1, c2, strings.Join(groups, ", "))
 			}
-			connsToMaintain = cfg.PortForwards
+			connsToMaintain = cfg.ConnectConnections()
 			targetDesc = fmt.Sprintf("all connections (%d connections)", len(connsToMaintain))
 		} else {
-			connsToMaintain = cfg.PortForwards
+			connsToMaintain = cfg.ConnectConnections()
 			targetDesc = fmt.Sprintf("all connections (%d connections)", len(connsToMaintain))
 		}
 	}
@@ -168,16 +168,16 @@ func (c ConnectCommand) Run(ctx context.Context, flags any, args []string) error
 	return maintainConnections(ctx, logger, connsToMaintain, cf)
 }
 
-func filterConnections(conns []PortForwardConfig, names []string) ([]PortForwardConfig, error) {
+func filterConnections(conns []ConnectionConfig, names []string) ([]ConnectionConfig, error) {
 	if len(names) == 0 {
 		return conns, nil
 	}
-	nameMap := make(map[string]PortForwardConfig)
+	nameMap := make(map[string]ConnectionConfig)
 	for _, c := range conns {
 		nameMap[c.Name] = c
 	}
 
-	var selected []PortForwardConfig
+	var selected []ConnectionConfig
 	var missing []string
 	for _, name := range names {
 		if c, ok := nameMap[name]; ok {
@@ -200,7 +200,7 @@ func filterConnections(conns []PortForwardConfig, names []string) ([]PortForward
 }
 
 type connRunner struct {
-	conn       PortForwardConfig
+	conn       ConnectionConfig
 	client     *pssh.Client
 	controller *ratecontrol.Controller
 	waiter     *connWaiter
@@ -209,7 +209,7 @@ type connRunner struct {
 func maintainConnections(
 	ctx context.Context,
 	logger *slog.Logger,
-	conns []PortForwardConfig,
+	conns []ConnectionConfig,
 	cf *ConnectFlags,
 ) error {
 	runCtx, cancel := context.WithCancel(ctx)
@@ -247,8 +247,8 @@ func maintainConnections(
 				// never reported: pssh retries, so it does not return it.
 				pssh.WithOnAttemptFailed(waiter.attemptFailed),
 			)
-			psshOpts = append(psshOpts, identityOptions(conn.SSHConfig)...)
-			for _, f := range conn.Forwards {
+			psshOpts = append(psshOpts, identityOptions(conn, conn.PortForward.ForwardAgent)...)
+			for _, f := range conn.PortForward.Forwards {
 				psshOpts = append(psshOpts, pssh.WithLocalPortForward(f.LocalPort, f.RemotePort))
 			}
 
@@ -296,7 +296,7 @@ func maintainConnections(
 				"dial_timeout", r.conn.DialTimeout,
 				"unlimited_retries", r.conn.ShouldUnlimitedRetries(cf.UnlimitedRetries),
 				"interface_recovery", cf.InterfaceRecovery,
-				"forwards", formatForwards(r.conn.Forwards),
+				"forwards", formatForwards(r.conn.PortForward.Forwards),
 			)
 
 			r.waiter.connecting()
@@ -346,7 +346,7 @@ func maintainConnections(
 
 // identityOptions returns the options that say who to connect as and how to
 // verify the server, which are the same however the connection is used.
-func identityOptions(conn SSHConfig) []pssh.Option {
+func identityOptions(conn ConnectionConfig, forwardAgent bool) []pssh.Option {
 	var opts []pssh.Option
 	if conn.parsedUser != "" {
 		opts = append(opts, pssh.WithUser(conn.parsedUser))
@@ -357,7 +357,7 @@ func identityOptions(conn SSHConfig) []pssh.Option {
 	if len(conn.KnownHosts) > 0 {
 		opts = append(opts, pssh.WithKnownHosts(conn.KnownHosts...))
 	}
-	if conn.ForwardAgent {
+	if forwardAgent {
 		opts = append(opts, pssh.WithAgentForwarding(true))
 	}
 	return opts

@@ -28,26 +28,20 @@ func TestConfigDescribe(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"port_forwards:", "tmux:", "logging:",
-		"forwards:", "groups:", "unlimited_retries:", // port forward fields
-		"command:",                                                 // tmux field
-		"dial_timeout:", "accept_new_host_keys:", "forward_agent:", // ssh fields
+		"logging:", "connections:", "dial_timeout:", "accept_new_host_keys:", // the connection
+		"port_forward:", "forwards:", "groups:", "unlimited_retries:", // its port forwards
+		"tmux:", "command:", // its tmux session
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the description does not contain %q:\n%v", want, out)
 		}
 	}
-	// The fields shared by both sections are described once.
-	if got := strings.Count(out, "forward_agent:"); got != 1 {
-		t.Errorf("forward_agent is described %d times, want 1", got)
+	// forward_agent is available for both blocks, and groups only for port forwards.
+	if got := strings.Count(out, "forward_agent:"); got != 2 {
+		t.Errorf("forward_agent is described %d times, want 2:\n%v", got, out)
 	}
-	// groups is only for port forwards.
-	tmuxDoc := out[strings.Index(out, "\ntmux:"):]
-	if i := strings.Index(tmuxDoc, "Each entry"); i > 0 {
-		tmuxDoc = tmuxDoc[:i]
-	}
-	if strings.Contains(tmuxDoc, "groups:") {
-		t.Errorf("the tmux section is documented with groups:\n%v", tmuxDoc)
+	if got := strings.Count(out, "groups:"); got != 1 {
+		t.Errorf("groups is described %d times, want 1:\n%v", got, out)
 	}
 }
 
@@ -62,23 +56,20 @@ func TestConfigShow(t *testing.T) {
 			t.Errorf("the output does not contain %q:\n%v", want, out)
 		}
 	}
-	if strings.Contains(out, "groups") {
-		t.Errorf("groups are shown for tmux entries:\n%v", out)
-	}
 }
 
 func TestConfigShowErrors(t *testing.T) {
 	if _, err := dispatchConfig(t, "nosuch.yaml", "show"); err == nil {
 		t.Error("expected an error for a missing configuration file")
 	}
-	// The previous layout is rejected rather than ignored.
-	cfgPath := writeTestConfig(t, t.TempDir(), "connections:\n  - name: dev\n    host: example.com\n")
+	// The previous flat layout is rejected rather than ignored.
+	cfgPath := writeTestConfig(t, t.TempDir(), "connections:\n  - name: dev\n    host: example.com\n    forwards: [8080:80]\n")
 	_, err := dispatchConfig(t, cfgPath, "show")
-	if err == nil || !strings.Contains(err.Error(), "connections") {
-		t.Errorf("got %v, want an error naming the unknown connections field", err)
+	if err == nil || !strings.Contains(err.Error(), "forwards") {
+		t.Errorf("got %v, want an error naming the unknown forwards field", err)
 	}
 	// groups only apply to port forwards.
-	cfgPath = writeTestConfig(t, t.TempDir(), "tmux:\n  - name: dev\n    host: example.com\n    groups: [a]\n")
+	cfgPath = writeTestConfig(t, t.TempDir(), "connections:\n  - name: dev\n    host: example.com\n    tmux:\n      groups: [a]\n")
 	_, err = dispatchConfig(t, cfgPath, "show")
 	if err == nil || !strings.Contains(err.Error(), "groups") {
 		t.Errorf("got %v, want an error naming the unknown groups field", err)
