@@ -297,14 +297,14 @@ func TestAttachmentWaitsForConnection(t *testing.T) {
 const tmuxTestConfig = `
 connections:
   - name: dev
+    host: 127.0.0.1:2222
     ssh:
-      host: 127.0.0.1:2222
       user: auser
       tmux:
         command: tmux -CC new -A -s main
   - name: nocommand
+    host: 127.0.0.1:2223
     ssh:
-      host: 127.0.0.1:2223
       user: auser
 `
 
@@ -362,8 +362,8 @@ func TestTmuxConfig(t *testing.T) {
 	cfgYAML := `
 connections:
   - name: dev
+    host: 127.0.0.1:2222
     ssh:
-      host: 127.0.0.1:2222
       user: auser
       tmux:
         command: /opt/homebrew/bin/tmux -u -CC -L work new -A -s main
@@ -400,8 +400,8 @@ func TestForwardAgentConfig(t *testing.T) {
 	err := yaml.Unmarshal([]byte(`
 connections:
   - name: both
+    host: 127.0.0.1:2222
     ssh:
-      host: 127.0.0.1:2222
       user: auser
       port_forward:
         forwards: [8080:80]
@@ -409,8 +409,8 @@ connections:
       tmux:
         forward_agent: true
   - name: neither
+    host: 127.0.0.1:2223
     ssh:
-      host: 127.0.0.1:2223
       user: auser
       port_forward:
         forwards: [8081:80]

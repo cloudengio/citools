@@ -77,8 +77,8 @@ connections:
   # A fully specified connection: nothing is left to default.
   - name: dev-web
     type: ssh # optional, since the ssh block implies it
+    host: web.dev.example.com
     ssh:
-      host: web.dev.example.com
       port: 22
       user: admin
       dial_timeout: 30s
@@ -111,16 +111,16 @@ connections:
 
   # A minimal connection: port, user and dial_timeout all default.
   - name: shared-cache
+    host: redis.internal.example.com
     ssh:
-      host: redis.internal.example.com
       port_forward:
         groups: [backend, staging]
         forwards: [6379:6379]
 
   # A connection that only has a tmux block is not maintained by 'pconn connect'.
   - name: build-box
+    host: build.example.com
     ssh:
-      host: build.example.com
       tmux:
         command: /usr/local/bin/tmux -CC new -A -s main
 ```
@@ -140,19 +140,18 @@ connections:
 Each entry under `connections` supports the following settings, which are common to all types of connection:
 
 - `name` *(optional)*: A unique identifier for the connection. If omitted, defaults to `user@host:port` (or `host:port` if user is unspecified).
-- `type` *(optional)*: The connection type, which is implied by the type specific block that is set, so it can be left out. If it is given it must name that block. `ssh` is the only type at present.
+- `type` *(optional)*: The connection type, which is implied by the type specific block that is set, so it can be left out. If it is given it must name that block, and if the block itself is not needed, `type: ssh` alone is enough to select it. `ssh` is the only type at present.
+- `host` *(optional)*: The remote host, as a hostname or an IPv4 or IPv6 address, for example `server.example.com`, `192.0.2.1` or `2001:db8::1`. If omitted, `name` is used as the host. For `ssh` it may also carry a user and a port:
+  - Host and port: `server.example.com:2222` or `192.0.2.1:2222`
+  - User and host: `admin@server.example.com`
+  - User, host, and port: `admin@server.example.com:2222`
+  - Bracketed IPv6, which is needed to give a port: `[2001:db8::1]:2222` or `admin@[fe80::1]:22`
 - `ssh`: The fields for a connection of type `ssh`, see [ssh Fields](#ssh-fields). Exactly one type specific block must be set, so that a connection of another type, added later as a block of its own alongside `ssh`, has no `ssh` block.
 
 ##### ssh Fields
 
-The `ssh` block says how to reach the host, and what is done over it:
+The `ssh` block says how to connect to the host, and what is done over it:
 
-- `host` *(optional)*: The target host. If omitted, the connection's `name` is used as the host. When specified, can be formatted as:
-  - Bare hostname or IP: `server.example.com`
-  - Host and port: `server.example.com:2222`
-  - User and host: `admin@server.example.com`
-  - User, host, and port: `admin@server.example.com:2222`
-  - Bracketed IPv6: `[::1]:2222` or `user@[fe80::1]:22`
 - `port` / `ssh_port` *(optional)*: Remote port. Defaults to `22` if not explicitly specified in `host` or `name`.
 - `user` *(optional)*: Username to authenticate as. If omitted, defaults to the user in `host`/`name` or the current environment user (`$USER`).
 - `dial_timeout` *(optional)*: Duration to wait when establishing the connection (e.g. `10s`, `30s`, `1m`). Defaults to `30s`.
@@ -178,8 +177,8 @@ The `ssh` block says how to reach the host, and what is done over it:
 ```yaml
 connections:
   - name: dev-web
+    host: web.dev.example.com
     ssh:
-      host: web.dev.example.com
       tmux:
         forward_agent: true
         command: /opt/homebrew/bin/tmux -u -CC -L work new -A -s main

@@ -27,8 +27,8 @@ logging:
   format: text
 connections:
   - name: test-server
+    host: remote.example.com:2222
     ssh:
-      host: remote.example.com:2222
       user: custom-user
       dial_timeout: 10s
       accept_new_host_keys: true
@@ -42,8 +42,8 @@ connections:
           - local: 9090
             remote: 90
   -
+    host: user2@db.example.com
     ssh:
-      host: user2@db.example.com
       ssh_port: 2200
       port_forward:
         forwards:
@@ -180,6 +180,34 @@ func TestParseHostUserPort(t *testing.T) {
 	}
 }
 
+// TestConnectionHost checks that the host may be a name or an address, and may
+// carry a user and port.
+func TestConnectionHost(t *testing.T) {
+	for _, tc := range []struct {
+		host, user, hostPort string
+	}{
+		{"example.com", "", "example.com:22"},
+		{"192.0.2.1", "", "192.0.2.1:22"},
+		{"192.0.2.1:2222", "", "192.0.2.1:2222"},
+		{"admin@10.0.0.5:2200", "admin", "10.0.0.5:2200"},
+		{"2001:db8::1", "", "[2001:db8::1]:22"},
+		{"[2001:db8::1]:2222", "", "[2001:db8::1]:2222"},
+		{"admin@[fe80::1]", "admin", "[fe80::1]:22"},
+	} {
+		conn := ConnectionConfig{Name: "c", Host: tc.host, SSH: &SSHConfig{}}
+		if err := conn.Validate(); err != nil {
+			t.Errorf("%v: %v", tc.host, err)
+			continue
+		}
+		if got := conn.HostPort(); got != tc.hostPort {
+			t.Errorf("%v: got %v, want %v", tc.host, got, tc.hostPort)
+		}
+		if tc.user != "" && conn.ParsedUser() != tc.user {
+			t.Errorf("%v: got user %v, want %v", tc.host, conn.ParsedUser(), tc.user)
+		}
+	}
+}
+
 func TestConfigValidationErrors(t *testing.T) {
 	t.Run("empty connections", func(t *testing.T) {
 		cfg := Config{}
@@ -191,8 +219,8 @@ func TestConfigValidationErrors(t *testing.T) {
 	t.Run("duplicate connection names", func(t *testing.T) {
 		cfg := Config{
 			Connections: []ConnectionConfig{
-				{Name: "c1", SSH: &SSHConfig{Host: "host1.example.com"}},
-				{Name: "c1", SSH: &SSHConfig{Host: "host2.example.com"}},
+				{Name: "c1", Host: "host1.example.com", SSH: &SSHConfig{}},
+				{Name: "c1", Host: "host2.example.com", SSH: &SSHConfig{}},
 			},
 		}
 		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate connection name") {
@@ -205,7 +233,7 @@ func TestConfigValidationErrors(t *testing.T) {
 			Connections: []ConnectionConfig{
 				{
 					Name: "c1",
-					SSH: &SSHConfig{Host: "host1.example.com", PortForward: PortForwardConfig{Forwards: []ForwardConfig{
+					Host: "host1.example.com", SSH: &SSHConfig{PortForward: PortForwardConfig{Forwards: []ForwardConfig{
 						{LocalPort: 8080, RemotePort: 80},
 						{LocalPort: 8080, RemotePort: 8080},
 					}}},
@@ -222,13 +250,13 @@ func TestConfigValidationErrors(t *testing.T) {
 			Connections: []ConnectionConfig{
 				{
 					Name: "c1",
-					SSH: &SSHConfig{Host: "host1.example.com", PortForward: PortForwardConfig{Forwards: []ForwardConfig{
+					Host: "host1.example.com", SSH: &SSHConfig{PortForward: PortForwardConfig{Forwards: []ForwardConfig{
 						{LocalPort: 8080, RemotePort: 80},
 					}}},
 				},
 				{
 					Name: "c2",
-					SSH: &SSHConfig{Host: "host2.example.com", PortForward: PortForwardConfig{Forwards: []ForwardConfig{
+					Host: "host2.example.com", SSH: &SSHConfig{PortForward: PortForwardConfig{Forwards: []ForwardConfig{
 						{LocalPort: 8080, RemotePort: 8088},
 					}}},
 				},
@@ -244,7 +272,7 @@ func TestConfigValidationErrors(t *testing.T) {
 			Connections: []ConnectionConfig{
 				{
 					Name: "c1",
-					SSH: &SSHConfig{Host: "host1.example.com", PortForward: PortForwardConfig{Forwards: []ForwardConfig{
+					Host: "host1.example.com", SSH: &SSHConfig{PortForward: PortForwardConfig{Forwards: []ForwardConfig{
 						{LocalPort: 99999, RemotePort: 80},
 					}}},
 				},
@@ -264,25 +292,33 @@ func TestConfigValidationErrors(t *testing.T) {
 
 	t.Run("type does not match the block", func(t *testing.T) {
 		cfg := Config{Connections: []ConnectionConfig{{
-			Name: "c1", Type: "wireguard", SSH: &SSHConfig{Host: "host1.example.com"},
+			Name: "c1", Type: "wireguard", Host: "host1.example.com", SSH: &SSHConfig{},
 		}}}
 		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "does not match the ssh block") {
 			t.Fatalf("expected a mismatched type error, got: %v", err)
 		}
 	})
 
-	t.Run("no type block", func(t *testing.T) {
-		for _, typ := range []string{"", "ssh"} {
-			cfg := Config{Connections: []ConnectionConfig{{Name: "c1", Type: typ}}}
-			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "block of fields for the connection's type must be set") {
-				t.Fatalf("type %q: expected an error for there being no block, got: %v", typ, err)
-			}
+	t.Run("no type or block", func(t *testing.T) {
+		cfg := Config{Connections: []ConnectionConfig{{Name: "c1", Host: "host1.example.com"}}}
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "the type must be specified") {
+			t.Fatalf("expected an error for there being no type or block, got: %v", err)
+		}
+	})
+
+	t.Run("type without its block", func(t *testing.T) {
+		cfg := Config{Connections: []ConnectionConfig{{Name: "c1", Type: "ssh", Host: "host1.example.com"}}}
+		if err := cfg.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Connections[0].SSH == nil || cfg.Connections[0].HostPort() != "host1.example.com:22" {
+			t.Errorf("the ssh block was not defaulted: %+v", cfg.Connections[0])
 		}
 	})
 
 	t.Run("type is implied by the block", func(t *testing.T) {
 		for _, typ := range []string{"", "ssh", "SSH"} {
-			cfg := Config{Connections: []ConnectionConfig{{Name: "c1", Type: typ, SSH: &SSHConfig{Host: "host1.example.com"}}}}
+			cfg := Config{Connections: []ConnectionConfig{{Name: "c1", Type: typ, Host: "host1.example.com", SSH: &SSHConfig{}}}}
 			if err := cfg.Validate(); err != nil {
 				t.Fatalf("type %q: %v", typ, err)
 			}
@@ -354,9 +390,9 @@ connections:
 
 func TestFilterConnections(t *testing.T) {
 	conns := []ConnectionConfig{
-		{Name: "c1", SSH: &SSHConfig{Host: "h1"}},
-		{Name: "c2", SSH: &SSHConfig{Host: "h2"}},
-		{Name: "c3", SSH: &SSHConfig{Host: "h3"}},
+		{Name: "c1", Host: "h1", SSH: &SSHConfig{}},
+		{Name: "c2", Host: "h2", SSH: &SSHConfig{}},
+		{Name: "c3", Host: "h3", SSH: &SSHConfig{}},
 	}
 
 	// No names -> all
@@ -398,8 +434,8 @@ func TestParseConfigFiles(t *testing.T) {
 	content := `
 connections:
   - name: my-conn
-    ssh:
-      host: 127.0.0.1:2222
+    host: 127.0.0.1:2222
+    ssh: {}
 `
 	if err := os.WriteFile(cfgPath, []byte(content), 0600); err != nil {
 		t.Fatal(err)
@@ -579,8 +615,8 @@ func TestConnectionGroups(t *testing.T) {
 	spec := `
 connections:
   - name: web
+    host: web.example.com
     ssh:
-      host: web.example.com
       port_forward:
         groups:
           - dev
@@ -589,8 +625,8 @@ connections:
           - local_port: 8080
             remote_port: 80
   - name: db
+    host: db.example.com
     ssh:
-      host: db.example.com
       port_forward:
         groups:
           - dev
@@ -599,8 +635,8 @@ connections:
           - local_port: 5432
             remote_port: 5432
   - name: cache
+    host: cache.example.com
     ssh:
-      host: cache.example.com
       port_forward:
         groups:
           - backend
@@ -608,8 +644,8 @@ connections:
           - local_port: 6379
             remote_port: 6379
   - name: staging-db
+    host: db.staging.example.com
     ssh:
-      host: db.staging.example.com
       port_forward:
         groups:
           - staging
@@ -697,8 +733,8 @@ func TestGroupPortConflictValidation(t *testing.T) {
 	spec := `
 connections:
   - name: c1
+    host: h1.example.com
     ssh:
-      host: h1.example.com
       port_forward:
         groups:
           - dev
@@ -706,8 +742,8 @@ connections:
           - local_port: 8080
             remote_port: 80
   - name: c2
+    host: h2.example.com
     ssh:
-      host: h2.example.com
       port_forward:
         groups:
           - dev
@@ -792,7 +828,7 @@ func writeConfig(t *testing.T, dir, name, host string) string {
 		t.Fatalf("mkdir %v: %v", dir, err)
 	}
 	path := filepath.Join(dir, name)
-	content := "connections:\n  - name: " + host + "\n    ssh:\n      host: " + host + ":2222\n"
+	content := "connections:\n  - name: " + host + "\n    host: " + host + ":2222\n    ssh: {}\n"
 	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatalf("write %v: %v", path, err)
 	}

@@ -27,14 +27,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"syscall"
 
 	"cloudeng.io/cmdutil"
 	"cloudeng.io/cmdutil/cmdconfig"
 	"cloudeng.io/cmdutil/cmdyaml"
-	"cloudeng.io/cmdutil/structdoc"
 	"cloudeng.io/cmdutil/subcmd"
 	"cloudeng.io/net/pssh"
 )
@@ -84,18 +82,6 @@ func createCLI() *subcmd.CommandSetYAML {
 // configCommands implements 'config show' and 'config describe'.
 var configCommands = cmdconfig.ConfigCommands[Config]{
 	Summary: "pconn is configured using a YAML file with the following fields. Each connection has a name and one block of fields for its type, which is also its type: ssh is the only one. Its port_forward block is used by 'pconn connect', and its tmux block by 'pconn tmux <name>'. Only port forwards have groups.\n\n",
-	// structdoc does not describe the fields of a pointer to a struct, which
-	// the type specific blocks are, so they are described separately.
-	Describers: []func(io.Writer) error{describeSSH},
-}
-
-func describeSSH(w io.Writer) error {
-	desc, err := structdoc.Describe(SSHConfig{}, "doc", "\nThe ssh block of a connection has the following fields:\n\n")
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintln(w, desc)
-	return err
 }
 
 // appDir is pconn's own directory within each of the user's configuration

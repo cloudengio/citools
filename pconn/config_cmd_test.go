@@ -65,8 +65,8 @@ func TestConfigShowErrors(t *testing.T) {
 	// The previous flat layout is rejected rather than ignored.
 	cfgPath := writeTestConfig(t, t.TempDir(), "connections:\n  - name: dev\n    host: example.com\n    forwards: [8080:80]\n")
 	_, err := dispatchConfig(t, cfgPath, "show")
-	if err == nil || !strings.Contains(err.Error(), "host") {
-		t.Errorf("got %v, want an error naming the unknown host field", err)
+	if err == nil || !strings.Contains(err.Error(), "forwards") {
+		t.Errorf("got %v, want an error naming the unknown forwards field", err)
 	}
 	// groups only apply to port forwards.
 	cfgPath = writeTestConfig(t, t.TempDir(), "connections:\n  - name: dev\n    ssh:\n      host: example.com\n      tmux:\n        groups: [a]\n")

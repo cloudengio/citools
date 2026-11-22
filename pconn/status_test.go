@@ -47,8 +47,8 @@ func testWaiterConfig(t *testing.T) ConnectionConfig {
 	t.Helper()
 	conn := ConnectionConfig{
 		Name: "pending-host",
+		Host: "pending.example.com",
 		SSH: &SSHConfig{
-			Host:        "pending.example.com",
 			User:        "someone",
 			DialTimeout: 7 * time.Second,
 			PortForward: PortForwardConfig{Forwards: []ForwardConfig{{LocalPort: 8080, RemotePort: 80}}},

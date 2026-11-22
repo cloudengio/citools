@@ -120,7 +120,6 @@ func (t *TmuxConfig) Validate() error {
 // SSHConfig specifies an ssh connection to a host, and what is done over it:
 // maintain port forwards, and/or run tmux.
 type SSHConfig struct {
-	Host              string            `yaml:"host,omitempty" doc:"remote host, optionally as user@host:port; if omitted, defaults to the connection's name"`
 	Port              int               `yaml:"port,omitempty" doc:"remote port (alias for ssh_port)"`
 	SSHPort           int               `yaml:"ssh_port,omitempty" doc:"SSH port on the remote host; defaults to 22 if not in host"`
 	User              string            `yaml:"user,omitempty" doc:"username; defaults to the current user"`
@@ -137,13 +136,16 @@ type SSHConfig struct {
 
 // ConnectionConfig defines a persistent connection. The type of the connection
 // is that of the one block of type specific fields that is set; ssh is the only
-// type at present.
+// type at present. If Type is given but its block is not, the block is set to
+// its defaults.
 type ConnectionConfig struct {
 	Name string `yaml:"name,omitempty" doc:"unique name for the connection; defaults to user@host:port"`
 	// Type is optional, since it is implied by the block that is set, but if
 	// specified it must name that block.
-	Type string     `yaml:"type,omitempty" doc:"connection type, eg. ssh; optional since it is implied by which of the type specific blocks is set, exactly one of which must be"`
-	SSH  *SSHConfig `yaml:"ssh,omitempty" doc:"fields for a connection of type ssh, described below"`
+	Type string `yaml:"type,omitempty" doc:"connection type, eg. ssh; optional since it is implied by which of the type specific blocks is set, exactly one of which must be"`
+	Host string `yaml:"host,omitempty" doc:"the remote host as a hostname or an IPv4 or IPv6 address, eg. example.com, 192.0.2.1 or [2001:db8::1]; if omitted, defaults to the connection's name. For ssh it may also include a user and port, as user@host:port"`
+	// The blocks of fields specific to each type of connection.
+	SSH *SSHConfig `yaml:"ssh,omitempty" doc:"fields for a connection of type ssh"`
 }
 
 // connectionType returns the type of the connection, which is that of the
@@ -156,10 +158,15 @@ func (c *ConnectionConfig) connectionType() (string, error) {
 	}
 	switch len(set) {
 	case 0:
-		if c.Type != "" && !strings.EqualFold(c.Type, "ssh") {
+		switch {
+		case strings.EqualFold(c.Type, "ssh"):
+			// The type alone is enough when there is nothing else to say.
+			c.SSH = &SSHConfig{}
+			return "ssh", nil
+		case c.Type != "":
 			return "", fmt.Errorf("unsupported connection type %q (supported types: ssh)", c.Type)
 		}
-		return "", fmt.Errorf("the block of fields for the connection's type must be set, eg. ssh")
+		return "", fmt.Errorf("the type must be specified, or the block of fields for it be set, eg. ssh")
 	case 1:
 		if c.Type != "" && !strings.EqualFold(c.Type, set[0]) {
 			return "", fmt.Errorf("type %q does not match the %s block", c.Type, set[0])
@@ -206,7 +213,7 @@ func (c *ConnectionConfig) Validate() error {
 	}
 	c.Type = typ
 
-	if err := c.SSH.resolve(strings.TrimSpace(c.Name)); err != nil {
+	if err := c.SSH.resolve(strings.TrimSpace(c.Name), &c.Host); err != nil {
 		return err
 	}
 	if c.Name == "" {
@@ -219,16 +226,16 @@ func (c *ConnectionConfig) Validate() error {
 	return c.SSH.validate(c.Name)
 }
 
-// resolve determines the host, port and user, using the connection's name
-// if there is no host.
-func (c *SSHConfig) resolve(name string) error {
-	trimmedHost := strings.TrimSpace(c.Host)
+// resolve determines the host, port and user from the connection's host, which
+// it sets to the connection's name if there is none.
+func (c *SSHConfig) resolve(name string, hostField *string) error {
+	trimmedHost := strings.TrimSpace(*hostField)
 	if trimmedHost == "" {
 		if name == "" {
 			return fmt.Errorf("either host or name must not be empty")
 		}
 		trimmedHost = name
-		c.Host = name
+		*hostField = name
 	}
 
 	defaultPort := 22

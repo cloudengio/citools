@@ -20,8 +20,8 @@ connections:
   # A fully specified connection: nothing is left to default.
   - name: dev-web
     type: ssh # optional, since the ssh block implies it
+    host: web.dev.example.com
     ssh:
-      host: web.dev.example.com
       port: 22
       user: admin
       dial_timeout: 30s
@@ -54,15 +54,15 @@ connections:
 
   # A minimal connection: port, user and dial_timeout all default.
   - name: shared-cache
+    host: redis.internal.example.com
     ssh:
-      host: redis.internal.example.com
       port_forward:
         groups: [backend, staging]
         forwards: [6379:6379]
 
   # A connection that only has a tmux block is not maintained by 'pconn connect'.
   - name: build-box
+    host: build.example.com
     ssh:
-      host: build.example.com
       tmux:
         command: /usr/local/bin/tmux -CC new -A -s main
