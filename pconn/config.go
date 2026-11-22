@@ -96,8 +96,8 @@ func (f *ForwardConfig) Validate() error {
 // TmuxConfig specifies how the tmux command runs tmux on the remote host.
 type TmuxConfig struct {
 	Command string   `yaml:"command,omitempty" doc:"tmux executable on the remote host, eg. /opt/homebrew/bin/tmux; defaults to tmux, found using the login shell's PATH"`
-	Options []string `yaml:"options,omitempty" doc:"options for tmux itself, placed before the tmux command, eg. [-u, -L, work]"`
-	Args    []string `yaml:"args,omitempty" doc:"tmux command and its arguments, placed after -CC; defaults to [new, -A, -s, <session>] which creates or attaches to the session, eg. [new, -A, -s, work, -c, /srv]"`
+	Options []string `yaml:"options,omitempty" doc:"options for tmux itself, placed before the tmux command, eg. [-u, -CC, -L, work]"`
+	Args    []string `yaml:"args,omitempty" doc:"tmux command and its arguments, placed after options, eg. [new, -A, -s, main]; required by pconn tmux"`
 }
 
 // Validate checks the tmux configuration.

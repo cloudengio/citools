@@ -40,12 +40,13 @@ exponential backoff. Connections can belong to multiple groups, allowing
 sets of related connections to be started and maintained together.
 
 The tmux command attaches to a tmux session on one of the connections,
-creating the session if need be, using tmux's control mode as supported by
-iTerm2 by default. If the connection is lost it is reestablished and the
-session reattached, which leaves the session itself, and what is running in
-it, undisturbed. Logs are written to a temporary file unless a log file is
-configured, since anything else written to the terminal would corrupt the
-session.
+running the tmux command that the connection's tmux.args configures, eg.
+'new -A -s main' to create or attach to a session, with tmux.options such
+as -CC for the control mode supported by iTerm2. If the connection is lost
+it is reestablished and the session reattached, which leaves the session
+itself, and what is running in it, undisturbed. Logs are written to a
+temporary file unless a log file is configured, since anything else written
+to the terminal would corrupt the session.
 
 
 ## External Markdown Files Included Here
@@ -122,19 +123,19 @@ Each entry under `connections` supports the following settings:
 ##### tmux Fields
 
 - `command` *(optional)*: The tmux executable to run, for example `/opt/homebrew/bin/tmux`. Defaults to `tmux`, which is looked up using the `PATH` of the user's login shell. That shell does not read interactive-only startup files such as `.zshrc` or `.bashrc`, so a tmux that is only on the `PATH` set there is not found unless its full path is given here.
-- `options` *(optional)*: Options for tmux itself, placed before its command, for example `[-u, -L, work]` to force UTF-8 and use a socket named `work`. Each list item is passed as a single argument, so `-L work` is written as two items. Do not put the tmux command here.
-- `args` *(optional)*: The tmux command and its arguments, placed after `-CC` if control mode is used. Defaults to `[new, -A, -s, <session>]`, which creates the session or attaches to it, where the session comes from the `--session` flag (`main` by default) and is ignored if `args` is set. For example `[new, -A, -s, work, -c, /srv]`. Each item is a single argument.
+- `options` *(optional)*: Options for tmux itself, placed before its command, for example `[-u, -CC, -L, work]` to force UTF-8, use control mode and a socket named `work`. Each list item is passed as a single argument, so `-L work` is written as two items. Do not put the tmux command here.
+- `args` *(required by `pconn tmux`)*: The tmux command and its arguments, placed after `options`, for example `[new, -A, -s, main]` to create the session `main` or attach to it. Each list item is a single argument. There is no default.
 
 ```yaml
 connections:
   - name: dev-web
     tmux:
       command: /opt/homebrew/bin/tmux
-      options: [-u, -L, work]
-      args: [new, -A, -s, work]
+      options: [-u, -CC, -L, work]
+      args: [new, -A, -s, main]
 ```
 
-`pconn tmux` then runs `/opt/homebrew/bin/tmux -u -L work -CC new -A -s main`.
+`pconn tmux` then runs `/opt/homebrew/bin/tmux -u -CC -L work new -A -s main`.
 
 ##### Port Forwarding Fields
 

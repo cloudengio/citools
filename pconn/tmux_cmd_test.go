@@ -24,22 +24,16 @@ import (
 
 func TestTmuxCommandLine(t *testing.T) {
 	for _, tc := range []struct {
-		tmux    string
-		options []string
-		args    []string
-		session string
-		control bool
-		want    string
+		tmux          string
+		options, args []string
+		want          string
 	}{
-		{"tmux", nil, nil, "main", true, `'tmux' '-CC' 'new' '-A' '-s' 'main'`},
-		{"tmux", nil, nil, "main", false, `'tmux' 'new' '-A' '-s' 'main'`},
-		{"tmux", nil, nil, "it's mine", true, `'tmux' '-CC' 'new' '-A' '-s' 'it'\''s mine'`},
-		{"/opt/homebrew/bin/tmux", nil, nil, "main", true, `'/opt/homebrew/bin/tmux' '-CC' 'new' '-A' '-s' 'main'`},
-		{"tmux", []string{"-u", "-L", "my work"}, nil, "main", true, `'tmux' '-u' '-L' 'my work' '-CC' 'new' '-A' '-s' 'main'`},
-		{"tmux", nil, []string{"new", "-A", "-s", "w", "-c", "/a b"}, "ignored", true, `'tmux' '-CC' 'new' '-A' '-s' 'w' '-c' '/a b'`},
+		{"tmux", nil, []string{"new"}, `'tmux' 'new'`},
+		{"/opt/homebrew/bin/tmux", nil, []string{"new", "-A", "-s", "it's"}, `'/opt/homebrew/bin/tmux' 'new' '-A' '-s' 'it'\''s'`},
+		{"tmux", []string{"-u", "-CC", "-L", "my work"}, []string{"new", "-A", "-s", "main"}, `'tmux' '-u' '-CC' '-L' 'my work' 'new' '-A' '-s' 'main'`},
 	} {
-		if got := tmuxCommandLine(tc.tmux, tc.options, tc.args, tc.session, tc.control); got != tc.want {
-			t.Errorf("%q, %v: got %s, want %s", tc.session, tc.control, got, tc.want)
+		if got := tmuxCommandLine(tc.tmux, tc.options, tc.args); got != tc.want {
+			t.Errorf("%v %v: got %s, want %s", tc.options, tc.args, got, tc.want)
 		}
 	}
 }
@@ -321,6 +315,11 @@ connections:
   - name: dev
     host: 127.0.0.1:2222
     user: auser
+    tmux:
+      args: [new, -A, -s, main]
+  - name: noargs
+    host: 127.0.0.1:2223
+    user: auser
 `
 
 func dispatchTmux(t *testing.T, cfg string, args ...string) error {
@@ -336,7 +335,8 @@ func TestTmuxCommandErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"nosuch"}, `connection "nosuch" not found (available: dev)`},
+		{[]string{"nosuch"}, `connection "nosuch" not found (available: dev, noargs)`},
+		{[]string{"noargs"}, "tmux.args must specify"},
 		// Tests do not run on a terminal.
 		{[]string{"dev"}, "requires standard input to be a terminal"},
 	} {
@@ -380,7 +380,8 @@ connections:
     user: auser
     tmux:
       command: /opt/homebrew/bin/tmux
-      options: [-u, -L, work]
+      options: [-u, -CC, -L, work]
+      args: [new, -A, -s, main]
 `
 	var cfg Config
 	if err := yaml.Unmarshal([]byte(cfgYAML), &cfg); err != nil {
@@ -396,11 +397,11 @@ connections:
 	if got, want := conn.Tmux.Command, "/opt/homebrew/bin/tmux"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
-	if got, want := strings.Join(conn.Tmux.Options, " "), "-u -L work"; got != want {
+	if got, want := strings.Join(conn.Tmux.Options, " "), "-u -CC -L work"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
-	if got, want := tmuxCommandLine(tmuxExecutable(&TmuxFlags{}, conn), conn.Tmux.Options, conn.Tmux.Args, "main", true),
-		`'/opt/homebrew/bin/tmux' '-u' '-L' 'work' '-CC' 'new' '-A' '-s' 'main'`; got != want {
+	if got, want := tmuxCommandLine(tmuxExecutable(&TmuxFlags{}, conn), conn.Tmux.Options, conn.Tmux.Args),
+		`'/opt/homebrew/bin/tmux' '-u' '-CC' '-L' 'work' 'new' '-A' '-s' 'main'`; got != want {
 		t.Errorf("got %s, want %s", got, want)
 	}
 }
