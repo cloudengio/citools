@@ -23,16 +23,16 @@ import (
 )
 
 func TestTmuxCommandLine(t *testing.T) {
-	conn := ConnectionConfig{SSH: SSHConfig{Tmux: TmuxConfig{Command: "tmux -CC new"}}}
+	conn := ConnectionConfig{SSH: &SSHConfig{Tmux: TmuxConfig{Command: "tmux -CC new"}}}
 	for _, tc := range []struct {
 		flag string
 		conn ConnectionConfig
 		want string
 	}{
-		{"", ConnectionConfig{}, ""},
+		{"", ConnectionConfig{SSH: &SSHConfig{}}, ""},
 		{"", conn, "tmux -CC new"},
 		{"tmux new -A -s x", conn, "tmux new -A -s x"},
-		{"tmux new -A -s x", ConnectionConfig{}, "tmux new -A -s x"},
+		{"tmux new -A -s x", ConnectionConfig{SSH: &SSHConfig{}}, "tmux new -A -s x"},
 	} {
 		if got := tmuxCommandLine(&TmuxFlags{Command: tc.flag}, tc.conn); got != tc.want {
 			t.Errorf("flag %q, config %q: got %q, want %q", tc.flag, tc.conn.SSH.Tmux.Command, got, tc.want)
@@ -388,7 +388,7 @@ func TestTmuxConfigInvalid(t *testing.T) {
 	for _, tc := range []TmuxConfig{
 		{Command: "  "},
 	} {
-		conn := ConnectionConfig{Name: "dev", SSH: SSHConfig{Tmux: tc}}
+		conn := ConnectionConfig{Name: "dev", SSH: &SSHConfig{Tmux: tc}}
 		if err := conn.Validate(); err == nil {
 			t.Errorf("%+v: expected an error", tc)
 		}

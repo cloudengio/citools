@@ -135,13 +135,38 @@ type SSHConfig struct {
 	parsedUser string
 }
 
-// ConnectionConfig defines a persistent connection. Its Type selects the
-// protocol, and so which of the protocol specific fields is used; ssh is the
-// only protocol at present.
+// ConnectionConfig defines a persistent connection. The type of the connection
+// is that of the one block of type specific fields that is set; ssh is the only
+// type at present.
 type ConnectionConfig struct {
-	Name string    `yaml:"name,omitempty" doc:"unique name for the connection; defaults to user@host:port"`
-	Type string    `yaml:"type,omitempty" doc:"connection type/protocol, which selects the block of protocol specific fields; only ssh is supported, and is the default"`
-	SSH  SSHConfig `yaml:"ssh,omitempty" doc:"fields for connections of type ssh"`
+	Name string `yaml:"name,omitempty" doc:"unique name for the connection; defaults to user@host:port"`
+	// Type is optional, since it is implied by the block that is set, but if
+	// specified it must name that block.
+	Type string     `yaml:"type,omitempty" doc:"connection type, eg. ssh; optional since it is implied by which of the type specific blocks is set, exactly one of which must be"`
+	SSH  *SSHConfig `yaml:"ssh,omitempty" doc:"fields for a connection of type ssh, described below"`
+}
+
+// connectionType returns the type of the connection, which is that of the
+// type specific block that is set. It is an error for there to be other than
+// exactly one, or for a specified Type to name a different one.
+func (c *ConnectionConfig) connectionType() (string, error) {
+	var set []string
+	if c.SSH != nil {
+		set = append(set, "ssh")
+	}
+	switch len(set) {
+	case 0:
+		if c.Type != "" && !strings.EqualFold(c.Type, "ssh") {
+			return "", fmt.Errorf("unsupported connection type %q (supported types: ssh)", c.Type)
+		}
+		return "", fmt.Errorf("the block of fields for the connection's type must be set, eg. ssh")
+	case 1:
+		if c.Type != "" && !strings.EqualFold(c.Type, set[0]) {
+			return "", fmt.Errorf("type %q does not match the %s block", c.Type, set[0])
+		}
+		return set[0], nil
+	}
+	return "", fmt.Errorf("only one of the blocks %s may be set", strings.Join(set, ", "))
 }
 
 // MaintainedByConnect reports whether 'pconn connect' maintains the connection,
@@ -175,15 +200,11 @@ func (c *ConnectionConfig) ShouldUnlimitedRetries(defaultUnlimited bool) bool {
 
 // Validate validates and normalizes the connection configuration.
 func (c *ConnectionConfig) Validate() error {
-	if c.Type == "" {
-		c.Type = "ssh"
+	typ, err := c.connectionType()
+	if err != nil {
+		return err
 	}
-	switch strings.ToLower(c.Type) {
-	case "ssh":
-		c.Type = "ssh"
-	default:
-		return fmt.Errorf("connection %q: unsupported connection type %q (supported types: ssh)", c.Name, c.Type)
-	}
+	c.Type = typ
 
 	if err := c.SSH.resolve(strings.TrimSpace(c.Name)); err != nil {
 		return err

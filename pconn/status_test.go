@@ -47,7 +47,7 @@ func testWaiterConfig(t *testing.T) ConnectionConfig {
 	t.Helper()
 	conn := ConnectionConfig{
 		Name: "pending-host",
-		SSH: SSHConfig{
+		SSH: &SSHConfig{
 			Host:        "pending.example.com",
 			User:        "someone",
 			DialTimeout: 7 * time.Second,

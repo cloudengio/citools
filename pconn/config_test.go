@@ -191,8 +191,8 @@ func TestConfigValidationErrors(t *testing.T) {
 	t.Run("duplicate connection names", func(t *testing.T) {
 		cfg := Config{
 			Connections: []ConnectionConfig{
-				{Name: "c1", SSH: SSHConfig{Host: "host1.example.com"}},
-				{Name: "c1", SSH: SSHConfig{Host: "host2.example.com"}},
+				{Name: "c1", SSH: &SSHConfig{Host: "host1.example.com"}},
+				{Name: "c1", SSH: &SSHConfig{Host: "host2.example.com"}},
 			},
 		}
 		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate connection name") {
@@ -205,7 +205,7 @@ func TestConfigValidationErrors(t *testing.T) {
 			Connections: []ConnectionConfig{
 				{
 					Name: "c1",
-					SSH: SSHConfig{Host: "host1.example.com", PortForward: PortForwardConfig{Forwards: []ForwardConfig{
+					SSH: &SSHConfig{Host: "host1.example.com", PortForward: PortForwardConfig{Forwards: []ForwardConfig{
 						{LocalPort: 8080, RemotePort: 80},
 						{LocalPort: 8080, RemotePort: 8080},
 					}}},
@@ -222,13 +222,13 @@ func TestConfigValidationErrors(t *testing.T) {
 			Connections: []ConnectionConfig{
 				{
 					Name: "c1",
-					SSH: SSHConfig{Host: "host1.example.com", PortForward: PortForwardConfig{Forwards: []ForwardConfig{
+					SSH: &SSHConfig{Host: "host1.example.com", PortForward: PortForwardConfig{Forwards: []ForwardConfig{
 						{LocalPort: 8080, RemotePort: 80},
 					}}},
 				},
 				{
 					Name: "c2",
-					SSH: SSHConfig{Host: "host2.example.com", PortForward: PortForwardConfig{Forwards: []ForwardConfig{
+					SSH: &SSHConfig{Host: "host2.example.com", PortForward: PortForwardConfig{Forwards: []ForwardConfig{
 						{LocalPort: 8080, RemotePort: 8088},
 					}}},
 				},
@@ -244,7 +244,7 @@ func TestConfigValidationErrors(t *testing.T) {
 			Connections: []ConnectionConfig{
 				{
 					Name: "c1",
-					SSH: SSHConfig{Host: "host1.example.com", PortForward: PortForwardConfig{Forwards: []ForwardConfig{
+					SSH: &SSHConfig{Host: "host1.example.com", PortForward: PortForwardConfig{Forwards: []ForwardConfig{
 						{LocalPort: 99999, RemotePort: 80},
 					}}},
 				},
@@ -256,24 +256,46 @@ func TestConfigValidationErrors(t *testing.T) {
 	})
 
 	t.Run("unsupported connection type", func(t *testing.T) {
-		cfg := Config{
-			Connections: []ConnectionConfig{
-				{
-					Name: "c1",
-					Type: "wireguard",
-					SSH:  SSHConfig{Host: "host1.example.com"},
-				},
-			},
-		}
+		cfg := Config{Connections: []ConnectionConfig{{Name: "c1", Type: "wireguard"}}}
 		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "unsupported connection type") {
 			t.Fatalf("expected unsupported connection type error, got: %v", err)
+		}
+	})
+
+	t.Run("type does not match the block", func(t *testing.T) {
+		cfg := Config{Connections: []ConnectionConfig{{
+			Name: "c1", Type: "wireguard", SSH: &SSHConfig{Host: "host1.example.com"},
+		}}}
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "does not match the ssh block") {
+			t.Fatalf("expected a mismatched type error, got: %v", err)
+		}
+	})
+
+	t.Run("no type block", func(t *testing.T) {
+		for _, typ := range []string{"", "ssh"} {
+			cfg := Config{Connections: []ConnectionConfig{{Name: "c1", Type: typ}}}
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "block of fields for the connection's type must be set") {
+				t.Fatalf("type %q: expected an error for there being no block, got: %v", typ, err)
+			}
+		}
+	})
+
+	t.Run("type is implied by the block", func(t *testing.T) {
+		for _, typ := range []string{"", "ssh", "SSH"} {
+			cfg := Config{Connections: []ConnectionConfig{{Name: "c1", Type: typ, SSH: &SSHConfig{Host: "host1.example.com"}}}}
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("type %q: %v", typ, err)
+			}
+			if got, want := cfg.Connections[0].Type, "ssh"; got != want {
+				t.Errorf("type %q: got type %q, want %q", typ, got, want)
+			}
 		}
 	})
 
 	t.Run("empty host and name", func(t *testing.T) {
 		cfg := Config{
 			Connections: []ConnectionConfig{
-				{},
+				{SSH: &SSHConfig{}},
 			},
 		}
 		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "either host or name must not be empty") {
@@ -332,9 +354,9 @@ connections:
 
 func TestFilterConnections(t *testing.T) {
 	conns := []ConnectionConfig{
-		{Name: "c1", SSH: SSHConfig{Host: "h1"}},
-		{Name: "c2", SSH: SSHConfig{Host: "h2"}},
-		{Name: "c3", SSH: SSHConfig{Host: "h3"}},
+		{Name: "c1", SSH: &SSHConfig{Host: "h1"}},
+		{Name: "c2", SSH: &SSHConfig{Host: "h2"}},
+		{Name: "c3", SSH: &SSHConfig{Host: "h3"}},
 	}
 
 	// No names -> all

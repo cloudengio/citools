@@ -1,6 +1,6 @@
 # Configuration
 
-`pconn` is configured using a YAML configuration file. The configuration defines logging settings and persistent connections. Each connection has a `name` and a `type`, and a block of fields specific to that type. Only `ssh` is supported at present: its `ssh` block says how to reach a host, and has two optional blocks that say what is done over it, `port_forward`, which `pconn connect` maintains, and `tmux`, which `pconn tmux` runs. `pconn config describe` documents the fields, and `pconn config show` shows the configuration that was read, and the file it came from. Unknown fields are an error.
+`pconn` is configured using a YAML configuration file. The configuration defines logging settings and persistent connections. Each connection has a `name` and exactly one block of fields specific to its type, which that block implies. Only `ssh` is supported at present: its `ssh` block says how to reach a host, and has two optional blocks that say what is done over it, `port_forward`, which `pconn connect` maintains, and `tmux`, which `pconn tmux` runs. `pconn config describe` documents the fields, and `pconn config show` shows the configuration that was read, and the file it came from. Unknown fields are an error.
 
 By default the file is `config.yaml` in `pconn`'s own configuration directory: `~/Library/Application Support/pconn` on macOS, `$XDG_CONFIG_HOME/pconn` or `~/.config/pconn` elsewhere. The current directory is deliberately not searched, since `pconn` is run from wherever its connections are wanted and a `config.yaml` there belongs to whatever is being worked on rather than to `pconn`. Use `--config <file>` for a file anywhere else, including one in the current directory.
 
@@ -11,14 +11,14 @@ logging:
   level: 1 # 0=error, 1=warn, 2=info, 3=debug
   format: text # text or json
 
-# Each connection has a name and a type, and a block of fields specific to that
-# type. Only ssh is supported at present, and is the default. For ssh, the
-# port_forward block is used by 'pconn connect', and the tmux block by
+# Each connection has a name and exactly one block of fields specific to its
+# type, which is implied by the block. Only ssh is supported at present. For
+# ssh, the port_forward block is used by 'pconn connect', and the tmux block by
 # 'pconn tmux <name>'.
 connections:
   # A fully specified connection: nothing is left to default.
   - name: dev-web
-    type: ssh # defaults to ssh if omitted
+    type: ssh # optional, since the ssh block implies it
     ssh:
       host: web.dev.example.com
       port: 22
@@ -51,7 +51,7 @@ connections:
           - local_port: 5432
             remote_port: 5432
 
-  # A minimal connection: type, port, user and dial_timeout all default.
+  # A minimal connection: port, user and dial_timeout all default.
   - name: shared-cache
     ssh:
       host: redis.internal.example.com
@@ -82,8 +82,8 @@ connections:
 Each entry under `connections` supports the following settings, which are common to all types of connection:
 
 - `name` *(optional)*: A unique identifier for the connection. If omitted, defaults to `user@host:port` (or `host:port` if user is unspecified).
-- `type` *(optional)*: The connection type or protocol to use, which selects the block of type specific fields. Defaults to `ssh`, which is the only type at present. A new type is added as a block of its own, alongside `ssh`.
-- `ssh`: The fields for a connection of type `ssh`, see [ssh Fields](#ssh-fields).
+- `type` *(optional)*: The connection type, which is implied by the type specific block that is set, so it can be left out. If it is given it must name that block. `ssh` is the only type at present.
+- `ssh`: The fields for a connection of type `ssh`, see [ssh Fields](#ssh-fields). Exactly one type specific block must be set, so that a connection of another type, added later as a block of its own alongside `ssh`, has no `ssh` block.
 
 ### ssh Fields
 
