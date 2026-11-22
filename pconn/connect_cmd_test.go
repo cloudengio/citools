@@ -311,7 +311,7 @@ logging:
   level: 2
   format: text
   file: %s
-connections:
+port_forwards:
   - name: test-conn
     host: %s
     user: %s
@@ -385,7 +385,7 @@ func TestConnectCommandFilterIntegration(t *testing.T) {
 	}
 
 	cfgContent := fmt.Sprintf(`
-connections:
+port_forwards:
   - name: conn1
     host: %s
     user: %s
@@ -431,7 +431,7 @@ connections:
 func TestConnectCommandUnknownConnection(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfgContent := `
-connections:
+port_forwards:
   - name: conn1
     host: 127.0.0.1:22
 `
@@ -469,7 +469,7 @@ func TestConnectCommandGroupIntegration(t *testing.T) {
 	}
 
 	cfgContent := fmt.Sprintf(`
-connections:
+port_forwards:
   - name: web
     host: %s
     user: %s
@@ -550,7 +550,7 @@ func TestConnectCommandGroupFlag(t *testing.T) {
 	}
 
 	cfgContent := fmt.Sprintf(`
-connections:
+port_forwards:
   - name: web
     host: %s
     user: %s
@@ -599,7 +599,7 @@ connections:
 func TestConnectCommandUnknownGroup(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfgContent := `
-connections:
+port_forwards:
   - name: conn1
     host: 127.0.0.1:22
     groups:
@@ -640,7 +640,7 @@ func TestConnectCommandMultipleGroupsAndAll(t *testing.T) {
 	}
 
 	cfgContent := fmt.Sprintf(`
-connections:
+port_forwards:
   - name: c1
     host: %s
     user: %s
@@ -748,7 +748,7 @@ logging:
   level: 1
   format: text
   file: %s
-connections:
+port_forwards:
   - name: unreachable
     host: 127.0.0.1:%d
     user: testuser
@@ -860,7 +860,7 @@ func TestConnectCommandInterfaceRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfgContent := fmt.Sprintf(`
-connections:
+port_forwards:
   - name: recovered
     host: %s
     user: %s

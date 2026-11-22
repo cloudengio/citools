@@ -95,7 +95,7 @@ func (c ConnectCommand) Run(ctx context.Context, flags any, args []string) error
 	}
 	targets = append(targets, args...)
 
-	var connsToMaintain []ConnectionConfig
+	var connsToMaintain []PortForwardConfig
 	var targetDesc string
 
 	if len(targets) > 0 {
@@ -107,8 +107,8 @@ func (c ConnectCommand) Run(ctx context.Context, flags any, args []string) error
 			}
 			matched, err := cfg.ConnectionsForGroup(target)
 			if err != nil {
-				var byName []ConnectionConfig
-				for _, conn := range cfg.Connections {
+				var byName []PortForwardConfig
+				for _, conn := range cfg.PortForwards {
 					if conn.Name == target {
 						byName = append(byName, conn)
 					}
@@ -151,10 +151,10 @@ func (c ConnectCommand) Run(ctx context.Context, flags any, args []string) error
 				return fmt.Errorf("multiple groups configured with conflicting port %d (between %q and %q); please specify a group to connect (available: %s)",
 					port, c1, c2, strings.Join(groups, ", "))
 			}
-			connsToMaintain = cfg.Connections
+			connsToMaintain = cfg.PortForwards
 			targetDesc = fmt.Sprintf("all connections (%d connections)", len(connsToMaintain))
 		} else {
-			connsToMaintain = cfg.Connections
+			connsToMaintain = cfg.PortForwards
 			targetDesc = fmt.Sprintf("all connections (%d connections)", len(connsToMaintain))
 		}
 	}
@@ -168,16 +168,16 @@ func (c ConnectCommand) Run(ctx context.Context, flags any, args []string) error
 	return maintainConnections(ctx, logger, connsToMaintain, cf)
 }
 
-func filterConnections(conns []ConnectionConfig, names []string) ([]ConnectionConfig, error) {
+func filterConnections(conns []PortForwardConfig, names []string) ([]PortForwardConfig, error) {
 	if len(names) == 0 {
 		return conns, nil
 	}
-	nameMap := make(map[string]ConnectionConfig)
+	nameMap := make(map[string]PortForwardConfig)
 	for _, c := range conns {
 		nameMap[c.Name] = c
 	}
 
-	var selected []ConnectionConfig
+	var selected []PortForwardConfig
 	var missing []string
 	for _, name := range names {
 		if c, ok := nameMap[name]; ok {
@@ -200,7 +200,7 @@ func filterConnections(conns []ConnectionConfig, names []string) ([]ConnectionCo
 }
 
 type connRunner struct {
-	conn       ConnectionConfig
+	conn       PortForwardConfig
 	client     *pssh.Client
 	controller *ratecontrol.Controller
 	waiter     *connWaiter
@@ -209,7 +209,7 @@ type connRunner struct {
 func maintainConnections(
 	ctx context.Context,
 	logger *slog.Logger,
-	conns []ConnectionConfig,
+	conns []PortForwardConfig,
 	cf *ConnectFlags,
 ) error {
 	runCtx, cancel := context.WithCancel(ctx)
@@ -247,7 +247,7 @@ func maintainConnections(
 				// never reported: pssh retries, so it does not return it.
 				pssh.WithOnAttemptFailed(waiter.attemptFailed),
 			)
-			psshOpts = append(psshOpts, identityOptions(conn)...)
+			psshOpts = append(psshOpts, identityOptions(conn.SSHConfig)...)
 			for _, f := range conn.Forwards {
 				psshOpts = append(psshOpts, pssh.WithLocalPortForward(f.LocalPort, f.RemotePort))
 			}
@@ -346,7 +346,7 @@ func maintainConnections(
 
 // identityOptions returns the options that say who to connect as and how to
 // verify the server, which are the same however the connection is used.
-func identityOptions(conn ConnectionConfig) []pssh.Option {
+func identityOptions(conn SSHConfig) []pssh.Option {
 	var opts []pssh.Option
 	if conn.parsedUser != "" {
 		opts = append(opts, pssh.WithUser(conn.parsedUser))

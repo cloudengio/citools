@@ -2,8 +2,9 @@
 //
 //	manage persistent network connections
 //
-//	connect - create and maintain persistent connections for one or more groups or all configured connections
-//	   tmux - attach to a tmux session on a connection, reconnecting and reattaching if it is lost
+//	connect - maintain the port forwards in the port_forwards section of the configuration for one or more groups, or for all of them
+//	   tmux - attach to a tmux session on a host in the tmux section of the configuration, reconnecting and reattaching if the connection is lost
+//	 config - show the configuration, and its documentation.
 //
 // global flags: [--config=config.yaml --log-file= --log-format=json --log-level=0 --log-source-code=false --log-tempfile= --verbose=false]
 //

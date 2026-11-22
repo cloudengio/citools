@@ -25,7 +25,7 @@ func TestConfigParseAndValidate(t *testing.T) {
 logging:
   level: 2
   format: text
-connections:
+port_forwards:
   - name: test-server
     host: remote.example.com:2222
     user: custom-user
@@ -58,11 +58,11 @@ connections:
 		t.Fatalf("unexpected validation error: %v", err)
 	}
 
-	if len(cfg.Connections) != 3 {
-		t.Fatalf("expected 3 connections, got %d", len(cfg.Connections))
+	if len(cfg.PortForwards) != 3 {
+		t.Fatalf("expected 3 connections, got %d", len(cfg.PortForwards))
 	}
 
-	c1 := cfg.Connections[0]
+	c1 := cfg.PortForwards[0]
 	if c1.Name != "test-server" {
 		t.Errorf("got name %q, want %q", c1.Name, "test-server")
 	}
@@ -94,7 +94,7 @@ connections:
 		t.Errorf("forward 1: got %d:%d, want 9090:90", c1.Forwards[1].LocalPort, c1.Forwards[1].RemotePort)
 	}
 
-	c2 := cfg.Connections[1]
+	c2 := cfg.PortForwards[1]
 	if got, want := c2.Name, "user2@db.example.com:2200"; got != want {
 		t.Errorf("got auto-generated name %q, want %q", c2.Name, want)
 	}
@@ -111,7 +111,7 @@ connections:
 		t.Errorf("got unlimited retries false, want default true")
 	}
 
-	c3 := cfg.Connections[2]
+	c3 := cfg.PortForwards[2]
 	if got, want := c3.Name, "host-from-name.example.com"; got != want {
 		t.Errorf("got name %q, want %q", c3.Name, want)
 	}
@@ -174,28 +174,55 @@ func TestParseHostUserPort(t *testing.T) {
 }
 
 func TestConfigValidationErrors(t *testing.T) {
-	t.Run("empty connections", func(t *testing.T) {
+	t.Run("empty config", func(t *testing.T) {
 		cfg := Config{}
-		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "at least one connection") {
-			t.Fatalf("expected error about missing connections, got: %v", err)
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "at least one entry") {
+			t.Fatalf("expected error about missing entries, got: %v", err)
+		}
+	})
+
+	t.Run("duplicate tmux names", func(t *testing.T) {
+		cfg := Config{Tmux: []TmuxConfig{
+			{SSHConfig: SSHConfig{Name: "t1", Host: "host1.example.com"}},
+			{SSHConfig: SSHConfig{Name: "t1", Host: "host2.example.com"}},
+		}}
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate tmux name") {
+			t.Fatalf("expected duplicate tmux name error, got: %v", err)
+		}
+	})
+
+	t.Run("blank tmux command", func(t *testing.T) {
+		cfg := Config{Tmux: []TmuxConfig{{SSHConfig: SSHConfig{Name: "t1", Host: "host1.example.com"}, Command: "  "}}}
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "command must not be blank") {
+			t.Fatalf("expected blank command error, got: %v", err)
+		}
+	})
+
+	t.Run("sections are independent", func(t *testing.T) {
+		cfg := Config{
+			PortForwards: []PortForwardConfig{{SSHConfig: SSHConfig{Name: "same", Host: "host1.example.com"}}},
+			Tmux:         []TmuxConfig{{SSHConfig: SSHConfig{Name: "same", Host: "host1.example.com"}}},
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("the same name in both sections must be allowed: %v", err)
 		}
 	})
 
 	t.Run("duplicate connection names", func(t *testing.T) {
 		cfg := Config{
-			Connections: []ConnectionConfig{
+			PortForwards: []PortForwardConfig{
 				{Name: "c1", Host: "host1.example.com"},
 				{Name: "c1", Host: "host2.example.com"},
 			},
 		}
-		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate connection name") {
-			t.Fatalf("expected duplicate connection name error, got: %v", err)
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate port_forwards name") {
+			t.Fatalf("expected duplicate port_forwards name error, got: %v", err)
 		}
 	})
 
 	t.Run("duplicate local port forward within same connection", func(t *testing.T) {
 		cfg := Config{
-			Connections: []ConnectionConfig{
+			PortForwards: []PortForwardConfig{
 				{
 					Name: "c1",
 					Host: "host1.example.com",
@@ -213,7 +240,7 @@ func TestConfigValidationErrors(t *testing.T) {
 
 	t.Run("conflicting local port forward across connections", func(t *testing.T) {
 		cfg := Config{
-			Connections: []ConnectionConfig{
+			PortForwards: []PortForwardConfig{
 				{
 					Name: "c1",
 					Host: "host1.example.com",
@@ -237,7 +264,7 @@ func TestConfigValidationErrors(t *testing.T) {
 
 	t.Run("invalid forward port", func(t *testing.T) {
 		cfg := Config{
-			Connections: []ConnectionConfig{
+			PortForwards: []PortForwardConfig{
 				{
 					Name: "c1",
 					Host: "host1.example.com",
@@ -254,7 +281,7 @@ func TestConfigValidationErrors(t *testing.T) {
 
 	t.Run("unsupported connection type", func(t *testing.T) {
 		cfg := Config{
-			Connections: []ConnectionConfig{
+			PortForwards: []PortForwardConfig{
 				{
 					Name: "c1",
 					Type: "wireguard",
@@ -269,7 +296,7 @@ func TestConfigValidationErrors(t *testing.T) {
 
 	t.Run("empty host and name", func(t *testing.T) {
 		cfg := Config{
-			Connections: []ConnectionConfig{
+			PortForwards: []PortForwardConfig{
 				{},
 			},
 		}
@@ -281,7 +308,7 @@ func TestConfigValidationErrors(t *testing.T) {
 
 func TestForwardStringFormats(t *testing.T) {
 	spec := `
-connections:
+port_forwards:
   - name: test-server
     forwards:
       - 8080:80
@@ -296,10 +323,10 @@ connections:
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("unexpected validation error: %v", err)
 	}
-	if len(cfg.Connections[0].Forwards) != 3 {
-		t.Fatalf("expected 3 forwards, got %d", len(cfg.Connections[0].Forwards))
+	if len(cfg.PortForwards[0].Forwards) != 3 {
+		t.Fatalf("expected 3 forwards, got %d", len(cfg.PortForwards[0].Forwards))
 	}
-	fwds := cfg.Connections[0].Forwards
+	fwds := cfg.PortForwards[0].Forwards
 	if fwds[0].LocalPort != 8080 || fwds[0].RemotePort != 80 {
 		t.Errorf("fwd 0: got %v, want 8080:80", fwds[0])
 	}
@@ -311,11 +338,11 @@ connections:
 	}
 
 	invalidSpecs := []string{
-		`connections: [{name: t, forwards: ["invalid"]}]`,
-		`connections: [{name: t, forwards: ["abc:80"]}]`,
-		`connections: [{name: t, forwards: ["80:abc"]}]`,
-		`connections: [{name: t, forwards: ["80:80:80"]}]`,
-		`connections: [{name: t, forwards: [12345]}]`,
+		`port_forwards: [{name: t, forwards: ["invalid"]}]`,
+		`port_forwards: [{name: t, forwards: ["abc:80"]}]`,
+		`port_forwards: [{name: t, forwards: ["80:abc"]}]`,
+		`port_forwards: [{name: t, forwards: ["80:80:80"]}]`,
+		`port_forwards: [{name: t, forwards: [12345]}]`,
 	}
 	for _, inv := range invalidSpecs {
 		var c Config
@@ -326,7 +353,7 @@ connections:
 }
 
 func TestFilterConnections(t *testing.T) {
-	conns := []ConnectionConfig{
+	conns := []PortForwardConfig{
 		{Name: "c1", Host: "h1"},
 		{Name: "c2", Host: "h2"},
 		{Name: "c3", Host: "h3"},
@@ -357,10 +384,10 @@ func TestContextWithConfig(t *testing.T) {
 		t.Fatal("expected no config in empty context")
 	}
 
-	cfg := Config{Connections: []ConnectionConfig{{Name: "test"}}}
+	cfg := Config{PortForwards: []PortForwardConfig{{Name: "test"}}}
 	ctx = cmdutil.ContextWithValue(ctx, cfg)
 	got, ok := cmdutil.ContextValue[Config](ctx)
-	if !ok || len(got.Connections) != 1 || got.Connections[0].Name != "test" {
+	if !ok || len(got.PortForwards) != 1 || got.PortForwards[0].Name != "test" {
 		t.Fatalf("failed to retrieve config from context: got %v, ok %v", got, ok)
 	}
 }
@@ -369,7 +396,7 @@ func TestParseConfigFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "test.yaml")
 	content := `
-connections:
+port_forwards:
   - name: my-conn
     host: 127.0.0.1:2222
 `
@@ -384,7 +411,7 @@ connections:
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("unexpected error validating: %v", err)
 	}
-	if len(cfg.Connections) != 1 || cfg.Connections[0].Name != "my-conn" {
+	if len(cfg.PortForwards) != 1 || cfg.PortForwards[0].Name != "my-conn" {
 		t.Fatalf("unexpected config content: %v", cfg)
 	}
 }
@@ -411,7 +438,7 @@ func parseExampleConfig(t *testing.T) Config {
 
 func testExampleConfigConnections(t *testing.T) {
 	cfg := parseExampleConfig(t)
-	if got, want := len(cfg.Connections), 3; got != want {
+	if got, want := len(cfg.PortForwards), 3; got != want {
 		t.Fatalf("got %v connections, want %v", got, want)
 	}
 	for i, tc := range []struct {
@@ -425,7 +452,7 @@ func testExampleConfigConnections(t *testing.T) {
 		// type, port and dial_timeout are all defaulted.
 		{"shared-cache", "redis.internal.example.com:22", "", pssh.DefaultDialTimeout, []string{"6379:6379"}},
 	} {
-		conn := cfg.Connections[i]
+		conn := cfg.PortForwards[i]
 		if got, want := conn.Name, tc.name; got != want {
 			t.Errorf("connection #%d: got name %q, want %q", i+1, got, want)
 		}
@@ -501,7 +528,7 @@ func testExampleConfigPortsAndRetries(t *testing.T) {
 	// unlimited_retries is unset for dev-web, so it follows the default
 	// either way, and explicitly false for the second connection, which
 	// overrides the default.
-	devWeb, db := cfg.Connections[0], cfg.Connections[1]
+	devWeb, db := cfg.PortForwards[0], cfg.PortForwards[1]
 	for _, dflt := range []bool{true, false} {
 		if got, want := devWeb.ShouldUnlimitedRetries(dflt), dflt; got != want {
 			t.Errorf("%v: with default %v: got %v, want %v", devWeb.Name, dflt, got, want)
@@ -523,7 +550,7 @@ func TestExampleConfig(t *testing.T) {
 
 func TestConnectionGroups(t *testing.T) {
 	spec := `
-connections:
+port_forwards:
   - name: web
     host: web.example.com
     groups:
@@ -584,7 +611,7 @@ connections:
 		t.Fatalf("expected 2 connections for 'dev', got %d (err: %v)", len(devConns), err)
 	}
 	if devConns[0].Name != "web" || devConns[1].Name != "db" {
-		t.Errorf("unexpected dev connections: %v", devConns)
+		t.Errorf("unexpected dev port_forwards: %v", devConns)
 	}
 
 	// Test ConnectionsForGroup("backend") -> [db, cache] (db belongs to both dev and backend)
@@ -593,7 +620,7 @@ connections:
 		t.Fatalf("expected 2 connections for 'backend', got %d (err: %v)", len(backendConns), err)
 	}
 	if backendConns[0].Name != "db" || backendConns[1].Name != "cache" {
-		t.Errorf("unexpected backend connections: %v", backendConns)
+		t.Errorf("unexpected backend port_forwards: %v", backendConns)
 	}
 
 	// Test ConnectionsForGroup("staging") -> [staging-db]
@@ -614,7 +641,7 @@ connections:
 		t.Fatalf("expected 3 deduplicated connections for 'dev' + 'backend', got %d (err: %v)", len(multiConns), err)
 	}
 	if multiConns[0].Name != "web" || multiConns[1].Name != "db" || multiConns[2].Name != "cache" {
-		t.Errorf("unexpected multi-group connections: %v", multiConns)
+		t.Errorf("unexpected multi-group port_forwards: %v", multiConns)
 	}
 
 	// Test ConnectionsForGroup("unknown")
@@ -633,7 +660,7 @@ connections:
 func TestGroupPortConflictValidation(t *testing.T) {
 	// Two connections in the SAME group with conflicting local ports
 	spec := `
-connections:
+port_forwards:
   - name: c1
     host: h1.example.com
     groups:
@@ -726,7 +753,7 @@ func writeConfig(t *testing.T, dir, name, host string) string {
 		t.Fatalf("mkdir %v: %v", dir, err)
 	}
 	path := filepath.Join(dir, name)
-	content := "connections:\n  - name: " + host + "\n    host: " + host + ":2222\n"
+	content := "port_forwards:\n  - name: " + host + "\n    host: " + host + ":2222\n"
 	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatalf("write %v: %v", path, err)
 	}
@@ -762,10 +789,10 @@ func prehookWithArgs(t *testing.T, args ...string) (Config, *cmdconfig.Located, 
 // which file was read.
 func firstHost(t *testing.T, cfg Config) string {
 	t.Helper()
-	if len(cfg.Connections) != 1 {
-		t.Fatalf("got %v connections, want 1", len(cfg.Connections))
+	if len(cfg.PortForwards) != 1 {
+		t.Fatalf("got %v connections, want 1", len(cfg.PortForwards))
 	}
-	return cfg.Connections[0].Name
+	return cfg.PortForwards[0].Name
 }
 
 // TestConfigPrehookCurrentDirectory covers pconn being run from arbitrary

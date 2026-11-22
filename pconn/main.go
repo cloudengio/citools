@@ -6,11 +6,14 @@
 //
 // It establishes and maintains persistent connections based on a YAML configuration
 // file, automatically reconnecting dropped connections using exponential backoff.
-// Connections can belong to multiple groups, allowing sets of related connections
-// to be started and maintained together.
+// The configuration has two sections: port_forwards, whose entries can belong to
+// multiple groups, allowing sets of related connections to be started and
+// maintained together by the connect command, and tmux, whose entries are used by
+// the tmux command. The config command shows and documents the configuration.
 //
-// The tmux command attaches to a tmux session on one of the connections,
-// running the command line that the connection's tmux.command configures,
+// The tmux command attaches to a tmux session over one of the connections in
+// the tmux section of the configuration, running the command line that its
+// command field configures,
 // eg. 'tmux -CC new -A -s main' to create or attach to a session using the control
 // mode supported by iTerm2. If the connection is lost it is reestablished and the
 // session reattached, which leaves the session itself, and what is running in
@@ -23,11 +26,14 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"syscall"
 
 	"cloudeng.io/cmdutil"
 	"cloudeng.io/cmdutil/cmdconfig"
+	"cloudeng.io/cmdutil/cmdyaml"
+	"cloudeng.io/cmdutil/structdoc"
 	"cloudeng.io/cmdutil/subcmd"
 	"cloudeng.io/net/pssh"
 )
@@ -37,13 +43,15 @@ name: pconn
 summary: manage persistent network connections
 commands:
   - name: connect
-    summary: create and maintain persistent connections for one or more groups or all configured connections
+    summary: maintain the port forwards in the port_forwards section of the configuration for one or more groups, or for all of them
     args:
       - "<group>... - optional group(s) of connections to connect (use 'all' for all connections); defaults to all if omitted"
   - name: tmux
-    summary: attach to a tmux session on a connection, reconnecting and reattaching if it is lost
+    summary: attach to a tmux session on a host in the tmux section of the configuration, reconnecting and reattaching if the connection is lost
     args:
-      - "<connection> - name of the configured connection to attach over"
+      - "<name> - name of the entry in the tmux section of the configuration to attach over"
+  {{range subcmdExtension "config"}}{{.}}
+  {{end}}
 `
 
 type GlobalFlags struct {
@@ -55,7 +63,8 @@ type GlobalFlags struct {
 var globalFlags GlobalFlags
 
 func createCLI() *subcmd.CommandSetYAML {
-	cmdSet := subcmd.MustFromYAML(CmdSpecYAML)
+	cmdSet := subcmd.MustFromYAMLTemplate(CmdSpecYAML, cmdconfig.ConfigExtension(configCommands))
+	cmdSet.MustAddExtensions()
 
 	connectCmd := ConnectCommand{}
 	cmdSet.Set("connect").MustRunner(connectCmd.Run, &ConnectFlags{})
@@ -65,7 +74,28 @@ func createCLI() *subcmd.CommandSetYAML {
 	cmdSet.Set("tmux").MustRunner(tmuxCmd.Run, &TmuxFlags{})
 	cmdSet.Set("tmux").MustSetPreHooks(tmuxPrehook)
 
+	// show needs the configuration, describe does not.
+	cmdSet.Set("config", "show").MustSetPreHooks(loadConfigPrehook)
+
 	return cmdSet
+}
+
+// configCommands implements 'config show' and 'config describe'.
+var configCommands = cmdconfig.ConfigCommands[Config]{
+	Summary: "pconn is configured using a YAML file with the following fields. Each entry in the port_forwards and tmux sections says how to reach a host, and what to do once connected: 'pconn connect' maintains the port forwards, and 'pconn tmux <name>' runs a tmux session. Only port_forwards entries have groups.\n\n",
+	// The fields that say how to reach a host are common to both sections, so
+	// are described once rather than for each of them.
+	Describers: []func(io.Writer) error{describeSSHConfig},
+}
+
+func describeSSHConfig(w io.Writer) error {
+	desc, err := structdoc.Describe(SSHConfig{}, "doc",
+		"\nEach entry in port_forwards and tmux also has these fields, which say how to reach the host:\n\n")
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(w, desc)
+	return err
 }
 
 // appDir is pconn's own directory within each of the user's configuration
@@ -113,16 +143,23 @@ var loggerPrehook = subcmd.LoggerHook("withLoggerPrehook", func(ctx context.Cont
 	return cfg.Logging.WithFlagOverrides(fs, globalFlags.LoggingFlags).NewLogger()
 })
 
+// loadConfigPrehook loads the configuration, rejecting unknown fields, and adds
+// it to the context.
+func loadConfigPrehook(ctx context.Context) (context.Context, string, subcmd.PostHook, error) {
+	hook := cmdconfig.ConfigHook[Config]{
+		Files:        &globalFlags.Config,
+		Spec:         configSpec(),
+		Required:     true,
+		ParseOptions: []cmdyaml.Option{cmdyaml.WithStrictFields(true)},
+	}
+	return hook.Run(ctx)
+}
+
 // configPrehookWith returns a hook that loads the configuration and then runs
 // the hook that creates the logger, which is that of the command to be run.
 func configPrehookWith(loggerHook subcmd.PreHook) subcmd.PreHook {
 	return func(ctx context.Context) (context.Context, string, subcmd.PostHook, error) {
-		hook := cmdconfig.ConfigHook[Config]{
-			Files:    &globalFlags.Config,
-			Spec:     configSpec(),
-			Required: true,
-		}
-		ctx, id, _, err := hook.Run(ctx)
+		ctx, id, _, err := loadConfigPrehook(ctx)
 		if err != nil {
 			return ctx, id, nil, err
 		}

@@ -23,19 +23,19 @@ import (
 )
 
 func TestTmuxCommandLine(t *testing.T) {
-	conn := ConnectionConfig{Tmux: TmuxConfig{Command: "tmux -CC new"}}
+	conn := TmuxConfig{Command: "tmux -CC new"}
 	for _, tc := range []struct {
 		flag string
-		conn ConnectionConfig
+		conn TmuxConfig
 		want string
 	}{
-		{"", ConnectionConfig{}, ""},
+		{"", TmuxConfig{}, ""},
 		{"", conn, "tmux -CC new"},
 		{"tmux new -A -s x", conn, "tmux new -A -s x"},
-		{"tmux new -A -s x", ConnectionConfig{}, "tmux new -A -s x"},
+		{"tmux new -A -s x", TmuxConfig{}, "tmux new -A -s x"},
 	} {
 		if got := tmuxCommandLine(&TmuxFlags{Command: tc.flag}, tc.conn); got != tc.want {
-			t.Errorf("flag %q, config %q: got %q, want %q", tc.flag, tc.conn.Tmux.Command, got, tc.want)
+			t.Errorf("flag %q, config %q: got %q, want %q", tc.flag, tc.conn.Command, got, tc.want)
 		}
 	}
 }
@@ -295,12 +295,11 @@ func TestAttachmentWaitsForConnection(t *testing.T) {
 }
 
 const tmuxTestConfig = `
-connections:
+tmux:
   - name: dev
     host: 127.0.0.1:2222
     user: auser
-    tmux:
-      command: tmux -CC new -A -s main
+    command: tmux -CC new -A -s main
   - name: nocommand
     host: 127.0.0.1:2223
     user: auser
@@ -319,8 +318,8 @@ func TestTmuxCommandErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"nosuch"}, `connection "nosuch" not found (available: dev, nocommand)`},
-		{[]string{"nocommand"}, "tmux.command or --command must specify"},
+		{[]string{"nosuch"}, `tmux "nosuch" not found (available: dev, nocommand)`},
+		{[]string{"nocommand"}, "command or --command must specify"},
 		// Tests do not run on a terminal.
 		{[]string{"dev"}, "requires standard input to be a terminal"},
 	} {
@@ -358,12 +357,11 @@ func TestTmuxLogsToFile(t *testing.T) {
 
 func TestTmuxConfig(t *testing.T) {
 	cfgYAML := `
-connections:
+tmux:
   - name: dev
     host: 127.0.0.1:2222
     user: auser
-    tmux:
-      command: /opt/homebrew/bin/tmux -u -CC -L work new -A -s main
+    command: /opt/homebrew/bin/tmux -u -CC -L work new -A -s main
 `
 	var cfg Config
 	if err := yaml.Unmarshal([]byte(cfgYAML), &cfg); err != nil {
@@ -372,11 +370,11 @@ connections:
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	conn, err := cfg.Connection("dev")
+	conn, err := cfg.TmuxConnection("dev")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := conn.Tmux.Command, "/opt/homebrew/bin/tmux -u -CC -L work new -A -s main"; got != want {
+	if got, want := conn.Command, "/opt/homebrew/bin/tmux -u -CC -L work new -A -s main"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
@@ -385,7 +383,8 @@ func TestTmuxConfigInvalid(t *testing.T) {
 	for _, tc := range []TmuxConfig{
 		{Command: "  "},
 	} {
-		conn := ConnectionConfig{Name: "dev", Tmux: tc}
+		conn := tc
+		conn.Name = "dev"
 		if err := conn.Validate(); err == nil {
 			t.Errorf("%+v: expected an error", tc)
 		}
@@ -395,13 +394,18 @@ func TestTmuxConfigInvalid(t *testing.T) {
 func TestForwardAgentConfig(t *testing.T) {
 	var cfg Config
 	err := yaml.Unmarshal([]byte(`
-connections:
+port_forwards:
   - name: dev
     host: 127.0.0.1:2222
     user: auser
     forward_agent: true
+tmux:
   - name: other
     host: 127.0.0.1:2223
+    user: auser
+    forward_agent: true
+  - name: plain
+    host: 127.0.0.1:2224
     user: auser
 `), &cfg)
 	if err != nil {
@@ -410,13 +414,14 @@ connections:
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	dev, _ := cfg.Connection("dev")
-	other, _ := cfg.Connection("other")
-	if !dev.ForwardAgent || other.ForwardAgent {
-		t.Errorf("got forward_agent %v and %v, want true and false", dev.ForwardAgent, other.ForwardAgent)
+	fwd := cfg.PortForwards[0]
+	other, _ := cfg.TmuxConnection("other")
+	plain, _ := cfg.TmuxConnection("plain")
+	if !fwd.ForwardAgent || !other.ForwardAgent || plain.ForwardAgent {
+		t.Errorf("got forward_agent %v, %v and %v, want true, true and false", fwd.ForwardAgent, other.ForwardAgent, plain.ForwardAgent)
 	}
 	// Forwarding is one more option, and only when asked for.
-	if got, want := len(identityOptions(dev)), len(identityOptions(other))+1; got != want {
+	if got, want := len(identityOptions(other.SSHConfig)), len(identityOptions(plain.SSHConfig))+1; got != want {
 		t.Errorf("got %d options, want %d", got, want)
 	}
 }

@@ -26,7 +26,7 @@ const DefaultStatusInterval = 15 * time.Second
 // a dropped VPN or a firewall is distinguishable from pconn having hung.
 type connWaiter struct {
 	logger    *slog.Logger // carries the connection's identifying attributes
-	conn      ConnectionConfig
+	conn      PortForwardConfig
 	unlimited bool
 
 	mu             sync.Mutex
@@ -175,7 +175,7 @@ func newStatusReporter(logger *slog.Logger, interval time.Duration) *statusRepor
 
 // add registers conn with the reporter and returns the waiter that tracks it.
 // logger should already carry the connection's identifying attributes.
-func (r *statusReporter) add(logger *slog.Logger, conn ConnectionConfig, unlimited bool) *connWaiter {
+func (r *statusReporter) add(logger *slog.Logger, conn PortForwardConfig, unlimited bool) *connWaiter {
 	w := &connWaiter{logger: logger, conn: conn, unlimited: unlimited}
 	r.waiters = append(r.waiters, w)
 	return w

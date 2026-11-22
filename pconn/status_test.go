@@ -43,9 +43,9 @@ func newTestLogger() (*slog.Logger, *syncBuffer) {
 }
 
 // testWaiterConfig is a connection whose attributes the diagnostics report.
-func testWaiterConfig(t *testing.T) ConnectionConfig {
+func testWaiterConfig(t *testing.T) PortForwardConfig {
 	t.Helper()
-	conn := ConnectionConfig{
+	conn := PortForwardConfig{
 		Name:        "pending-host",
 		Host:        "pending.example.com",
 		User:        "someone",
@@ -61,7 +61,7 @@ func testWaiterConfig(t *testing.T) ConnectionConfig {
 // testConnLogger returns the logger that maintainConnections gives a waiter,
 // ie. one that already carries the connection's identifying attributes, which
 // the waiter relies on rather than repeating them in every line.
-func testConnLogger(logger *slog.Logger, conn ConnectionConfig) *slog.Logger {
+func testConnLogger(logger *slog.Logger, conn PortForwardConfig) *slog.Logger {
 	return logger.With("connection", conn.Name, "type", conn.Type, "ssh.addr", conn.HostPort())
 }
 

@@ -5,8 +5,9 @@ Usage of `pconn`
 
     manage persistent network connections
 
-    connect - create and maintain persistent connections for one or more groups or all configured connections
-       tmux - attach to a tmux session on a connection, reconnecting and reattaching if it is lost
+    connect - maintain the port forwards in the port_forwards section of the configuration for one or more groups, or for all of them
+       tmux - attach to a tmux session on a host in the tmux section of the configuration, reconnecting and reattaching if the connection is lost
+     config - show the configuration, and its documentation.
 
 global flags: [--config=config.yaml --log-file= --log-format=json
 --log-level=0 --log-source-code=false --log-tempfile= --verbose=false]
@@ -36,24 +37,27 @@ forwards.
 
 It establishes and maintains persistent connections based on a YAML
 configuration file, automatically reconnecting dropped connections using
-exponential backoff. Connections can belong to multiple groups, allowing
-sets of related connections to be started and maintained together.
+exponential backoff. The configuration has two sections: port_forwards,
+whose entries can belong to multiple groups, allowing sets of related
+connections to be started and maintained together by the connect command,
+and tmux, whose entries are used by the tmux command. The config command
+shows and documents the configuration.
 
-The tmux command attaches to a tmux session on one of the connections,
-running the command line that the connection's tmux.command configures, eg.
-'tmux -CC new -A -s main' to create or attach to a session using the control
-mode supported by iTerm2. If the connection is lost it is reestablished and
-the session reattached, which leaves the session itself, and what is running
-in it, undisturbed. Logs are written to a temporary file unless a log file
-is configured, since anything else written to the terminal would corrupt the
-session.
+The tmux command attaches to a tmux session over one of the connections
+in the tmux section of the configuration, running the command line that
+its command field configures, eg. 'tmux -CC new -A -s main' to create
+or attach to a session using the control mode supported by iTerm2.
+If the connection is lost it is reestablished and the session reattached,
+which leaves the session itself, and what is running in it, undisturbed.
+Logs are written to a temporary file unless a log file is configured,
+since anything else written to the terminal would corrupt the session.
 
 
 ## External Markdown Files Included Here
 
 ### Configuration (config.md)
 
-`pconn` is configured using a YAML configuration file. The configuration defines logging settings, persistent connections, their protocol types, group memberships, and local TCP port forwards to maintain.
+`pconn` is configured using a YAML configuration file. The configuration defines logging settings and two sections: `port_forwards`, which holds the persistent connections that `pconn connect` maintains and the local TCP port forwards they carry, and `tmux`, which holds the connections that `pconn tmux` runs a tmux session over. `pconn config describe` documents the fields, and `pconn config show` shows the configuration that was read, and the file it came from.
 
 By default the file is `config.yaml` in `pconn`'s own configuration directory: `~/Library/Application Support/pconn` on macOS, `$XDG_CONFIG_HOME/pconn` or `~/.config/pconn` elsewhere. The current directory is deliberately not searched, since `pconn` is run from wherever its connections are wanted and a `config.yaml` there belongs to whatever is being worked on rather than to `pconn`. Use `--config <file>` for a file anywhere else, including one in the current directory.
 
@@ -64,27 +68,50 @@ logging:
   level: 1 # 0=error, 1=warn, 2=info, 3=debug
   format: text # text or json
 
-connections:
+# Hosts whose ports are forwarded by 'pconn connect'.
+port_forwards:
+  # A fully specified entry: nothing is left to default.
   - name: dev-web
     type: ssh # connection type; defaults to ssh if omitted
-    host: web.dev.example.com # if omitted, defaults to name
+    host: web.dev.example.com
     port: 22
     user: admin
     dial_timeout: 30s
+    accept_new_host_keys: true # accept and record host keys not yet known
+    forward_agent: false # make the local ssh agent available to commands run on the host
     groups: [dev, frontend]
-    forwards: [8080:80, 8443:443]
+    forwards: [8080:80, 8443:443] # <local>:<remote>
 
-  - name: db.dev.example.com:2222 # host is omitted, so name is used as the host
-    type: ssh
+  # host is omitted, so the name is used as the host; it carries the port.
+  - name: db.dev.example.com:2222
+    user: dba
     dial_timeout: 15s
+    known_hosts: [/etc/ssh/ssh_known_hosts]
+    unlimited_retries: false # give up once the retries are exhausted
     groups: [dev, backend]
-    forwards: [5432:5432]
+    forwards:
+      # A forward may also be written as a mapping. local/remote are accepted
+      # as aliases for local_port/remote_port.
+      - local_port: 5432
+        remote_port: 5432
 
+  # A minimal entry: type, port, user and dial_timeout all default.
   - name: shared-cache
-    type: ssh
     host: redis.internal.example.com
     groups: [backend, staging]
     forwards: [6379:6379]
+
+# Hosts that 'pconn tmux <name>' runs a tmux session on. The same host may also
+# appear in port_forwards; the sections are independent.
+tmux:
+  - name: dev-web
+    host: web.dev.example.com
+    user: admin
+    forward_agent: true # only for hosts that are trusted
+    # The complete command line, run as written by the remote login shell. The
+    # login shell does not read .zshrc or .bashrc, so give the full path to
+    # tmux if it is only on the PATH set there.
+    command: /opt/homebrew/bin/tmux -u -CC new -A -s main
 ```
 
 #### Configuration Specification
@@ -95,13 +122,16 @@ connections:
   - `level`: Integer log level (`0` = error, `1` = warn, `2` = info, `3` = debug).
   - `format`: Output format, either `text` or `json`.
   - `file`: Path to write log output (default writes to stderr; `-` writes to stdout).
-- `connections`: List of connection definitions. At least one connection must be specified.
+- `port_forwards` *(optional)*: List of connections that carry port forwards, used by `pconn connect`, see [Port Forward Fields](#port-forward-fields).
+- `tmux` *(optional)*: List of connections over which `pconn tmux` runs a tmux session, see [tmux Fields](#tmux-fields).
+
+At least one entry must be specified in one of the two sections. The sections are independent: names need only be unique within a section, and the same host may appear in both. Unknown fields are an error, so a configuration that uses the earlier `connections` section is rejected rather than ignored.
 
 ##### Connection Fields
 
-Each entry under `connections` supports the following settings:
+Every entry in `port_forwards` and in `tmux` supports the following settings, which say how to reach the host:
 
-- `name` *(optional)*: A unique identifier for the connection. If omitted, defaults to `user@host:port` (or `host:port` if user is unspecified).
+- `name` *(optional)*: A unique identifier for the entry. If omitted, defaults to `user@host:port` (or `host:port` if user is unspecified).
 - `type` *(optional)*: The connection type or protocol to use. Defaults to `ssh`. Currently, `ssh` is the supported implementation, serving as an extensible foundation for other connection protocols in the future.
 - `host` *(optional)*: The target host. If omitted, `name` is used as the host. When specified, can be formatted as:
   - Bare hostname or IP: `server.example.com`
@@ -114,23 +144,31 @@ Each entry under `connections` supports the following settings:
 - `dial_timeout` *(optional)*: Duration to wait when establishing the connection (e.g. `10s`, `30s`, `1m`). Defaults to `30s`.
 - `accept_new_host_keys` *(optional)*: When true (for SSH), automatically trusts and records newly encountered SSH host public keys.
 - `known_hosts` *(optional)*: List of custom `known_hosts` file paths to consult during SSH host verification.
-- `forward_agent` *(optional)*: When true, the local ssh agent (`$SSH_AUTH_SOCK`) is made available to commands run on the remote host, as `ssh -A` does, which `pconn tmux` does; sessions started by it then have an `SSH_AUTH_SOCK` of their own. `pconn connect` only maintains the connection and port forwards and runs no commands, so the setting has no effect on it. Anyone able to act as you, or as root, on the remote host can use your agent whilst a command runs, so enable it only for hosts that are trusted. Defaults to `false`. If the host refuses forwarding the command is run without it and a warning is logged.
-- `tmux` *(optional)*: How `pconn tmux` runs tmux on the remote host, see [tmux Fields](#tmux-fields).
+- `forward_agent` *(optional)*: When true, the local ssh agent (`$SSH_AUTH_SOCK`) is made available to commands run on the remote host, as `ssh -A` does; sessions started by them then have an `SSH_AUTH_SOCK` of their own. It is accepted in both sections, but `pconn connect` only maintains the connection and port forwards and runs no commands, so it only has an effect for `tmux` entries. Anyone able to act as you, or as root, on the remote host can use your agent whilst a command runs, so enable it only for hosts that are trusted. Defaults to `false`. If the host refuses forwarding the command is run without it and a warning is logged.
+
+##### Port Forward Fields
+
+In addition to the connection fields, each entry under `port_forwards` supports:
+
+- `forwards` *(optional)*: List of local TCP port forwarding tunnels to establish and maintain over this connection, specified using flow syntax (e.g. `[11001:11000]` or `[8080:80, 8443:443]`), see [Port Forwarding Fields](#port-forwarding-fields).
+- `groups` *(optional)*: List of group names that this entry belongs to, typically specified using flow syntax (e.g. `[ci]` or `[dev, frontend]`). An entry may belong to multiple groups simultaneously. Groups only apply to `port_forwards`.
 - `unlimited_retries` *(optional)*: Boolean flag specifying whether reconnection attempts should back off and retry indefinitely. If unspecified, inherits the command-line flag setting (default `true`).
-- `groups` *(optional)*: List of group names that this connection belongs to, typically specified using flow syntax (e.g. `[ci]` or `[dev, frontend]`). A connection may belong to multiple groups simultaneously.
-- `forwards` *(optional)*: List of local TCP port forwarding tunnels to establish and maintain over this connection, specified using flow syntax (e.g. `[11001:11000]` or `[8080:80, 8443:443]`).
 
 ##### tmux Fields
 
+In addition to the connection fields, each entry under `tmux` supports:
+
 - `command` *(required by `pconn tmux`)*: The complete command line to run on the remote host, for example `/opt/homebrew/bin/tmux -u -CC new -A -s main`, which creates the session `main` or attaches to it. It is passed to the user's login shell as written, so it is subject to that shell's quoting, and that shell does not read interactive-only startup files such as `.zshrc`, so give the full path to tmux if it is only on the `PATH` set there. There is no default. The `--command` flag overrides it.
 
-```yaml
-connections:
-  - name: dev-web
-    tmux:
-      command: /opt/homebrew/bin/tmux -u -CC -L work new -A -s main
-```
+`pconn tmux <name>` uses the entry in `tmux` with that name:
 
+```yaml
+tmux:
+  - name: dev-web
+    host: web.dev.example.com
+    forward_agent: true
+    command: /opt/homebrew/bin/tmux -u -CC -L work new -A -s main
+```
 
 ##### Port Forwarding Fields
 
@@ -143,7 +181,7 @@ Each item under `forwards` can be specified as a `<local>:<remote>` string or ma
 
 #### Groups and Membership
 
-Connections can belong to multiple logical groups via the `groups` slice:
+Entries in `port_forwards` can belong to multiple logical groups via the `groups` slice:
 
 - **Multi-Group Membership**: A connection can serve multiple roles. For example, a database proxy can belong to both `dev` and `backend` groups: `groups: [dev, backend]`.
 - **Scanning and Filtering**: When `pconn connect <group>...` is invoked with one or more group names, the configuration is scanned and all connections whose `groups` list contains any of the specified groups are deduplicated, selected, and maintained together.
