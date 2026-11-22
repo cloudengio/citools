@@ -29,7 +29,7 @@ type TmuxCommand struct{}
 // TmuxFlags defines flags for the tmux subcommand.
 type TmuxFlags struct {
 	Session   string        `subcmd:"session,main,'name of the tmux session to attach to, which is created if it does not exist'"`
-	Command   string        `subcmd:"tmux,,'tmux executable on the remote host, eg. /opt/homebrew/bin/tmux; overrides the connection configuration and defaults to tmux, found using the login shell PATH'"`
+	Command   string        `subcmd:"tmux,,'tmux executable on the remote host, eg. /opt/homebrew/bin/tmux; overrides tmux.command in the connection configuration, and defaults to tmux, found using the login shell PATH'"`
 	Control   bool          `subcmd:"control,true,'use tmux control mode, tmux -CC, as supported by iTerm2; if false a plain tmux is attached'"`
 	KeepAlive time.Duration `subcmd:"keep-alive,15s,'how often to probe the connection so that one that has silently failed is noticed and replaced; 0 disables'"`
 }
@@ -59,9 +59,9 @@ var tmuxLoggerPrehook = subcmd.LoggerHook("tmuxLoggerPrehook", func(ctx context.
 var tmuxPrehook = configPrehookWith(tmuxLoggerPrehook)
 
 // tmuxCommandLine returns the remote command to run to create or attach to
-// session using the tmux executable.
-func tmuxCommandLine(tmux, session string, control bool) string {
-	args := []string{tmux}
+// session using the tmux executable and options for it.
+func tmuxCommandLine(tmux string, options []string, session string, control bool) string {
+	args := append([]string{tmux}, options...)
 	if control {
 		args = append(args, "-CC")
 	}
@@ -74,8 +74,8 @@ func tmuxExecutable(tf *TmuxFlags, conn ConnectionConfig) string {
 	switch {
 	case tf.Command != "":
 		return tf.Command
-	case conn.TmuxCommand != "":
-		return conn.TmuxCommand
+	case conn.Tmux.Command != "":
+		return conn.Tmux.Command
 	}
 	return "tmux"
 }
@@ -140,7 +140,7 @@ func (c TmuxCommand) Run(ctx context.Context, flags any, args []string) error {
 	a := &attachment{
 		client:     client,
 		name:       conn.Name,
-		cmd:        tmuxCommandLine(tmuxExecutable(tf, conn), tf.Session, tf.Control),
+		cmd:        tmuxCommandLine(tmuxExecutable(tf, conn), conn.Tmux.Options, tf.Session, tf.Control),
 		status:     status,
 		attached:   &attached,
 		in:         os.Stdin,
@@ -279,7 +279,7 @@ func commandFailure(err error) error {
 	var exit interface{ ExitStatus() int } // An *ssh.ExitError.
 	if errors.As(err, &exit) && exit.ExitStatus() == 127 {
 		return fmt.Errorf("%w: tmux was not found using the login shell's PATH, which does not include "+
-			"that set in interactive-only files such as .zshrc; give its full path using tmux_command in the "+
+			"that set in interactive-only files such as .zshrc; give its full path using tmux.command in the "+
 			"connection's configuration or the --tmux flag", err)
 	}
 	return err

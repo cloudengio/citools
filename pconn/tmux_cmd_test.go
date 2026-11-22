@@ -19,28 +19,31 @@ import (
 
 	"cloudeng.io/net/pssh"
 	"golang.org/x/crypto/ssh"
+	"gopkg.in/yaml.v3"
 )
 
 func TestTmuxCommandLine(t *testing.T) {
 	for _, tc := range []struct {
 		tmux    string
+		options []string
 		session string
 		control bool
 		want    string
 	}{
-		{"tmux", "main", true, `'tmux' '-CC' 'new' '-A' '-s' 'main'`},
-		{"tmux", "main", false, `'tmux' 'new' '-A' '-s' 'main'`},
-		{"tmux", "it's mine", true, `'tmux' '-CC' 'new' '-A' '-s' 'it'\''s mine'`},
-		{"/opt/homebrew/bin/tmux", "main", true, `'/opt/homebrew/bin/tmux' '-CC' 'new' '-A' '-s' 'main'`},
+		{"tmux", nil, "main", true, `'tmux' '-CC' 'new' '-A' '-s' 'main'`},
+		{"tmux", nil, "main", false, `'tmux' 'new' '-A' '-s' 'main'`},
+		{"tmux", nil, "it's mine", true, `'tmux' '-CC' 'new' '-A' '-s' 'it'\''s mine'`},
+		{"/opt/homebrew/bin/tmux", nil, "main", true, `'/opt/homebrew/bin/tmux' '-CC' 'new' '-A' '-s' 'main'`},
+		{"tmux", []string{"-u", "-L", "my work"}, "main", true, `'tmux' '-u' '-L' 'my work' '-CC' 'new' '-A' '-s' 'main'`},
 	} {
-		if got := tmuxCommandLine(tc.tmux, tc.session, tc.control); got != tc.want {
+		if got := tmuxCommandLine(tc.tmux, tc.options, tc.session, tc.control); got != tc.want {
 			t.Errorf("%q, %v: got %s, want %s", tc.session, tc.control, got, tc.want)
 		}
 	}
 }
 
 func TestTmuxExecutable(t *testing.T) {
-	conn := ConnectionConfig{TmuxCommand: "/from/config/tmux"}
+	conn := ConnectionConfig{Tmux: TmuxConfig{Command: "/from/config/tmux"}}
 	for _, tc := range []struct {
 		flag string
 		conn ConnectionConfig
@@ -52,7 +55,7 @@ func TestTmuxExecutable(t *testing.T) {
 		{"/from/flag/tmux", ConnectionConfig{}, "/from/flag/tmux"},
 	} {
 		if got := tmuxExecutable(&TmuxFlags{Command: tc.flag}, tc.conn); got != tc.want {
-			t.Errorf("flag %q, config %q: got %q, want %q", tc.flag, tc.conn.TmuxCommand, got, tc.want)
+			t.Errorf("flag %q, config %q: got %q, want %q", tc.flag, tc.conn.Tmux.Command, got, tc.want)
 		}
 	}
 }
@@ -76,7 +79,7 @@ func TestCommandFailure(t *testing.T) {
 		if !errors.Is(err, tc.err) {
 			t.Errorf("%v: the error was not preserved: %v", tc.err, err)
 		}
-		if got := strings.Contains(err.Error(), "tmux_command"); got != tc.explain {
+		if got := strings.Contains(err.Error(), "tmux.command"); got != tc.explain {
 			t.Errorf("%v: explained is %v, want %v: %v", tc.err, got, tc.explain, err)
 		}
 	}
@@ -364,5 +367,50 @@ func TestTmuxLogsToFile(t *testing.T) {
 	_ = dispatchTmux(t, "logging:\n  file: "+explicit+"\n"+tmuxTestConfig, "dev")
 	if tmuxLogPath != explicit {
 		t.Errorf("got log path %q, want the configured %q", tmuxLogPath, explicit)
+	}
+}
+
+func TestTmuxConfig(t *testing.T) {
+	cfgYAML := `
+connections:
+  - name: dev
+    host: 127.0.0.1:2222
+    user: auser
+    tmux:
+      command: /opt/homebrew/bin/tmux
+      options: [-u, -L, work]
+`
+	var cfg Config
+	if err := yaml.Unmarshal([]byte(cfgYAML), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := cfg.Connection("dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := conn.Tmux.Command, "/opt/homebrew/bin/tmux"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if got, want := strings.Join(conn.Tmux.Options, " "), "-u -L work"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if got, want := tmuxCommandLine(tmuxExecutable(&TmuxFlags{}, conn), conn.Tmux.Options, "main", true),
+		`'/opt/homebrew/bin/tmux' '-u' '-L' 'work' '-CC' 'new' '-A' '-s' 'main'`; got != want {
+		t.Errorf("got %s, want %s", got, want)
+	}
+}
+
+func TestTmuxConfigInvalid(t *testing.T) {
+	for _, tc := range []TmuxConfig{
+		{Command: "  "},
+		{Options: []string{"-u", ""}},
+	} {
+		conn := ConnectionConfig{Name: "dev", Tmux: tc}
+		if err := conn.Validate(); err == nil {
+			t.Errorf("%+v: expected an error", tc)
+		}
 	}
 }

@@ -93,6 +93,25 @@ func (f *ForwardConfig) Validate() error {
 	return nil
 }
 
+// TmuxConfig specifies how the tmux command runs tmux on the remote host.
+type TmuxConfig struct {
+	Command string   `yaml:"command,omitempty" doc:"tmux executable on the remote host, eg. /opt/homebrew/bin/tmux; defaults to tmux, found using the login shell's PATH"`
+	Options []string `yaml:"options,omitempty" doc:"options for tmux itself, placed before the tmux command, eg. [-u, -L, work]"`
+}
+
+// Validate checks the tmux configuration.
+func (t *TmuxConfig) Validate() error {
+	if t.Command != "" && strings.TrimSpace(t.Command) == "" {
+		return fmt.Errorf("tmux command must not be blank")
+	}
+	for _, o := range t.Options {
+		if o == "" {
+			return fmt.Errorf("tmux options must not include an empty option")
+		}
+	}
+	return nil
+}
+
 // ConnectionConfig defines a single persistent connection and its port forwards.
 type ConnectionConfig struct {
 	Name              string          `yaml:"name,omitempty" doc:"unique name for the connection; defaults to user@host:port"`
@@ -107,7 +126,7 @@ type ConnectionConfig struct {
 	Forwards          []ForwardConfig `yaml:"forwards,omitempty" doc:"local port forwards to establish (<local>:<remote>)"`
 	UnlimitedRetries  *bool           `yaml:"unlimited_retries,omitempty" doc:"continue retrying indefinitely; defaults to true"`
 	Groups            []string        `yaml:"groups,omitempty" doc:"groups this connection belongs to"`
-	TmuxCommand       string          `yaml:"tmux_command,omitempty" doc:"tmux executable on the remote host for the tmux command, eg. /opt/homebrew/bin/tmux; defaults to tmux, found using the login shell's PATH"`
+	Tmux              TmuxConfig      `yaml:"tmux,omitempty" doc:"how the tmux command runs tmux on the remote host"`
 
 	parsedHost string
 	parsedPort int
@@ -163,6 +182,10 @@ func (c *ConnectionConfig) Validate() error {
 
 	user, host, port, err := parseHostUserPort(trimmedHost, c.User, defaultPort)
 	if err != nil {
+		return err
+	}
+
+	if err := c.Tmux.Validate(); err != nil {
 		return err
 	}
 
