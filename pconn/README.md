@@ -113,6 +113,7 @@ Each entry under `connections` supports the following settings:
 - `dial_timeout` *(optional)*: Duration to wait when establishing the connection (e.g. `10s`, `30s`, `1m`). Defaults to `30s`.
 - `accept_new_host_keys` *(optional)*: When true (for SSH), automatically trusts and records newly encountered SSH host public keys.
 - `known_hosts` *(optional)*: List of custom `known_hosts` file paths to consult during SSH host verification.
+- `forward_agent` *(optional)*: When true, the local ssh agent (`$SSH_AUTH_SOCK`) is made available to commands run on the remote host, as `ssh -A` does, which `pconn tmux` does; sessions started by it then have an `SSH_AUTH_SOCK` of their own. `pconn connect` only maintains the connection and port forwards and runs no commands, so the setting has no effect on it. Anyone able to act as you, or as root, on the remote host can use your agent whilst a command runs, so enable it only for hosts that are trusted. Defaults to `false`. If the host refuses forwarding the command is run without it and a warning is logged.
 - `tmux` *(optional)*: How `pconn tmux` runs tmux on the remote host, see [tmux Fields](#tmux-fields).
 - `unlimited_retries` *(optional)*: Boolean flag specifying whether reconnection attempts should back off and retry indefinitely. If unspecified, inherits the command-line flag setting (default `true`).
 - `groups` *(optional)*: List of group names that this connection belongs to, typically specified using flow syntax (e.g. `[ci]` or `[dev, frontend]`). A connection may belong to multiple groups simultaneously.

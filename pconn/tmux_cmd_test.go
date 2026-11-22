@@ -414,3 +414,32 @@ func TestTmuxConfigInvalid(t *testing.T) {
 		}
 	}
 }
+
+func TestForwardAgentConfig(t *testing.T) {
+	var cfg Config
+	err := yaml.Unmarshal([]byte(`
+connections:
+  - name: dev
+    host: 127.0.0.1:2222
+    user: auser
+    forward_agent: true
+  - name: other
+    host: 127.0.0.1:2223
+    user: auser
+`), &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	dev, _ := cfg.Connection("dev")
+	other, _ := cfg.Connection("other")
+	if !dev.ForwardAgent || other.ForwardAgent {
+		t.Errorf("got forward_agent %v and %v, want true and false", dev.ForwardAgent, other.ForwardAgent)
+	}
+	// Forwarding is one more option, and only when asked for.
+	if got, want := len(identityOptions(dev)), len(identityOptions(other))+1; got != want {
+		t.Errorf("got %d options, want %d", got, want)
+	}
+}

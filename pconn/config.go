@@ -123,6 +123,7 @@ type ConnectionConfig struct {
 	DialTimeout       time.Duration   `yaml:"dial_timeout,omitempty" doc:"timeout for establishing connection; defaults to 30s"`
 	AcceptNewHostKeys bool            `yaml:"accept_new_host_keys,omitempty" doc:"accept and record new SSH host keys"`
 	KnownHosts        []string        `yaml:"known_hosts,omitempty" doc:"custom known_hosts files for host verification"`
+	ForwardAgent      bool            `yaml:"forward_agent,omitempty" doc:"make the local ssh agent available to commands run on the remote host, eg. by the tmux command; only for hosts that are trusted"`
 	Forwards          []ForwardConfig `yaml:"forwards,omitempty" doc:"local port forwards to establish (<local>:<remote>)"`
 	UnlimitedRetries  *bool           `yaml:"unlimited_retries,omitempty" doc:"continue retrying indefinitely; defaults to true"`
 	Groups            []string        `yaml:"groups,omitempty" doc:"groups this connection belongs to"`

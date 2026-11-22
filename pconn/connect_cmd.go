@@ -357,6 +357,9 @@ func identityOptions(conn ConnectionConfig) []pssh.Option {
 	if len(conn.KnownHosts) > 0 {
 		opts = append(opts, pssh.WithKnownHosts(conn.KnownHosts...))
 	}
+	if conn.ForwardAgent {
+		opts = append(opts, pssh.WithAgentForwarding(true))
+	}
 	return opts
 }
 
