@@ -296,6 +296,18 @@ func (cfg *Config) Groups() []string {
 	return groups
 }
 
+// Connection returns the named connection.
+func (cfg *Config) Connection(name string) (ConnectionConfig, error) {
+	var names []string
+	for _, c := range cfg.Connections {
+		if c.Name == name {
+			return c, nil
+		}
+		names = append(names, c.Name)
+	}
+	return ConnectionConfig{}, fmt.Errorf("connection %q not found (available: %s)", name, strings.Join(names, ", "))
+}
+
 // ConnectionsForGroup returns all connections that belong to the specified group.
 // The special group name "all" returns all configured connections.
 func (cfg *Config) ConnectionsForGroup(group string) ([]ConnectionConfig, error) {

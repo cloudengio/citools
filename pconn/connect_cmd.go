@@ -247,15 +247,7 @@ func maintainConnections(
 				// never reported: pssh retries, so it does not return it.
 				pssh.WithOnAttemptFailed(waiter.attemptFailed),
 			)
-			if conn.parsedUser != "" {
-				psshOpts = append(psshOpts, pssh.WithUser(conn.parsedUser))
-			}
-			if conn.AcceptNewHostKeys {
-				psshOpts = append(psshOpts, pssh.WithAcceptNewHostKeys(true))
-			}
-			if len(conn.KnownHosts) > 0 {
-				psshOpts = append(psshOpts, pssh.WithKnownHosts(conn.KnownHosts...))
-			}
+			psshOpts = append(psshOpts, identityOptions(conn)...)
 			for _, f := range conn.Forwards {
 				psshOpts = append(psshOpts, pssh.WithLocalPortForward(f.LocalPort, f.RemotePort))
 			}
@@ -350,6 +342,22 @@ func maintainConnections(
 		return nil
 	}
 	return err
+}
+
+// identityOptions returns the options that say who to connect as and how to
+// verify the server, which are the same however the connection is used.
+func identityOptions(conn ConnectionConfig) []pssh.Option {
+	var opts []pssh.Option
+	if conn.parsedUser != "" {
+		opts = append(opts, pssh.WithUser(conn.parsedUser))
+	}
+	if conn.AcceptNewHostKeys {
+		opts = append(opts, pssh.WithAcceptNewHostKeys(true))
+	}
+	if len(conn.KnownHosts) > 0 {
+		opts = append(opts, pssh.WithKnownHosts(conn.KnownHosts...))
+	}
+	return opts
 }
 
 func formatForwards(forwards []ForwardConfig) string {

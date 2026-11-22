@@ -6,9 +6,10 @@ Usage of `pconn`
     manage persistent network connections
 
     connect - create and maintain persistent connections for one or more groups or all configured connections
+       tmux - attach to a tmux session on a connection, reconnecting and reattaching if it is lost
 
 global flags: [--config=config.yaml --log-file= --log-format=json
---log-level=0 --log-source-code=false --verbose=false]
+--log-level=0 --log-source-code=false --log-tempfile= --verbose=false]
 
     -config value
       YAML configuration file; if unset, config.yaml in the `pconn` directory
@@ -23,6 +24,10 @@ global flags: [--config=config.yaml --log-file= --log-format=json
       logging level: 0=error, 1=warn, 2=info, 3=debug
     -log-source-code
       include source code file and line number in logs
+    -log-tempfile string
+      create a unique log file from this mktemp pattern, eg. myapp-XXXXXX.log,
+      in the temporary directory unless the pattern includes a directory, which
+      is created if needed. Mutually exclusive with log-file
     -verbose
       enable verbose logging
 
@@ -33,6 +38,14 @@ It establishes and maintains persistent connections based on a YAML
 configuration file, automatically reconnecting dropped connections using
 exponential backoff. Connections can belong to multiple groups, allowing
 sets of related connections to be started and maintained together.
+
+The tmux command attaches to a tmux session on one of the connections,
+creating the session if need be, using tmux's control mode as supported by
+iTerm2 by default. If the connection is lost it is reestablished and the
+session reattached, which leaves the session itself, and what is running in
+it, undisturbed. Logs are written to a temporary file unless a log file is
+configured, since anything else written to the terminal would corrupt the
+session.
 
 
 ## External Markdown Files Included Here

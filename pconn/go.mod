@@ -9,6 +9,7 @@ require (
 	cloudeng.io/net v0.0.0-20261119183710-006c82270faa
 	cloudeng.io/sync v0.0.12-0.20261112002641-3f0b5fb85a24
 	golang.org/x/crypto v0.59.0
+	golang.org/x/term v0.48.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 

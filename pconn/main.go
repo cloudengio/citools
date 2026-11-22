@@ -8,6 +8,14 @@
 // file, automatically reconnecting dropped connections using exponential backoff.
 // Connections can belong to multiple groups, allowing sets of related connections
 // to be started and maintained together.
+//
+// The tmux command attaches to a tmux session on one of the connections,
+// creating the session if need be, using tmux's control mode as supported by
+// iTerm2 by default. If the connection is lost it is reestablished and the
+// session reattached, which leaves the session itself, and what is running in
+// it, undisturbed. Logs are written to a temporary file unless a log file is
+// configured, since anything else written to the terminal would corrupt the
+// session.
 package main
 
 import (
@@ -31,6 +39,10 @@ commands:
     summary: create and maintain persistent connections for one or more groups or all configured connections
     args:
       - "<group>... - optional group(s) of connections to connect (use 'all' for all connections); defaults to all if omitted"
+  - name: tmux
+    summary: attach to a tmux session on a connection, reconnecting and reattaching if it is lost
+    args:
+      - "<connection> - name of the configured connection to attach over"
 `
 
 type GlobalFlags struct {
@@ -47,6 +59,10 @@ func createCLI() *subcmd.CommandSetYAML {
 	connectCmd := ConnectCommand{}
 	cmdSet.Set("connect").MustRunner(connectCmd.Run, &ConnectFlags{})
 	cmdSet.Set("connect").MustSetPreHooks(configPrehook)
+
+	tmuxCmd := TmuxCommand{}
+	cmdSet.Set("tmux").MustRunner(tmuxCmd.Run, &TmuxFlags{})
+	cmdSet.Set("tmux").MustSetPreHooks(tmuxPrehook)
 
 	return cmdSet
 }
@@ -96,19 +112,25 @@ var loggerPrehook = subcmd.LoggerHook("withLoggerPrehook", func(ctx context.Cont
 	return cfg.Logging.WithFlagOverrides(fs, globalFlags.LoggingFlags).NewLogger()
 })
 
-func configPrehook(ctx context.Context) (context.Context, string, subcmd.PostHook, error) {
-	hook := cmdconfig.ConfigHook[Config]{
-		Files:    &globalFlags.Config,
-		Spec:     configSpec(),
-		Required: true,
+// configPrehookWith returns a hook that loads the configuration and then runs
+// the hook that creates the logger, which is that of the command to be run.
+func configPrehookWith(loggerHook subcmd.PreHook) subcmd.PreHook {
+	return func(ctx context.Context) (context.Context, string, subcmd.PostHook, error) {
+		hook := cmdconfig.ConfigHook[Config]{
+			Files:    &globalFlags.Config,
+			Spec:     configSpec(),
+			Required: true,
+		}
+		ctx, id, _, err := hook.Run(ctx)
+		if err != nil {
+			return ctx, id, nil, err
+		}
+		ctx, _, postHook, err := loggerHook(ctx)
+		return ctx, id, postHook, err
 	}
-	ctx, id, _, err := hook.Run(ctx)
-	if err != nil {
-		return ctx, id, nil, err
-	}
-	ctx, _, postHook, err := loggerPrehook(ctx)
-	return ctx, id, postHook, err
 }
+
+var configPrehook = configPrehookWith(loggerPrehook)
 
 // isCleanShutdown reports whether err is a clean shutdown for this command:
 // a cancellation or interrupt, as per cmdutil.IsCleanShutdown, or the pssh
