@@ -122,7 +122,8 @@ Each entry under `connections` supports the following settings:
 ##### tmux Fields
 
 - `command` *(optional)*: The tmux executable to run, for example `/opt/homebrew/bin/tmux`. Defaults to `tmux`, which is looked up using the `PATH` of the user's login shell. That shell does not read interactive-only startup files such as `.zshrc` or `.bashrc`, so a tmux that is only on the `PATH` set there is not found unless its full path is given here.
-- `options` *(optional)*: Options for tmux itself, placed before its command, for example `[-u, -L, work]` to force UTF-8 and use a socket named `work`. Each list item is passed as a single argument, so `-L work` is written as two items.
+- `options` *(optional)*: Options for tmux itself, placed before its command, for example `[-u, -L, work]` to force UTF-8 and use a socket named `work`. Each list item is passed as a single argument, so `-L work` is written as two items. Do not put the tmux command here.
+- `args` *(optional)*: The tmux command and its arguments, placed after `-CC` if control mode is used. Defaults to `[new, -A, -s, <session>]`, which creates the session or attaches to it, where the session comes from the `--session` flag (`main` by default) and is ignored if `args` is set. For example `[new, -A, -s, work, -c, /srv]`. Each item is a single argument.
 
 ```yaml
 connections:
@@ -130,6 +131,7 @@ connections:
     tmux:
       command: /opt/homebrew/bin/tmux
       options: [-u, -L, work]
+      args: [new, -A, -s, work]
 ```
 
 `pconn tmux` then runs `/opt/homebrew/bin/tmux -u -L work -CC new -A -s main`.

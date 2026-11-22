@@ -97,6 +97,7 @@ func (f *ForwardConfig) Validate() error {
 type TmuxConfig struct {
 	Command string   `yaml:"command,omitempty" doc:"tmux executable on the remote host, eg. /opt/homebrew/bin/tmux; defaults to tmux, found using the login shell's PATH"`
 	Options []string `yaml:"options,omitempty" doc:"options for tmux itself, placed before the tmux command, eg. [-u, -L, work]"`
+	Args    []string `yaml:"args,omitempty" doc:"tmux command and its arguments, placed after -CC; defaults to [new, -A, -s, <session>] which creates or attaches to the session, eg. [new, -A, -s, work, -c, /srv]"`
 }
 
 // Validate checks the tmux configuration.
@@ -107,6 +108,11 @@ func (t *TmuxConfig) Validate() error {
 	for _, o := range t.Options {
 		if o == "" {
 			return fmt.Errorf("tmux options must not include an empty option")
+		}
+	}
+	for _, a := range t.Args {
+		if a == "" {
+			return fmt.Errorf("tmux args must not include an empty argument")
 		}
 	}
 	return nil

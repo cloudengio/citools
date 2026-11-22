@@ -28,7 +28,7 @@ type TmuxCommand struct{}
 
 // TmuxFlags defines flags for the tmux subcommand.
 type TmuxFlags struct {
-	Session   string        `subcmd:"session,main,'name of the tmux session to attach to, which is created if it does not exist'"`
+	Session   string        `subcmd:"session,main,'name of the tmux session to attach to, which is created if it does not exist; ignored if tmux.args is configured'"`
 	Command   string        `subcmd:"tmux,,'tmux executable on the remote host, eg. /opt/homebrew/bin/tmux; overrides tmux.command in the connection configuration, and defaults to tmux, found using the login shell PATH'"`
 	Control   bool          `subcmd:"control,true,'use tmux control mode, tmux -CC, as supported by iTerm2; if false a plain tmux is attached'"`
 	KeepAlive time.Duration `subcmd:"keep-alive,15s,'how often to probe the connection so that one that has silently failed is noticed and replaced; 0 disables'"`
@@ -58,14 +58,18 @@ var tmuxLoggerPrehook = subcmd.LoggerHook("tmuxLoggerPrehook", func(ctx context.
 
 var tmuxPrehook = configPrehookWith(tmuxLoggerPrehook)
 
-// tmuxCommandLine returns the remote command to run to create or attach to
-// session using the tmux executable and options for it.
-func tmuxCommandLine(tmux string, options []string, session string, control bool) string {
-	args := append([]string{tmux}, options...)
+// tmuxCommandLine returns the remote command to run: the tmux executable, its
+// options, -CC if control is set, and then args, which default to creating or
+// attaching to session.
+func tmuxCommandLine(tmux string, options, args []string, session string, control bool) string {
+	line := append([]string{tmux}, options...)
 	if control {
-		args = append(args, "-CC")
+		line = append(line, "-CC")
 	}
-	return pssh.ShellJoin(append(args, "new", "-A", "-s", session)...)
+	if len(args) == 0 {
+		args = []string{"new", "-A", "-s", session}
+	}
+	return pssh.ShellJoin(append(line, args...)...)
 }
 
 // tmuxExecutable returns the tmux to run: that of the flag, else of the
@@ -140,7 +144,7 @@ func (c TmuxCommand) Run(ctx context.Context, flags any, args []string) error {
 	a := &attachment{
 		client:     client,
 		name:       conn.Name,
-		cmd:        tmuxCommandLine(tmuxExecutable(tf, conn), conn.Tmux.Options, tf.Session, tf.Control),
+		cmd:        tmuxCommandLine(tmuxExecutable(tf, conn), conn.Tmux.Options, conn.Tmux.Args, tf.Session, tf.Control),
 		status:     status,
 		attached:   &attached,
 		in:         os.Stdin,

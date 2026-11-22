@@ -16,6 +16,7 @@ connections:
     tmux: # used by 'pconn tmux dev-web'
       command: /opt/homebrew/bin/tmux # defaults to tmux, found using the login shell's PATH
       options: [-u] # options for tmux itself
+      args: [new, -A, -s, main] # the tmux command, this is the default
 
   - name: db.dev.example.com:2222 # host is omitted, so name is used as the host
     type: ssh
