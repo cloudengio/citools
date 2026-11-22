@@ -117,12 +117,10 @@ func (t *TmuxConfig) Validate() error {
 	return nil
 }
 
-// ConnectionConfig defines a persistent ssh connection to a host, and what
-// is done over it: maintain port forwards, and/or run tmux.
-type ConnectionConfig struct {
-	Name              string            `yaml:"name,omitempty" doc:"unique name for the connection; defaults to user@host:port"`
-	Type              string            `yaml:"type,omitempty" doc:"connection type/protocol (e.g. ssh); defaults to ssh"`
-	Host              string            `yaml:"host,omitempty" doc:"remote host, optionally as user@host:port; if omitted, defaults to name"`
+// SSHConfig specifies an ssh connection to a host, and what is done over it:
+// maintain port forwards, and/or run tmux.
+type SSHConfig struct {
+	Host              string            `yaml:"host,omitempty" doc:"remote host, optionally as user@host:port; if omitted, defaults to the connection's name"`
 	Port              int               `yaml:"port,omitempty" doc:"remote port (alias for ssh_port)"`
 	SSHPort           int               `yaml:"ssh_port,omitempty" doc:"SSH port on the remote host; defaults to 22 if not in host"`
 	User              string            `yaml:"user,omitempty" doc:"username; defaults to the current user"`
@@ -137,50 +135,79 @@ type ConnectionConfig struct {
 	parsedUser string
 }
 
+// ConnectionConfig defines a persistent connection. Its Type selects the
+// protocol, and so which of the protocol specific fields is used; ssh is the
+// only protocol at present.
+type ConnectionConfig struct {
+	Name string    `yaml:"name,omitempty" doc:"unique name for the connection; defaults to user@host:port"`
+	Type string    `yaml:"type,omitempty" doc:"connection type/protocol, which selects the block of protocol specific fields; only ssh is supported, and is the default"`
+	SSH  SSHConfig `yaml:"ssh,omitempty" doc:"fields for connections of type ssh"`
+}
+
 // MaintainedByConnect reports whether 'pconn connect' maintains the connection,
 // which is so unless the connection only configures tmux.
 func (c *ConnectionConfig) MaintainedByConnect() bool {
-	return !reflect.ValueOf(c.PortForward).IsZero() || reflect.ValueOf(c.Tmux).IsZero()
+	return !reflect.ValueOf(c.SSH.PortForward).IsZero() || reflect.ValueOf(c.SSH.Tmux).IsZero()
 }
 
 // InGroup reports whether this connection belongs to the specified group.
 func (c *ConnectionConfig) InGroup(group string) bool {
-	for _, g := range c.PortForward.Groups {
-		if g == group {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(c.SSH.PortForward.Groups, group)
 }
 
 // HostPort returns the normalized host:port string for dialling.
 func (c *ConnectionConfig) HostPort() string {
-	return net.JoinHostPort(c.parsedHost, strconv.Itoa(c.parsedPort))
+	return net.JoinHostPort(c.SSH.parsedHost, strconv.Itoa(c.SSH.parsedPort))
 }
 
 // ParsedUser returns the effective SSH username.
 func (c *ConnectionConfig) ParsedUser() string {
-	return c.parsedUser
+	return c.SSH.parsedUser
 }
 
 // ShouldUnlimitedRetries reports whether this connection should retry indefinitely.
 func (c *ConnectionConfig) ShouldUnlimitedRetries(defaultUnlimited bool) bool {
-	if c.PortForward.UnlimitedRetries != nil {
-		return *c.PortForward.UnlimitedRetries
+	if c.SSH.PortForward.UnlimitedRetries != nil {
+		return *c.SSH.PortForward.UnlimitedRetries
 	}
 	return defaultUnlimited
 }
 
 // Validate validates and normalizes the connection configuration.
 func (c *ConnectionConfig) Validate() error {
+	if c.Type == "" {
+		c.Type = "ssh"
+	}
+	switch strings.ToLower(c.Type) {
+	case "ssh":
+		c.Type = "ssh"
+	default:
+		return fmt.Errorf("connection %q: unsupported connection type %q (supported types: ssh)", c.Name, c.Type)
+	}
+
+	if err := c.SSH.resolve(strings.TrimSpace(c.Name)); err != nil {
+		return err
+	}
+	if c.Name == "" {
+		if c.SSH.parsedUser != "" {
+			c.Name = fmt.Sprintf("%s@%s:%d", c.SSH.parsedUser, c.SSH.parsedHost, c.SSH.parsedPort)
+		} else {
+			c.Name = fmt.Sprintf("%s:%d", c.SSH.parsedHost, c.SSH.parsedPort)
+		}
+	}
+	return c.SSH.validate(c.Name)
+}
+
+// resolve determines the host, port and user, using the connection's name
+// if there is no host.
+func (c *SSHConfig) resolve(name string) error {
 	trimmedHost := strings.TrimSpace(c.Host)
-	trimmedName := strings.TrimSpace(c.Name)
 	if trimmedHost == "" {
-		if trimmedName == "" {
+		if name == "" {
 			return fmt.Errorf("either host or name must not be empty")
 		}
-		trimmedHost = trimmedName
-		c.Host = trimmedName
+		trimmedHost = name
+		c.Host = name
 	}
 
 	defaultPort := 22
@@ -194,36 +221,21 @@ func (c *ConnectionConfig) Validate() error {
 	if err != nil {
 		return err
 	}
-
-	if err := c.Tmux.Validate(); err != nil {
-		return err
-	}
-
 	c.parsedHost = host
 	c.parsedPort = port
 	c.parsedUser = user
 	if c.parsedUser == "" {
 		c.parsedUser = os.Getenv("USER")
 	}
+	return nil
+}
 
-	if c.Name == "" {
-		if c.parsedUser != "" {
-			c.Name = fmt.Sprintf("%s@%s:%d", c.parsedUser, c.parsedHost, c.parsedPort)
-		} else {
-			c.Name = fmt.Sprintf("%s:%d", c.parsedHost, c.parsedPort)
-		}
+// validate sets defaults, and checks the tmux and port forward blocks of the
+// connection called name.
+func (c *SSHConfig) validate(name string) error {
+	if err := c.Tmux.Validate(); err != nil {
+		return err
 	}
-
-	if c.Type == "" {
-		c.Type = "ssh"
-	}
-	switch strings.ToLower(c.Type) {
-	case "ssh":
-		c.Type = "ssh"
-	default:
-		return fmt.Errorf("connection %q: unsupported connection type %q (supported types: ssh)", c.Name, c.Type)
-	}
-
 	if c.DialTimeout <= 0 {
 		c.DialTimeout = pssh.DefaultDialTimeout
 	}
@@ -231,15 +243,14 @@ func (c *ConnectionConfig) Validate() error {
 	localPorts := make(map[int]bool)
 	for i := range c.PortForward.Forwards {
 		if err := c.PortForward.Forwards[i].Validate(); err != nil {
-			return fmt.Errorf("connection %q forward #%d: %w", c.Name, i+1, err)
+			return fmt.Errorf("connection %q forward #%d: %w", name, i+1, err)
 		}
 		lp := c.PortForward.Forwards[i].LocalPort
 		if localPorts[lp] {
-			return fmt.Errorf("connection %q: duplicate local forward port %d", c.Name, lp)
+			return fmt.Errorf("connection %q: duplicate local forward port %d", name, lp)
 		}
 		localPorts[lp] = true
 	}
-
 	return nil
 }
 
@@ -319,7 +330,7 @@ func (cfg *Config) Groups() []string {
 	seen := make(map[string]bool)
 	var groups []string
 	for _, c := range cfg.Connections {
-		for _, g := range c.PortForward.Groups {
+		for _, g := range c.SSH.PortForward.Groups {
 			if !seen[g] {
 				seen[g] = true
 				groups = append(groups, g)
@@ -404,7 +415,7 @@ func (cfg *Config) ConnectionsForGroups(groups ...string) ([]ConnectionConfig, e
 func (cfg *Config) ConnectionsWithoutGroup() []ConnectionConfig {
 	var result []ConnectionConfig
 	for _, c := range cfg.ConnectConnections() {
-		if len(c.PortForward.Groups) == 0 {
+		if len(c.SSH.PortForward.Groups) == 0 {
 			result = append(result, c)
 		}
 	}
@@ -415,7 +426,7 @@ func (cfg *Config) ConnectionsWithoutGroup() []ConnectionConfig {
 func HasConflictingPorts(conns []ConnectionConfig) (int, string, string, bool) {
 	ports := make(map[int]string)
 	for _, c := range conns {
-		for _, f := range c.PortForward.Forwards {
+		for _, f := range c.SSH.PortForward.Forwards {
 			if prev, exists := ports[f.LocalPort]; exists {
 				return f.LocalPort, prev, c.Name, true
 			}
@@ -452,7 +463,7 @@ func (cfg *Config) Validate() error {
 	if len(groups) == 0 {
 		allLocalPorts := make(map[int]string)
 		for _, c := range cfg.Connections {
-			for _, f := range c.PortForward.Forwards {
+			for _, f := range c.SSH.PortForward.Forwards {
 				if prevConn, exists := allLocalPorts[f.LocalPort]; exists {
 					return fmt.Errorf("conflict on local port %d: used by both connection %q and %q", f.LocalPort, prevConn, c.Name)
 				}
@@ -466,7 +477,7 @@ func (cfg *Config) Validate() error {
 		localPorts := make(map[int]string)
 		for _, c := range cfg.Connections {
 			if c.InGroup(group) {
-				for _, f := range c.PortForward.Forwards {
+				for _, f := range c.SSH.PortForward.Forwards {
 					if prevConn, exists := localPorts[f.LocalPort]; exists {
 						return fmt.Errorf("group %q: conflict on local port %d between connection %q and %q",
 							group, f.LocalPort, prevConn, c.Name)

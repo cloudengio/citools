@@ -12,51 +12,57 @@ logging:
   level: 1 # 0=error, 1=warn, 2=info, 3=debug
   format: text # text or json
 
-# Each connection says how to reach a host. Its port_forward block is used by
-# 'pconn connect', and its tmux block by 'pconn tmux <name>'.
+# Each connection has a name and a type, and a block of fields specific to that
+# type. Only ssh is supported at present, and is the default. For ssh, the
+# port_forward block is used by 'pconn connect', and the tmux block by
+# 'pconn tmux <name>'.
 connections:
   # A fully specified connection: nothing is left to default.
   - name: dev-web
-    type: ssh # connection type; defaults to ssh if omitted
-    host: web.dev.example.com
-    port: 22
-    user: admin
-    dial_timeout: 30s
-    accept_new_host_keys: true # accept and record host keys not yet known
-    port_forward:
-      groups: [dev, frontend]
-      forwards: [8080:80, 8443:443] # <local>:<remote>
-    # tmux is run over the same host, using its own connection.
-    tmux:
-      forward_agent: true # only for hosts that are trusted
-      # The complete command line, run as written by the remote login shell. The
-      # login shell does not read .zshrc or .bashrc, so give the full path to
-      # tmux if it is only on the PATH set there.
-      command: /opt/homebrew/bin/tmux -u -CC new -A -s main
+    type: ssh # defaults to ssh if omitted
+    ssh:
+      host: web.dev.example.com
+      port: 22
+      user: admin
+      dial_timeout: 30s
+      accept_new_host_keys: true # accept and record host keys not yet known
+      port_forward:
+        groups: [dev, frontend]
+        forwards: [8080:80, 8443:443] # <local>:<remote>
+      # tmux is run over the same host, using its own connection.
+      tmux:
+        forward_agent: true # only for hosts that are trusted
+        # The complete command line, run as written by the remote login shell.
+        # The login shell does not read .zshrc or .bashrc, so give the full
+        # path to tmux if it is only on the PATH set there.
+        command: /opt/homebrew/bin/tmux -u -CC new -A -s main
 
   # host is omitted, so the name is used as the host; it carries the port.
   - name: db.dev.example.com:2222
-    user: dba
-    dial_timeout: 15s
-    known_hosts: [/etc/ssh/ssh_known_hosts]
-    port_forward:
-      unlimited_retries: false # give up once the retries are exhausted
-      groups: [dev, backend]
-      forwards:
-        # A forward may also be written as a mapping. local/remote are accepted
-        # as aliases for local_port/remote_port.
-        - local_port: 5432
-          remote_port: 5432
+    ssh:
+      user: dba
+      dial_timeout: 15s
+      known_hosts: [/etc/ssh/ssh_known_hosts]
+      port_forward:
+        unlimited_retries: false # give up once the retries are exhausted
+        groups: [dev, backend]
+        forwards:
+          # A forward may also be written as a mapping. local/remote are
+          # accepted as aliases for local_port/remote_port.
+          - local_port: 5432
+            remote_port: 5432
 
   # A minimal connection: type, port, user and dial_timeout all default.
   - name: shared-cache
-    host: redis.internal.example.com
-    port_forward:
-      groups: [backend, staging]
-      forwards: [6379:6379]
+    ssh:
+      host: redis.internal.example.com
+      port_forward:
+        groups: [backend, staging]
+        forwards: [6379:6379]
 
   # A connection that only has a tmux block is not maintained by 'pconn connect'.
   - name: build-box
-    host: build.example.com
-    tmux:
-      command: /usr/local/bin/tmux -CC new -A -s main
+    ssh:
+      host: build.example.com
+      tmux:
+        command: /usr/local/bin/tmux -CC new -A -s main

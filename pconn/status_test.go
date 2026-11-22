@@ -46,11 +46,13 @@ func newTestLogger() (*slog.Logger, *syncBuffer) {
 func testWaiterConfig(t *testing.T) ConnectionConfig {
 	t.Helper()
 	conn := ConnectionConfig{
-		Name:        "pending-host",
-		Host:        "pending.example.com",
-		User:        "someone",
-		DialTimeout: 7 * time.Second,
-		PortForward: PortForwardConfig{Forwards: []ForwardConfig{{LocalPort: 8080, RemotePort: 80}}},
+		Name: "pending-host",
+		SSH: SSHConfig{
+			Host:        "pending.example.com",
+			User:        "someone",
+			DialTimeout: 7 * time.Second,
+			PortForward: PortForwardConfig{Forwards: []ForwardConfig{{LocalPort: 8080, RemotePort: 80}}},
+		},
 	}
 	if err := conn.Validate(); err != nil {
 		t.Fatalf("validate: %v", err)

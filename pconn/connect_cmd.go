@@ -229,7 +229,7 @@ func maintainConnections(
 
 			var psshOpts []pssh.Option
 			psshOpts = append(psshOpts,
-				pssh.WithDialTimeout(conn.DialTimeout),
+				pssh.WithDialTimeout(conn.SSH.DialTimeout),
 				pssh.WithInterfaceRecovery(cf.InterfaceRecovery),
 				pssh.WithLogger(connLogger),
 				pssh.WithOnConnect(func(c *pssh.Client) {
@@ -247,8 +247,8 @@ func maintainConnections(
 				// never reported: pssh retries, so it does not return it.
 				pssh.WithOnAttemptFailed(waiter.attemptFailed),
 			)
-			psshOpts = append(psshOpts, identityOptions(conn, conn.PortForward.ForwardAgent)...)
-			for _, f := range conn.PortForward.Forwards {
+			psshOpts = append(psshOpts, identityOptions(conn, conn.SSH.PortForward.ForwardAgent)...)
+			for _, f := range conn.SSH.PortForward.Forwards {
 				psshOpts = append(psshOpts, pssh.WithLocalPortForward(f.LocalPort, f.RemotePort))
 			}
 
@@ -293,10 +293,10 @@ func maintainConnections(
 				"type", r.conn.Type,
 				"host", hostPort,
 				"user", r.conn.ParsedUser(),
-				"dial_timeout", r.conn.DialTimeout,
+				"dial_timeout", r.conn.SSH.DialTimeout,
 				"unlimited_retries", r.conn.ShouldUnlimitedRetries(cf.UnlimitedRetries),
 				"interface_recovery", cf.InterfaceRecovery,
-				"forwards", formatForwards(r.conn.PortForward.Forwards),
+				"forwards", formatForwards(r.conn.SSH.PortForward.Forwards),
 			)
 
 			r.waiter.connecting()
@@ -348,14 +348,14 @@ func maintainConnections(
 // verify the server, which are the same however the connection is used.
 func identityOptions(conn ConnectionConfig, forwardAgent bool) []pssh.Option {
 	var opts []pssh.Option
-	if conn.parsedUser != "" {
-		opts = append(opts, pssh.WithUser(conn.parsedUser))
+	if conn.SSH.parsedUser != "" {
+		opts = append(opts, pssh.WithUser(conn.SSH.parsedUser))
 	}
-	if conn.AcceptNewHostKeys {
+	if conn.SSH.AcceptNewHostKeys {
 		opts = append(opts, pssh.WithAcceptNewHostKeys(true))
 	}
-	if len(conn.KnownHosts) > 0 {
-		opts = append(opts, pssh.WithKnownHosts(conn.KnownHosts...))
+	if len(conn.SSH.KnownHosts) > 0 {
+		opts = append(opts, pssh.WithKnownHosts(conn.SSH.KnownHosts...))
 	}
 	if forwardAgent {
 		opts = append(opts, pssh.WithAgentForwarding(true))

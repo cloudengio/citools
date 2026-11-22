@@ -27,30 +27,34 @@ logging:
   format: text
 connections:
   - name: test-server
-    host: remote.example.com:2222
-    user: custom-user
-    dial_timeout: 10s
-    accept_new_host_keys: true
-    known_hosts:
-      - /path/to/known_hosts
-    port_forward:
-      unlimited_retries: false
-      forwards:
-        - local_port: 8080
-          remote_port: 80
-        - local: 9090
-          remote: 90
-  - host: user2@db.example.com
-    ssh_port: 2200
-    port_forward:
-      forwards:
-        - local_port: 5432
-          remote_port: 5432
+    ssh:
+      host: remote.example.com:2222
+      user: custom-user
+      dial_timeout: 10s
+      accept_new_host_keys: true
+      known_hosts:
+        - /path/to/known_hosts
+      port_forward:
+        unlimited_retries: false
+        forwards:
+          - local_port: 8080
+            remote_port: 80
+          - local: 9090
+            remote: 90
+  -
+    ssh:
+      host: user2@db.example.com
+      ssh_port: 2200
+      port_forward:
+        forwards:
+          - local_port: 5432
+            remote_port: 5432
   - name: host-from-name.example.com
-    port_forward:
-      forwards:
-        - 7070:70
-        - "7071:71"
+    ssh:
+      port_forward:
+        forwards:
+          - 7070:70
+          - "7071:71"
 `
 	var cfg Config
 	if err := cmdyaml.ParseConfigsStrict(&cfg, []byte(spec)); err != nil {
@@ -78,23 +82,23 @@ connections:
 	if got, want := c1.ParsedUser(), "custom-user"; got != want {
 		t.Errorf("got user %q, want %q", got, want)
 	}
-	if got, want := c1.DialTimeout, 10*time.Second; got != want {
+	if got, want := c1.SSH.DialTimeout, 10*time.Second; got != want {
 		t.Errorf("got dial timeout %v, want %v", got, want)
 	}
-	if !c1.AcceptNewHostKeys {
+	if !c1.SSH.AcceptNewHostKeys {
 		t.Errorf("got accept_new_host_keys false, want true")
 	}
 	if c1.ShouldUnlimitedRetries(true) {
 		t.Errorf("got unlimited retries true, want false")
 	}
-	if len(c1.PortForward.Forwards) != 2 {
-		t.Fatalf("got %d forwards, want 2", len(c1.PortForward.Forwards))
+	if len(c1.SSH.PortForward.Forwards) != 2 {
+		t.Fatalf("got %d forwards, want 2", len(c1.SSH.PortForward.Forwards))
 	}
-	if c1.PortForward.Forwards[0].LocalPort != 8080 || c1.PortForward.Forwards[0].RemotePort != 80 {
-		t.Errorf("forward 0: got %d:%d, want 8080:80", c1.PortForward.Forwards[0].LocalPort, c1.PortForward.Forwards[0].RemotePort)
+	if c1.SSH.PortForward.Forwards[0].LocalPort != 8080 || c1.SSH.PortForward.Forwards[0].RemotePort != 80 {
+		t.Errorf("forward 0: got %d:%d, want 8080:80", c1.SSH.PortForward.Forwards[0].LocalPort, c1.SSH.PortForward.Forwards[0].RemotePort)
 	}
-	if c1.PortForward.Forwards[1].LocalPort != 9090 || c1.PortForward.Forwards[1].RemotePort != 90 {
-		t.Errorf("forward 1: got %d:%d, want 9090:90", c1.PortForward.Forwards[1].LocalPort, c1.PortForward.Forwards[1].RemotePort)
+	if c1.SSH.PortForward.Forwards[1].LocalPort != 9090 || c1.SSH.PortForward.Forwards[1].RemotePort != 90 {
+		t.Errorf("forward 1: got %d:%d, want 9090:90", c1.SSH.PortForward.Forwards[1].LocalPort, c1.SSH.PortForward.Forwards[1].RemotePort)
 	}
 
 	c2 := cfg.Connections[1]
@@ -107,7 +111,7 @@ connections:
 	if got, want := c2.ParsedUser(), "user2"; got != want {
 		t.Errorf("got user %q, want %q", got, want)
 	}
-	if got, want := c2.DialTimeout, pssh.DefaultDialTimeout; got != want {
+	if got, want := c2.SSH.DialTimeout, pssh.DefaultDialTimeout; got != want {
 		t.Errorf("got default dial timeout %v, want %v", got, want)
 	}
 	if !c2.ShouldUnlimitedRetries(true) {
@@ -121,14 +125,14 @@ connections:
 	if got, want := c3.HostPort(), "host-from-name.example.com:22"; got != want {
 		t.Errorf("got host:port %q, want %q (should use name as host)", got, want)
 	}
-	if len(c3.PortForward.Forwards) != 2 {
-		t.Fatalf("c3: got %d forwards, want 2", len(c3.PortForward.Forwards))
+	if len(c3.SSH.PortForward.Forwards) != 2 {
+		t.Fatalf("c3: got %d forwards, want 2", len(c3.SSH.PortForward.Forwards))
 	}
-	if c3.PortForward.Forwards[0].LocalPort != 7070 || c3.PortForward.Forwards[0].RemotePort != 70 {
-		t.Errorf("c3 forward 0: got %d:%d, want 7070:70", c3.PortForward.Forwards[0].LocalPort, c3.PortForward.Forwards[0].RemotePort)
+	if c3.SSH.PortForward.Forwards[0].LocalPort != 7070 || c3.SSH.PortForward.Forwards[0].RemotePort != 70 {
+		t.Errorf("c3 forward 0: got %d:%d, want 7070:70", c3.SSH.PortForward.Forwards[0].LocalPort, c3.SSH.PortForward.Forwards[0].RemotePort)
 	}
-	if c3.PortForward.Forwards[1].LocalPort != 7071 || c3.PortForward.Forwards[1].RemotePort != 71 {
-		t.Errorf("c3 forward 1: got %d:%d, want 7071:71", c3.PortForward.Forwards[1].LocalPort, c3.PortForward.Forwards[1].RemotePort)
+	if c3.SSH.PortForward.Forwards[1].LocalPort != 7071 || c3.SSH.PortForward.Forwards[1].RemotePort != 71 {
+		t.Errorf("c3 forward 1: got %d:%d, want 7071:71", c3.SSH.PortForward.Forwards[1].LocalPort, c3.SSH.PortForward.Forwards[1].RemotePort)
 	}
 }
 
@@ -187,8 +191,8 @@ func TestConfigValidationErrors(t *testing.T) {
 	t.Run("duplicate connection names", func(t *testing.T) {
 		cfg := Config{
 			Connections: []ConnectionConfig{
-				{Name: "c1", Host: "host1.example.com"},
-				{Name: "c1", Host: "host2.example.com"},
+				{Name: "c1", SSH: SSHConfig{Host: "host1.example.com"}},
+				{Name: "c1", SSH: SSHConfig{Host: "host2.example.com"}},
 			},
 		}
 		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate connection name") {
@@ -201,11 +205,10 @@ func TestConfigValidationErrors(t *testing.T) {
 			Connections: []ConnectionConfig{
 				{
 					Name: "c1",
-					Host: "host1.example.com",
-					PortForward: PortForwardConfig{Forwards: []ForwardConfig{
+					SSH: SSHConfig{Host: "host1.example.com", PortForward: PortForwardConfig{Forwards: []ForwardConfig{
 						{LocalPort: 8080, RemotePort: 80},
 						{LocalPort: 8080, RemotePort: 8080},
-					}},
+					}}},
 				},
 			},
 		}
@@ -219,17 +222,15 @@ func TestConfigValidationErrors(t *testing.T) {
 			Connections: []ConnectionConfig{
 				{
 					Name: "c1",
-					Host: "host1.example.com",
-					PortForward: PortForwardConfig{Forwards: []ForwardConfig{
+					SSH: SSHConfig{Host: "host1.example.com", PortForward: PortForwardConfig{Forwards: []ForwardConfig{
 						{LocalPort: 8080, RemotePort: 80},
-					}},
+					}}},
 				},
 				{
 					Name: "c2",
-					Host: "host2.example.com",
-					PortForward: PortForwardConfig{Forwards: []ForwardConfig{
+					SSH: SSHConfig{Host: "host2.example.com", PortForward: PortForwardConfig{Forwards: []ForwardConfig{
 						{LocalPort: 8080, RemotePort: 8088},
-					}},
+					}}},
 				},
 			},
 		}
@@ -243,10 +244,9 @@ func TestConfigValidationErrors(t *testing.T) {
 			Connections: []ConnectionConfig{
 				{
 					Name: "c1",
-					Host: "host1.example.com",
-					PortForward: PortForwardConfig{Forwards: []ForwardConfig{
+					SSH: SSHConfig{Host: "host1.example.com", PortForward: PortForwardConfig{Forwards: []ForwardConfig{
 						{LocalPort: 99999, RemotePort: 80},
-					}},
+					}}},
 				},
 			},
 		}
@@ -261,7 +261,7 @@ func TestConfigValidationErrors(t *testing.T) {
 				{
 					Name: "c1",
 					Type: "wireguard",
-					Host: "host1.example.com",
+					SSH:  SSHConfig{Host: "host1.example.com"},
 				},
 			},
 		}
@@ -286,12 +286,13 @@ func TestForwardStringFormats(t *testing.T) {
 	spec := `
 connections:
   - name: test-server
-    port_forward:
-      forwards:
-        - 8080:80
-        - "9090:90"
-        - local_port: 7070
-          remote_port: 70
+    ssh:
+      port_forward:
+        forwards:
+          - 8080:80
+          - "9090:90"
+          - local_port: 7070
+            remote_port: 70
 `
 	var cfg Config
 	if err := cmdyaml.ParseConfigsStrict(&cfg, []byte(spec)); err != nil {
@@ -300,10 +301,10 @@ connections:
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("unexpected validation error: %v", err)
 	}
-	if len(cfg.Connections[0].PortForward.Forwards) != 3 {
-		t.Fatalf("expected 3 forwards, got %d", len(cfg.Connections[0].PortForward.Forwards))
+	if len(cfg.Connections[0].SSH.PortForward.Forwards) != 3 {
+		t.Fatalf("expected 3 forwards, got %d", len(cfg.Connections[0].SSH.PortForward.Forwards))
 	}
-	fwds := cfg.Connections[0].PortForward.Forwards
+	fwds := cfg.Connections[0].SSH.PortForward.Forwards
 	if fwds[0].LocalPort != 8080 || fwds[0].RemotePort != 80 {
 		t.Errorf("fwd 0: got %v, want 8080:80", fwds[0])
 	}
@@ -315,11 +316,11 @@ connections:
 	}
 
 	invalidSpecs := []string{
-		`connections: [{name: t, port_forward: {forwards: ["invalid"]}}]`,
-		`connections: [{name: t, port_forward: {forwards: ["abc:80"]}}]`,
-		`connections: [{name: t, port_forward: {forwards: ["80:abc"]}}]`,
-		`connections: [{name: t, port_forward: {forwards: ["80:80:80"]}}]`,
-		`connections: [{name: t, port_forward: {forwards: [12345]}}]`,
+		`connections: [{name: t, ssh: {port_forward: {forwards: ["invalid"]}}}]`,
+		`connections: [{name: t, ssh: {port_forward: {forwards: ["abc:80"]}}}]`,
+		`connections: [{name: t, ssh: {port_forward: {forwards: ["80:abc"]}}}]`,
+		`connections: [{name: t, ssh: {port_forward: {forwards: ["80:80:80"]}}}]`,
+		`connections: [{name: t, ssh: {port_forward: {forwards: [12345]}}}]`,
 	}
 	for _, inv := range invalidSpecs {
 		var c Config
@@ -331,9 +332,9 @@ connections:
 
 func TestFilterConnections(t *testing.T) {
 	conns := []ConnectionConfig{
-		{Name: "c1", Host: "h1"},
-		{Name: "c2", Host: "h2"},
-		{Name: "c3", Host: "h3"},
+		{Name: "c1", SSH: SSHConfig{Host: "h1"}},
+		{Name: "c2", SSH: SSHConfig{Host: "h2"}},
+		{Name: "c3", SSH: SSHConfig{Host: "h3"}},
 	}
 
 	// No names -> all
@@ -375,7 +376,8 @@ func TestParseConfigFiles(t *testing.T) {
 	content := `
 connections:
   - name: my-conn
-    host: 127.0.0.1:2222
+    ssh:
+      host: 127.0.0.1:2222
 `
 	if err := os.WriteFile(cfgPath, []byte(content), 0600); err != nil {
 		t.Fatal(err)
@@ -441,7 +443,7 @@ func testExampleConfigConnections(t *testing.T) {
 		if got, want := conn.Type, "ssh"; got != want {
 			t.Errorf("%v: got type %q, want %q", tc.name, got, want)
 		}
-		if got, want := conn.DialTimeout, tc.dialTimeout; got != want {
+		if got, want := conn.SSH.DialTimeout, tc.dialTimeout; got != want {
 			t.Errorf("%v: got dial timeout %v, want %v", tc.name, got, want)
 		}
 		// A connection that names no user inherits the one running pconn,
@@ -452,7 +454,7 @@ func testExampleConfigConnections(t *testing.T) {
 			}
 		}
 		var forwards []string
-		for _, f := range conn.PortForward.Forwards {
+		for _, f := range conn.SSH.PortForward.Forwards {
 			forwards = append(forwards, f.String())
 		}
 		if !slices.Equal(forwards, tc.forwards) {
@@ -503,12 +505,12 @@ func testExampleConfigTmux(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := devWeb.Tmux.Command, "/opt/homebrew/bin/tmux -u -CC new -A -s main"; got != want {
+	if got, want := devWeb.SSH.Tmux.Command, "/opt/homebrew/bin/tmux -u -CC new -A -s main"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
-	if !devWeb.Tmux.ForwardAgent || devWeb.PortForward.ForwardAgent {
+	if !devWeb.SSH.Tmux.ForwardAgent || devWeb.SSH.PortForward.ForwardAgent {
 		t.Errorf("got forward_agent %v for tmux and %v for port forwards, want true and false",
-			devWeb.Tmux.ForwardAgent, devWeb.PortForward.ForwardAgent)
+			devWeb.SSH.Tmux.ForwardAgent, devWeb.SSH.PortForward.ForwardAgent)
 	}
 	// A connection that only has a tmux block is not maintained by connect.
 	var maintained []string
@@ -555,39 +557,43 @@ func TestConnectionGroups(t *testing.T) {
 	spec := `
 connections:
   - name: web
-    host: web.example.com
-    port_forward:
-      groups:
-        - dev
-        - frontend
-      forwards:
-        - local_port: 8080
-          remote_port: 80
+    ssh:
+      host: web.example.com
+      port_forward:
+        groups:
+          - dev
+          - frontend
+        forwards:
+          - local_port: 8080
+            remote_port: 80
   - name: db
-    host: db.example.com
-    port_forward:
-      groups:
-        - dev
-        - backend
-      forwards:
-        - local_port: 5432
-          remote_port: 5432
+    ssh:
+      host: db.example.com
+      port_forward:
+        groups:
+          - dev
+          - backend
+        forwards:
+          - local_port: 5432
+            remote_port: 5432
   - name: cache
-    host: cache.example.com
-    port_forward:
-      groups:
-        - backend
-      forwards:
-        - local_port: 6379
-          remote_port: 6379
+    ssh:
+      host: cache.example.com
+      port_forward:
+        groups:
+          - backend
+        forwards:
+          - local_port: 6379
+            remote_port: 6379
   - name: staging-db
-    host: db.staging.example.com
-    port_forward:
-      groups:
-        - staging
-      forwards:
-        - local_port: 5432
-          remote_port: 5432
+    ssh:
+      host: db.staging.example.com
+      port_forward:
+        groups:
+          - staging
+        forwards:
+          - local_port: 5432
+            remote_port: 5432
 `
 	var cfg Config
 	if err := cmdyaml.ParseConfigsStrict(&cfg, []byte(spec)); err != nil {
@@ -669,21 +675,23 @@ func TestGroupPortConflictValidation(t *testing.T) {
 	spec := `
 connections:
   - name: c1
-    host: h1.example.com
-    port_forward:
-      groups:
-        - dev
-      forwards:
-        - local_port: 8080
-          remote_port: 80
+    ssh:
+      host: h1.example.com
+      port_forward:
+        groups:
+          - dev
+        forwards:
+          - local_port: 8080
+            remote_port: 80
   - name: c2
-    host: h2.example.com
-    port_forward:
-      groups:
-        - dev
-      forwards:
-        - local_port: 8080
-          remote_port: 8080
+    ssh:
+      host: h2.example.com
+      port_forward:
+        groups:
+          - dev
+        forwards:
+          - local_port: 8080
+            remote_port: 8080
 `
 	var cfg Config
 	if err := cmdyaml.ParseConfigsStrict(&cfg, []byte(spec)); err != nil {
@@ -762,7 +770,7 @@ func writeConfig(t *testing.T, dir, name, host string) string {
 		t.Fatalf("mkdir %v: %v", dir, err)
 	}
 	path := filepath.Join(dir, name)
-	content := "connections:\n  - name: " + host + "\n    host: " + host + ":2222\n"
+	content := "connections:\n  - name: " + host + "\n    ssh:\n      host: " + host + ":2222\n"
 	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatalf("write %v: %v", path, err)
 	}

@@ -6,10 +6,11 @@
 //
 // It establishes and maintains persistent connections based on a YAML configuration
 // file, automatically reconnecting dropped connections using exponential backoff.
-// Each connection has two optional blocks: port_forward, whose connections can
-// belong to multiple groups, allowing sets of related connections to be started
-// and maintained together by the connect command, and tmux, which is used by the
-// tmux command. The config command shows and documents the configuration.
+// Each connection has a name, a type and a block of fields for that type; ssh is
+// the only type. Its ssh block has two optional blocks: port_forward, whose
+// connections can belong to multiple groups, allowing sets of related
+// connections to be started and maintained together by the connect command, and
+// tmux, which is used by the tmux command. The config command shows and documents the configuration.
 //
 // The tmux command attaches to a tmux session over one of the configured
 // connections, running the command line that its tmux block configures,
@@ -79,7 +80,7 @@ func createCLI() *subcmd.CommandSetYAML {
 
 // configCommands implements 'config show' and 'config describe'.
 var configCommands = cmdconfig.ConfigCommands[Config]{
-	Summary: "pconn is configured using a YAML file with the following fields. Each connection says how to reach a host, and has a port_forward block, for 'pconn connect', and a tmux block, for 'pconn tmux <name>', that say what to do once connected. Only port forwards have groups.\n\n",
+	Summary: "pconn is configured using a YAML file with the following fields. Each connection has a name and a type, and a block of fields for that type. For ssh, the only type, the block says how to reach a host and has a port_forward block, for 'pconn connect', and a tmux block, for 'pconn tmux <name>', that say what to do once connected. Only port forwards have groups.\n\n",
 }
 
 // appDir is pconn's own directory within each of the user's configuration

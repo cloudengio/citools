@@ -313,14 +313,15 @@ logging:
   file: %s
 connections:
   - name: test-conn
-    host: %s
-    user: %s
-    known_hosts:
-      - %s
-    port_forward:
-      forwards:
-        - local_port: %d
-          remote_port: %d
+    ssh:
+      host: %s
+      user: %s
+      known_hosts:
+        - %s
+      port_forward:
+        forwards:
+          - local_port: %d
+            remote_port: %d
 `, logPath, srv.addr(), user, knownHostsPath, localForwardPort, remoteEchoPort)
 
 	cfgPath := writeTestConfig(t, tmpDir, cfgContent)
@@ -388,15 +389,17 @@ func TestConnectCommandFilterIntegration(t *testing.T) {
 	cfgContent := fmt.Sprintf(`
 connections:
   - name: conn1
-    host: %s
-    user: %s
-    known_hosts:
-      - %s
+    ssh:
+      host: %s
+      user: %s
+      known_hosts:
+        - %s
   - name: conn2
-    host: %s
-    user: %s
-    known_hosts:
-      - %s
+    ssh:
+      host: %s
+      user: %s
+      known_hosts:
+        - %s
 `, srv1.addr(), user, knownHostsPath, srv2.addr(), user, knownHostsPath)
 
 	cfgPath := writeTestConfig(t, tmpDir, cfgContent)
@@ -434,7 +437,8 @@ func TestConnectCommandUnknownConnection(t *testing.T) {
 	cfgContent := `
 connections:
   - name: conn1
-    host: 127.0.0.1:22
+    ssh:
+      host: 127.0.0.1:22
 `
 	cfgPath := writeTestConfig(t, tmpDir, cfgContent)
 
@@ -472,31 +476,34 @@ func TestConnectCommandGroupIntegration(t *testing.T) {
 	cfgContent := fmt.Sprintf(`
 connections:
   - name: web
-    host: %s
-    user: %s
-    known_hosts:
-      - %s
-    port_forward:
-      groups:
-        - dev
-        - frontend
+    ssh:
+      host: %s
+      user: %s
+      known_hosts:
+        - %s
+      port_forward:
+        groups:
+          - dev
+          - frontend
   - name: db
-    host: %s
-    user: %s
-    known_hosts:
-      - %s
-    port_forward:
-      groups:
-        - dev
-        - backend
+    ssh:
+      host: %s
+      user: %s
+      known_hosts:
+        - %s
+      port_forward:
+        groups:
+          - dev
+          - backend
   - name: analytics
-    host: %s
-    user: %s
-    known_hosts:
-      - %s
-    port_forward:
-      groups:
-        - analytics
+    ssh:
+      host: %s
+      user: %s
+      known_hosts:
+        - %s
+      port_forward:
+        groups:
+          - analytics
 `, srvWeb.addr(), user, knownHostsPath, srvDb.addr(), user, knownHostsPath, srvAnalytics.addr(), user, knownHostsPath)
 
 	cfgPath := writeTestConfig(t, tmpDir, cfgContent)
@@ -556,21 +563,23 @@ func TestConnectCommandGroupFlag(t *testing.T) {
 	cfgContent := fmt.Sprintf(`
 connections:
   - name: web
-    host: %s
-    user: %s
-    known_hosts:
-      - %s
-    port_forward:
-      groups:
-        - dev
+    ssh:
+      host: %s
+      user: %s
+      known_hosts:
+        - %s
+      port_forward:
+        groups:
+          - dev
   - name: db
-    host: %s
-    user: %s
-    known_hosts:
-      - %s
-    port_forward:
-      groups:
-        - prod
+    ssh:
+      host: %s
+      user: %s
+      known_hosts:
+        - %s
+      port_forward:
+        groups:
+          - prod
 `, srvWeb.addr(), user, knownHostsPath, srvDb.addr(), user, knownHostsPath)
 
 	cfgPath := writeTestConfig(t, tmpDir, cfgContent)
@@ -607,11 +616,12 @@ func TestConnectCommandUnknownGroup(t *testing.T) {
 	cfgContent := `
 connections:
   - name: conn1
-    host: 127.0.0.1:22
-    port_forward:
-      groups:
-        - dev
-        - staging
+    ssh:
+      host: 127.0.0.1:22
+      port_forward:
+        groups:
+          - dev
+          - staging
 `
 	cfgPath := writeTestConfig(t, tmpDir, cfgContent)
 
@@ -649,23 +659,26 @@ func TestConnectCommandMultipleGroupsAndAll(t *testing.T) {
 	cfgContent := fmt.Sprintf(`
 connections:
   - name: c1
-    host: %s
-    user: %s
-    known_hosts: [%s]
-    port_forward:
-      groups: [g1]
+    ssh:
+      host: %s
+      user: %s
+      known_hosts: [%s]
+      port_forward:
+        groups: [g1]
   - name: c2
-    host: %s
-    user: %s
-    known_hosts: [%s]
-    port_forward:
-      groups: [g2]
+    ssh:
+      host: %s
+      user: %s
+      known_hosts: [%s]
+      port_forward:
+        groups: [g2]
   - name: c3
-    host: %s
-    user: %s
-    known_hosts: [%s]
-    port_forward:
-      groups: [g3]
+    ssh:
+      host: %s
+      user: %s
+      known_hosts: [%s]
+      port_forward:
+        groups: [g3]
 `, srv1.addr(), user, knownHostsPath, srv2.addr(), user, knownHostsPath, srv3.addr(), user, knownHostsPath)
 
 	cfgPath := writeTestConfig(t, tmpDir, cfgContent)
@@ -760,12 +773,13 @@ logging:
   file: %s
 connections:
   - name: unreachable
-    host: 127.0.0.1:%d
-    user: testuser
-    dial_timeout: 2s
-    known_hosts: [%s]
-    port_forward:
-      forwards: [%d:80]
+    ssh:
+      host: 127.0.0.1:%d
+      user: testuser
+      dial_timeout: 2s
+      known_hosts: [%s]
+      port_forward:
+        forwards: [%d:80]
 `, logPath, deadPort, knownHostsPath, freePort(t))
 	cfgPath := writeTestConfig(t, tmpDir, cfgContent)
 
@@ -873,9 +887,10 @@ func TestConnectCommandInterfaceRecovery(t *testing.T) {
 	cfgContent := fmt.Sprintf(`
 connections:
   - name: recovered
-    host: %s
-    user: %s
-    known_hosts: [%s]
+    ssh:
+      host: %s
+      user: %s
+      known_hosts: [%s]
 `, srv.addr(), user, knownHostsPath)
 	cfgPath := writeTestConfig(t, tmpDir, cfgContent)
 

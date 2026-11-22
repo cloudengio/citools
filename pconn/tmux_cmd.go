@@ -63,7 +63,7 @@ func tmuxCommandLine(tf *TmuxFlags, conn ConnectionConfig) string {
 	if tf.Command != "" {
 		return tf.Command
 	}
-	return conn.Tmux.Command
+	return conn.SSH.Tmux.Command
 }
 
 // Run executes the tmux command.
@@ -98,8 +98,8 @@ func (c TmuxCommand) Run(ctx context.Context, flags any, args []string) error {
 	if tmuxLogPath != "" {
 		status("logging to %s", tmuxLogPath)
 	}
-	psshOpts := append(identityOptions(conn, conn.Tmux.ForwardAgent),
-		pssh.WithDialTimeout(conn.DialTimeout),
+	psshOpts := append(identityOptions(conn, conn.SSH.Tmux.ForwardAgent),
+		pssh.WithDialTimeout(conn.SSH.DialTimeout),
 		pssh.WithKeepAlive(tf.KeepAlive),
 		// Only say why a connection cannot be made when nothing is attached,
 		// since anything written to the terminal then would corrupt the
