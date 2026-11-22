@@ -10,8 +10,8 @@
 // to be started and maintained together.
 //
 // The tmux command attaches to a tmux session on one of the connections,
-// running tmux with the arguments that the connection's tmux.args configures,
-// eg. '-CC new -A -s main' to create or attach to a session using the control
+// running the command line that the connection's tmux.command configures,
+// eg. 'tmux -CC new -A -s main' to create or attach to a session using the control
 // mode supported by iTerm2. If the connection is lost it is reestablished and the
 // session reattached, which leaves the session itself, and what is running in
 // it, undisturbed. Logs are written to a temporary file unless a log file is

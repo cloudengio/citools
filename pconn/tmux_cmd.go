@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -28,7 +29,7 @@ type TmuxCommand struct{}
 
 // TmuxFlags defines flags for the tmux subcommand.
 type TmuxFlags struct {
-	Command   string        `subcmd:"tmux,,'tmux executable on the remote host, eg. /opt/homebrew/bin/tmux; overrides tmux.command in the connection configuration, and defaults to tmux, found using the login shell PATH'"`
+	Command   string        `subcmd:"command,,'the complete command line to run on the remote host, eg. \"/opt/homebrew/bin/tmux -CC new -A -s main\"; overrides tmux.command in the connection configuration'"`
 	KeepAlive time.Duration `subcmd:"keep-alive,15s,'how often to probe the connection so that one that has silently failed is noticed and replaced; 0 disables'"`
 }
 
@@ -56,22 +57,13 @@ var tmuxLoggerPrehook = subcmd.LoggerHook("tmuxLoggerPrehook", func(ctx context.
 
 var tmuxPrehook = configPrehookWith(tmuxLoggerPrehook)
 
-// tmuxCommandLine returns the remote command to run: the tmux executable, its
-// arguments.
-func tmuxCommandLine(tmux string, args []string) string {
-	return pssh.ShellJoin(append([]string{tmux}, args...)...)
-}
-
-// tmuxExecutable returns the tmux to run: that of the flag, else of the
-// connection, else tmux.
-func tmuxExecutable(tf *TmuxFlags, conn ConnectionConfig) string {
-	switch {
-	case tf.Command != "":
+// tmuxCommandLine returns the command line to run: that of the flag, else of
+// the connection.
+func tmuxCommandLine(tf *TmuxFlags, conn ConnectionConfig) string {
+	if tf.Command != "" {
 		return tf.Command
-	case conn.Tmux.Command != "":
-		return conn.Tmux.Command
 	}
-	return "tmux"
+	return conn.Tmux.Command
 }
 
 // Run executes the tmux command.
@@ -88,8 +80,9 @@ func (c TmuxCommand) Run(ctx context.Context, flags any, args []string) error {
 	if err != nil {
 		return err
 	}
-	if len(conn.Tmux.Args) == 0 {
-		return fmt.Errorf("connection %q: tmux.args must specify the tmux command to run, eg. [new, -A, -s, main]", conn.Name)
+	cmdLine := tmuxCommandLine(tf, conn)
+	if strings.TrimSpace(cmdLine) == "" {
+		return fmt.Errorf("connection %q: tmux.command or --command must specify the command line to run, eg. /opt/homebrew/bin/tmux -CC new -A -s main", conn.Name)
 	}
 	if !term.IsTerminal(int(os.Stdin.Fd())) { //nolint:gosec // fds fit in an int.
 		return fmt.Errorf("tmux requires standard input to be a terminal")
@@ -137,7 +130,7 @@ func (c TmuxCommand) Run(ctx context.Context, flags any, args []string) error {
 	a := &attachment{
 		client:     client,
 		name:       conn.Name,
-		cmd:        tmuxCommandLine(tmuxExecutable(tf, conn), conn.Tmux.Args),
+		cmd:        cmdLine,
 		status:     status,
 		attached:   &attached,
 		in:         os.Stdin,
@@ -276,8 +269,8 @@ func commandFailure(err error) error {
 	var exit interface{ ExitStatus() int } // An *ssh.ExitError.
 	if errors.As(err, &exit) && exit.ExitStatus() == 127 {
 		return fmt.Errorf("%w: tmux was not found using the login shell's PATH, which does not include "+
-			"that set in interactive-only files such as .zshrc; give its full path using tmux.command in the "+
-			"connection's configuration or the --tmux flag", err)
+			"that set in interactive-only files such as .zshrc; give its full path in tmux.command in the "+
+			"connection's configuration or the --command flag", err)
 	}
 	return err
 }
