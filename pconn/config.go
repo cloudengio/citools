@@ -107,6 +107,7 @@ type ConnectionConfig struct {
 	Forwards          []ForwardConfig `yaml:"forwards,omitempty" doc:"local port forwards to establish (<local>:<remote>)"`
 	UnlimitedRetries  *bool           `yaml:"unlimited_retries,omitempty" doc:"continue retrying indefinitely; defaults to true"`
 	Groups            []string        `yaml:"groups,omitempty" doc:"groups this connection belongs to"`
+	TmuxCommand       string          `yaml:"tmux_command,omitempty" doc:"tmux executable on the remote host for the tmux command, eg. /opt/homebrew/bin/tmux; defaults to tmux, found using the login shell's PATH"`
 
 	parsedHost string
 	parsedPort int

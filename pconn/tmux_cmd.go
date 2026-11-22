@@ -29,6 +29,7 @@ type TmuxCommand struct{}
 // TmuxFlags defines flags for the tmux subcommand.
 type TmuxFlags struct {
 	Session   string        `subcmd:"session,main,'name of the tmux session to attach to, which is created if it does not exist'"`
+	Command   string        `subcmd:"tmux,,'tmux executable on the remote host, eg. /opt/homebrew/bin/tmux; overrides the connection configuration and defaults to tmux, found using the login shell PATH'"`
 	Control   bool          `subcmd:"control,true,'use tmux control mode, tmux -CC, as supported by iTerm2; if false a plain tmux is attached'"`
 	KeepAlive time.Duration `subcmd:"keep-alive,15s,'how often to probe the connection so that one that has silently failed is noticed and replaced; 0 disables'"`
 }
@@ -58,13 +59,25 @@ var tmuxLoggerPrehook = subcmd.LoggerHook("tmuxLoggerPrehook", func(ctx context.
 var tmuxPrehook = configPrehookWith(tmuxLoggerPrehook)
 
 // tmuxCommandLine returns the remote command to run to create or attach to
-// session.
-func tmuxCommandLine(session string, control bool) string {
-	args := []string{"tmux"}
+// session using the tmux executable.
+func tmuxCommandLine(tmux, session string, control bool) string {
+	args := []string{tmux}
 	if control {
 		args = append(args, "-CC")
 	}
 	return pssh.ShellJoin(append(args, "new", "-A", "-s", session)...)
+}
+
+// tmuxExecutable returns the tmux to run: that of the flag, else of the
+// connection, else tmux.
+func tmuxExecutable(tf *TmuxFlags, conn ConnectionConfig) string {
+	switch {
+	case tf.Command != "":
+		return tf.Command
+	case conn.TmuxCommand != "":
+		return conn.TmuxCommand
+	}
+	return "tmux"
 }
 
 // Run executes the tmux command.
@@ -127,7 +140,7 @@ func (c TmuxCommand) Run(ctx context.Context, flags any, args []string) error {
 	a := &attachment{
 		client:     client,
 		name:       conn.Name,
-		cmd:        tmuxCommandLine(tf.Session, tf.Control),
+		cmd:        tmuxCommandLine(tmuxExecutable(tf, conn), tf.Session, tf.Control),
 		status:     status,
 		attached:   &attached,
 		in:         os.Stdin,
@@ -228,7 +241,7 @@ func (a *attachment) run(ctx context.Context) error {
 		case ctx.Err() != nil:
 			return ctx.Err()
 		case errors.Is(err, pssh.ErrClientClosed), !connectionLost(err):
-			return err
+			return commandFailure(err)
 		}
 		a.status("connection to %s lost (%v), reconnecting", a.name, err)
 		select {
@@ -257,5 +270,17 @@ func (a *attachment) attach(ctx context.Context) error {
 		pssh.WithTerminal(a.termType, a.size()),
 		pssh.WithWindowChanges(a.changes(stop)),
 	)
+	return err
+}
+
+// commandFailure explains the exit status that a shell uses for a command that
+// it cannot find, which is the likely cause of it when starting tmux.
+func commandFailure(err error) error {
+	var exit interface{ ExitStatus() int } // An *ssh.ExitError.
+	if errors.As(err, &exit) && exit.ExitStatus() == 127 {
+		return fmt.Errorf("%w: tmux was not found using the login shell's PATH, which does not include "+
+			"that set in interactive-only files such as .zshrc; give its full path using tmux_command in the "+
+			"connection's configuration or the --tmux flag", err)
+	}
 	return err
 }

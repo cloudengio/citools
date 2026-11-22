@@ -61,6 +61,7 @@ Each entry under `connections` supports the following settings:
 - `dial_timeout` *(optional)*: Duration to wait when establishing the connection (e.g. `10s`, `30s`, `1m`). Defaults to `30s`.
 - `accept_new_host_keys` *(optional)*: When true (for SSH), automatically trusts and records newly encountered SSH host public keys.
 - `known_hosts` *(optional)*: List of custom `known_hosts` file paths to consult during SSH host verification.
+- `tmux_command` *(optional)*: The tmux executable to run on the remote host for `pconn tmux`, for example `/opt/homebrew/bin/tmux`. Defaults to `tmux`, which is looked up using the `PATH` of the user's login shell. That shell does not read interactive-only startup files such as `.zshrc` or `.bashrc`, so a tmux that is only on the `PATH` set there is not found unless its full path is given here.
 - `unlimited_retries` *(optional)*: Boolean flag specifying whether reconnection attempts should back off and retry indefinitely. If unspecified, inherits the command-line flag setting (default `true`).
 - `groups` *(optional)*: List of group names that this connection belongs to, typically specified using flow syntax (e.g. `[ci]` or `[dev, frontend]`). A connection may belong to multiple groups simultaneously.
 - `forwards` *(optional)*: List of local TCP port forwarding tunnels to establish and maintain over this connection, specified using flow syntax (e.g. `[11001:11000]` or `[8080:80, 8443:443]`).

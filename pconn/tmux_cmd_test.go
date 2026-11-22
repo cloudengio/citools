@@ -23,16 +23,61 @@ import (
 
 func TestTmuxCommandLine(t *testing.T) {
 	for _, tc := range []struct {
+		tmux    string
 		session string
 		control bool
 		want    string
 	}{
-		{"main", true, `'tmux' '-CC' 'new' '-A' '-s' 'main'`},
-		{"main", false, `'tmux' 'new' '-A' '-s' 'main'`},
-		{"it's mine", true, `'tmux' '-CC' 'new' '-A' '-s' 'it'\''s mine'`},
+		{"tmux", "main", true, `'tmux' '-CC' 'new' '-A' '-s' 'main'`},
+		{"tmux", "main", false, `'tmux' 'new' '-A' '-s' 'main'`},
+		{"tmux", "it's mine", true, `'tmux' '-CC' 'new' '-A' '-s' 'it'\''s mine'`},
+		{"/opt/homebrew/bin/tmux", "main", true, `'/opt/homebrew/bin/tmux' '-CC' 'new' '-A' '-s' 'main'`},
 	} {
-		if got := tmuxCommandLine(tc.session, tc.control); got != tc.want {
+		if got := tmuxCommandLine(tc.tmux, tc.session, tc.control); got != tc.want {
 			t.Errorf("%q, %v: got %s, want %s", tc.session, tc.control, got, tc.want)
+		}
+	}
+}
+
+func TestTmuxExecutable(t *testing.T) {
+	conn := ConnectionConfig{TmuxCommand: "/from/config/tmux"}
+	for _, tc := range []struct {
+		flag string
+		conn ConnectionConfig
+		want string
+	}{
+		{"", ConnectionConfig{}, "tmux"},
+		{"", conn, "/from/config/tmux"},
+		{"/from/flag/tmux", conn, "/from/flag/tmux"},
+		{"/from/flag/tmux", ConnectionConfig{}, "/from/flag/tmux"},
+	} {
+		if got := tmuxExecutable(&TmuxFlags{Command: tc.flag}, tc.conn); got != tc.want {
+			t.Errorf("flag %q, config %q: got %q, want %q", tc.flag, tc.conn.TmuxCommand, got, tc.want)
+		}
+	}
+}
+
+type exitStatus int
+
+func (e exitStatus) Error() string   { return fmt.Sprintf("exit status %d", int(e)) }
+func (e exitStatus) ExitStatus() int { return int(e) }
+
+func TestCommandFailure(t *testing.T) {
+	for _, tc := range []struct {
+		err     error
+		explain bool
+	}{
+		{exitStatus(127), true},
+		{fmt.Errorf("wrapped: %w", exitStatus(127)), true},
+		{exitStatus(1), false},
+		{errors.New("other"), false},
+	} {
+		err := commandFailure(tc.err)
+		if !errors.Is(err, tc.err) {
+			t.Errorf("%v: the error was not preserved: %v", tc.err, err)
+		}
+		if got := strings.Contains(err.Error(), "tmux_command"); got != tc.explain {
+			t.Errorf("%v: explained is %v, want %v: %v", tc.err, got, tc.explain, err)
 		}
 	}
 }
