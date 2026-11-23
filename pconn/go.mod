@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	cloudeng.io/algo v0.0.0-20261123003439-99f3783fd9bf
-	cloudeng.io/cmdutil v0.0.0-20261122182539-d92660ca8cea
+	cloudeng.io/cmdutil v0.0.0-20261123003439-99f3783fd9bf
 	cloudeng.io/logging v0.0.0-20261123003439-99f3783fd9bf
 	cloudeng.io/net v0.0.0-20261123003439-99f3783fd9bf
 	cloudeng.io/sync v0.0.12-0.20261112002641-3f0b5fb85a24
