@@ -163,15 +163,7 @@ func newTestSSHServer(t *testing.T, hostSigner, userSigner ssh.Signer, user stri
 				go ssh.DiscardRequests(reqs)
 				go func() {
 					for newChannel := range chans {
-						channel, requests, err := newChannel.Accept()
-						if err != nil {
-							continue
-						}
-						go ssh.DiscardRequests(requests)
-						go func(ch ssh.Channel) {
-							defer func() { _ = ch.Close() }()
-							_, _ = io.Copy(ch, ch) // echo
-						}(channel)
+						go serveTestChannel(newChannel)
 					}
 				}()
 				select {
@@ -183,6 +175,86 @@ func newTestSSHServer(t *testing.T, hostSigner, userSigner ssh.Signer, user stri
 	}()
 
 	return s
+}
+
+// directTCPIP is the payload of the channel request that a port forward opens
+// for each connection it carries, and that a proxy host opens to reach the host
+// on the far side of it.
+type directTCPIP struct {
+	DestAddr string
+	DestPort uint32
+	OrigAddr string
+	OrigPort uint32
+}
+
+// serveTestChannel serves one channel of a connection to the test server: a
+// direct-tcpip channel is connected to the address it names, as a real server
+// does for a port forward and for a proxy host, and any other channel is echoed
+// back to the client.
+func serveTestChannel(nc ssh.NewChannel) {
+	if nc.ChannelType() != "direct-tcpip" {
+		ch, requests, err := nc.Accept()
+		if err != nil {
+			return
+		}
+		go ssh.DiscardRequests(requests)
+		defer func() { _ = ch.Close() }()
+		_, _ = io.Copy(ch, ch) // echo
+		return
+	}
+	var req directTCPIP
+	if err := ssh.Unmarshal(nc.ExtraData(), &req); err != nil {
+		_ = nc.Reject(ssh.ConnectionFailed, err.Error())
+		return
+	}
+	target, err := net.Dial("tcp", fmt.Sprintf("%v:%v", req.DestAddr, req.DestPort))
+	if err != nil {
+		_ = nc.Reject(ssh.ConnectionFailed, err.Error())
+		return
+	}
+	ch, requests, err := nc.Accept()
+	if err != nil {
+		_ = target.Close()
+		return
+	}
+	go ssh.DiscardRequests(requests)
+	var closeOnce sync.Once
+	closeBoth := func() {
+		closeOnce.Do(func() {
+			_ = target.Close()
+			_ = ch.Close()
+		})
+	}
+	defer closeBoth()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer closeBoth()
+		_, _ = io.Copy(target, ch)
+	}()
+	_, _ = io.Copy(ch, target)
+	closeBoth()
+	<-done
+}
+
+// connCount returns how many connections the server has accepted, which says
+// whether the connections that are reached through one proxy host share a
+// single connection to it.
+func (s *testSSHServer) connCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.conns)
+}
+
+// knownHostsLine formats the entry that verifies the server's host key, which
+// is recorded under the address that the client connects to.
+func knownHostsLine(srv *testSSHServer, key ssh.PublicKey) string {
+	host, port, err := net.SplitHostPort(srv.addr())
+	if err != nil {
+		panic(err)
+	}
+	// MarshalAuthorizedKey ends the line itself.
+	return fmt.Sprintf("[%s]:%s %s", host, port, ssh.MarshalAuthorizedKey(key))
 }
 
 func (s *testSSHServer) close() {

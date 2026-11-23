@@ -148,6 +148,7 @@ func (w *connWaiter) report() bool {
 		"dial_timeout", w.conn.SSH.DialTimeout,
 		"unlimited_retries", w.unlimited,
 		"forwards", formatForwards(w.conn.SSH.PortForward.Forwards),
+		"proxy", formatProxy(w.conn),
 		"failed_attempts", attempts,
 	}
 	if lastErr != nil {

@@ -126,6 +126,7 @@ type SSHConfig struct {
 	DialTimeout       time.Duration     `yaml:"dial_timeout,omitempty" doc:"timeout for establishing a connection; defaults to 30s"`
 	AcceptNewHostKeys bool              `yaml:"accept_new_host_keys,omitempty" doc:"accept and record new SSH host keys"`
 	KnownHosts        []string          `yaml:"known_hosts,omitempty" doc:"custom known_hosts files for host verification"`
+	Proxy             string            `yaml:"proxy,omitempty" doc:"reach this host through another one, as ssh's ProxyJump ('ssh -J') does, eg. for a host behind a bastion: either the name of another connection, which says how that host is reached, or host, user@host or user@host:port for one that has no connection of its own; a proxy host must itself be reachable directly"`
 	PortForward       PortForwardConfig `yaml:"port_forward,omitempty" doc:"port forwards maintained by 'pconn connect'"`
 	Tmux              TmuxConfig        `yaml:"tmux,omitempty" doc:"how 'pconn tmux <name>' runs tmux"`
 
@@ -146,6 +147,22 @@ type ConnectionConfig struct {
 	Host string `yaml:"host,omitempty" doc:"the remote host as a hostname or an IPv4 or IPv6 address, eg. example.com, 192.0.2.1 or [2001:db8::1]; if omitted, defaults to the connection's name. For ssh it may also include a user and port, as user@host:port"`
 	// The blocks of fields specific to each type of connection.
 	SSH *SSHConfig `yaml:"ssh,omitempty" doc:"fields for a connection of type ssh"`
+
+	// proxy is the connection that this one is reached through, resolved from
+	// SSH.Proxy by Config.Validate, and usedAsProxy says that another connection
+	// is reached through this one. See ProxyHost.
+	proxy       *ConnectionConfig
+	usedAsProxy bool
+}
+
+// ProxyHost returns the connection that this one is reached through, and
+// whether there is one. The connection is returned by value: it is a part of
+// the configuration and is not the caller's to change.
+func (c *ConnectionConfig) ProxyHost() (ConnectionConfig, bool) {
+	if c.proxy == nil {
+		return ConnectionConfig{}, false
+	}
+	return *c.proxy, true
 }
 
 // connectionType returns the type of the connection, which is that of the
@@ -177,9 +194,17 @@ func (c *ConnectionConfig) connectionType() (string, error) {
 }
 
 // MaintainedByConnect reports whether 'pconn connect' maintains the connection,
-// which is so unless the connection only configures tmux.
+// which is so unless the connection only configures tmux, or exists only to be
+// proxyed through: a connection that has neither port forwards nor tmux of its
+// own but which another is reached through is maintained for as long as that
+// one is, and so is not a connection to select in its own right.
 func (c *ConnectionConfig) MaintainedByConnect() bool {
-	return !reflect.ValueOf(c.SSH.PortForward).IsZero() || reflect.ValueOf(c.SSH.Tmux).IsZero()
+	if c.SSH == nil {
+		return !c.usedAsProxy
+	}
+	hasForward := !reflect.ValueOf(c.SSH.PortForward).IsZero()
+	noTmux := reflect.ValueOf(c.SSH.Tmux).IsZero()
+	return hasForward || (!c.usedAsProxy && noTmux)
 }
 
 // InGroup reports whether this connection belongs to the specified group.
@@ -369,6 +394,18 @@ func (cfg *Config) Groups() []string {
 	return groups
 }
 
+// ProxyHostOnly reports whether name is a connection that exists only to be
+// proxyed through, and so is maintained with the connections that are reached
+// through it rather than being selected in its own right.
+func (cfg *Config) ProxyHostOnly(name string) bool {
+	for _, c := range cfg.Connections {
+		if c.Name == name {
+			return c.usedAsProxy && !c.MaintainedByConnect()
+		}
+	}
+	return false
+}
+
 // ConnectConnections returns the connections that 'pconn connect' maintains.
 func (cfg *Config) ConnectConnections() []ConnectionConfig {
 	var result []ConnectionConfig
@@ -469,6 +506,81 @@ func (cfg *Config) HasConflictingPortsAcrossAll() (int, string, string, bool) {
 	return HasConflictingPorts(cfg.Connections)
 }
 
+// looksLikeHost reports whether spec names a host rather than a connection. A
+// bare word that names no connection is far more likely to be a mistyped name
+// than a hostname, and is reported as one.
+func looksLikeHost(spec string) bool {
+	return strings.ContainsAny(spec, "@:.")
+}
+
+// inlineProxyHost returns the connection for a proxy host given as a host rather
+// than by name. It has nowhere of its own to say how it is reached, so it is
+// reached as the connection that names it is.
+func inlineProxyHost(spec string, from *ConnectionConfig) (*ConnectionConfig, error) {
+	hop := &ConnectionConfig{
+		Name: spec,
+		Type: "ssh",
+		Host: spec,
+		SSH: &SSHConfig{
+			DialTimeout:       from.SSH.DialTimeout,
+			AcceptNewHostKeys: from.SSH.AcceptNewHostKeys,
+			KnownHosts:        slices.Clone(from.SSH.KnownHosts),
+		},
+		usedAsProxy: true,
+	}
+	if err := hop.Validate(); err != nil {
+		return nil, err
+	}
+	return hop, nil
+}
+
+// resolveProxyHosts resolves the proxy host of each connection that names one,
+// which is another connection by name or, for a host that has no connection of
+// its own, the host itself. A proxy host must be reachable directly, so one that
+// itself has a proxy is an error rather than the start of a chain.
+func (cfg *Config) resolveProxyHosts() error {
+	byName := make(map[string]*ConnectionConfig, len(cfg.Connections))
+	for i := range cfg.Connections {
+		byName[cfg.Connections[i].Name] = &cfg.Connections[i]
+	}
+	for i := range cfg.Connections {
+		c := &cfg.Connections[i]
+		spec := strings.TrimSpace(c.SSH.Proxy)
+		if spec == "" {
+			continue
+		}
+		if spec == c.Name {
+			return fmt.Errorf("connection %q: proxy %q is the connection itself", c.Name, spec)
+		}
+		hop, byRef := byName[spec]
+		switch {
+		case byRef:
+			// The hop is maintained for as long as the connections that are
+			// reached through it are, see MaintainedByConnect.
+			hop.usedAsProxy = true
+		case !looksLikeHost(spec):
+			var names []string
+			for _, other := range cfg.Connections {
+				names = append(names, other.Name)
+			}
+			return fmt.Errorf("connection %q: proxy %q: no connection of that name (available: %s); a proxy host that has no connection of its own must be given as host, user@host or user@host:port",
+				c.Name, spec, strings.Join(names, ", "))
+		default:
+			inline, err := inlineProxyHost(spec, c)
+			if err != nil {
+				return fmt.Errorf("connection %q: proxy %q: %w", c.Name, spec, err)
+			}
+			hop = inline
+		}
+		if proxy := strings.TrimSpace(hop.SSH.Proxy); proxy != "" {
+			return fmt.Errorf("connection %q: proxy host %q itself has a proxy host (%q): only one hop is supported",
+				c.Name, hop.Name, proxy)
+		}
+		c.proxy = hop
+	}
+	return nil
+}
+
 // Validate validates the entire configuration.
 func (cfg *Config) Validate() error {
 	if len(cfg.Connections) == 0 {
@@ -485,6 +597,13 @@ func (cfg *Config) Validate() error {
 			return fmt.Errorf("duplicate connection name %q", c.Name)
 		}
 		names[c.Name] = true
+	}
+
+	// After the connections themselves, so that a proxy host named by one is
+	// resolved to a connection that has been validated and had its defaults
+	// set, and one given inline can inherit them.
+	if err := cfg.resolveProxyHosts(); err != nil {
+		return err
 	}
 
 	groups := cfg.Groups()

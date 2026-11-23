@@ -28,7 +28,7 @@ func TestConfigDescribe(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"logging:", "connections:", "type:", "ssh:", "dial_timeout:", "accept_new_host_keys:", // the connection
+		"logging:", "connections:", "type:", "ssh:", "dial_timeout:", "accept_new_host_keys:", "proxy:", // the connection
 		"port_forward:", "forwards:", "groups:", "unlimited_retries:", // its port forwards
 		"tmux:", "command:", // its tmux session
 	} {

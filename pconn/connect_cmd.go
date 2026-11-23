@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"cloudeng.io/algo/ratecontrol"
@@ -114,6 +115,9 @@ func (c ConnectCommand) Run(ctx context.Context, flags any, args []string) error
 					}
 				}
 				if len(byName) == 0 {
+					if cfg.ProxyHostOnly(target) {
+						return fmt.Errorf("connection %q is the proxy host of other connections and is maintained for as long as they are, rather than being connected to in its own right: name one of them, or give it port forwards of its own", target)
+					}
 					return err
 				}
 				matched = byName
@@ -204,6 +208,64 @@ type connRunner struct {
 	client     *pssh.Client
 	controller *ratecontrol.Controller
 	waiter     *connWaiter
+	proxy      *connRunner
+	proxyOnly  bool
+	dependents atomic.Int32
+}
+
+// newConnRunner creates the client that maintains conn, which is reached over
+// the connection that proxy maintains when there is one.
+func newConnRunner(
+	ctx context.Context,
+	reporter *statusReporter,
+	logger *slog.Logger,
+	conn ConnectionConfig,
+	proxy *connRunner,
+	cf *ConnectFlags,
+) *connRunner {
+	hostPort := conn.HostPort()
+	connLogger := logger.With("connection", conn.Name, "type", conn.Type)
+	unlimited := conn.ShouldUnlimitedRetries(cf.UnlimitedRetries)
+	// pssh adds ssh.network and ssh.addr to the logger it is given, so only
+	// the waiter's own lines need the address adding.
+	waiter := reporter.add(connLogger.With("ssh.addr", hostPort), conn, unlimited)
+
+	psshOpts := []pssh.Option{
+		pssh.WithDialTimeout(conn.SSH.DialTimeout),
+		pssh.WithInterfaceRecovery(cf.InterfaceRecovery),
+		pssh.WithLogger(connLogger),
+		pssh.WithOnConnect(func(c *pssh.Client) {
+			key, comment := c.AuthKey()
+			keyName := comment
+			if keyName == "" && key != nil {
+				keyName = ssh.FingerprintSHA256(key)
+			}
+			// The waiter logs this, so that a connection which was reported
+			// as pending is reported as established at the same level, and a
+			// reconnection as a reconnection.
+			waiter.established(keyName)
+		}),
+		// Without this the reason a connection cannot be made is never
+		// reported: pssh retries, so it does not return it.
+		pssh.WithOnAttemptFailed(waiter.attemptFailed),
+	}
+	if proxy != nil {
+		// The connection is carried by the proxy host's, so it is established
+		// once that one is and lost whenever that one is lost.
+		psshOpts = append(psshOpts, pssh.WithProxyHost(proxy.client))
+	}
+	psshOpts = append(psshOpts, identityOptions(conn, conn.SSH.PortForward.ForwardAgent)...)
+	for _, f := range conn.SSH.PortForward.Forwards {
+		psshOpts = append(psshOpts, pssh.WithLocalPortForward(f.LocalPort, f.RemotePort))
+	}
+	return &connRunner{
+		conn:       conn,
+		client:     pssh.NewClient(ctx, "tcp", hostPort, psshOpts...),
+		controller: newBackoffController(unlimited),
+		waiter:     waiter,
+		proxy:      proxy,
+		proxyOnly:  !conn.MaintainedByConnect(),
+	}
 }
 
 func maintainConnections(
@@ -216,53 +278,45 @@ func maintainConnections(
 	defer cancel()
 
 	reporter := newStatusReporter(logger, cf.StatusInterval)
-	runners := make([]*connRunner, len(conns))
-	for i, conn := range conns {
-		switch conn.Type {
-		case "ssh":
-			hostPort := conn.HostPort()
-			connLogger := logger.With("connection", conn.Name, "type", conn.Type)
-			unlimited := conn.ShouldUnlimitedRetries(cf.UnlimitedRetries)
-			// pssh adds ssh.network and ssh.addr to the logger it is given,
-			// so only the waiter's own lines need the address adding.
-			waiter := reporter.add(connLogger.With("ssh.addr", hostPort), conn, unlimited)
+	runners := make([]*connRunner, 0, len(conns))
+	byName := make(map[string]*connRunner, len(conns))
 
-			var psshOpts []pssh.Option
-			psshOpts = append(psshOpts,
-				pssh.WithDialTimeout(conn.SSH.DialTimeout),
-				pssh.WithInterfaceRecovery(cf.InterfaceRecovery),
-				pssh.WithLogger(connLogger),
-				pssh.WithOnConnect(func(c *pssh.Client) {
-					key, comment := c.AuthKey()
-					keyName := comment
-					if keyName == "" && key != nil {
-						keyName = ssh.FingerprintSHA256(key)
-					}
-					// The waiter logs this, so that a connection which was
-					// reported as pending is reported as established at the
-					// same level, and a reconnection as a reconnection.
-					waiter.established(keyName)
-				}),
-				// Without this the reason a connection cannot be made is
-				// never reported: pssh retries, so it does not return it.
-				pssh.WithOnAttemptFailed(waiter.attemptFailed),
-			)
-			psshOpts = append(psshOpts, identityOptions(conn, conn.SSH.PortForward.ForwardAgent)...)
-			for _, f := range conn.SSH.PortForward.Forwards {
-				psshOpts = append(psshOpts, pssh.WithLocalPortForward(f.LocalPort, f.RemotePort))
+	// runnerFor returns the runner that maintains conn, creating it the first
+	// time it is needed. Connections that are reached through the same proxy
+	// host therefore share one connection to it rather than each making its
+	// own, and a proxy host that is a connection in its own right is maintained
+	// once rather than twice.
+	var runnerFor func(conn ConnectionConfig) (*connRunner, error)
+	runnerFor = func(conn ConnectionConfig) (*connRunner, error) {
+		if r, ok := byName[conn.Name]; ok {
+			return r, nil
+		}
+		if conn.Type != "ssh" {
+			return nil, fmt.Errorf("connection %q: unsupported connection type %q", conn.Name, conn.Type)
+		}
+		// A proxy host is only ever one hop away, which Config.Validate
+		// enforces, so this recurses once at most.
+		var proxy *connRunner
+		if hop, ok := conn.ProxyHost(); ok {
+			var err error
+			if proxy, err = runnerFor(hop); err != nil {
+				return nil, fmt.Errorf("connection %q: its proxy host: %w", conn.Name, err)
 			}
-
-			client := pssh.NewClient(runCtx, "tcp", hostPort, psshOpts...)
-			controller := newBackoffController(unlimited)
-
-			runners[i] = &connRunner{
-				conn:       conn,
-				client:     client,
-				controller: controller,
-				waiter:     waiter,
-			}
-		default:
-			return fmt.Errorf("connection %q: unsupported connection type %q", conn.Name, conn.Type)
+		}
+		r := newConnRunner(runCtx, reporter, logger, conn, proxy, cf)
+		if proxy != nil && proxy.proxyOnly {
+			proxy.dependents.Add(1)
+		}
+		byName[conn.Name] = r
+		// Appended after its proxy host, so that the host is the first of the
+		// two to be reported. Nothing requires that order: a connection waits
+		// for the one it is reached through to be established.
+		runners = append(runners, r)
+		return r, nil
+	}
+	for _, conn := range conns {
+		if _, err := runnerFor(conn); err != nil {
+			return err
 		}
 	}
 
@@ -286,6 +340,17 @@ func maintainConnections(
 	for _, r := range runners {
 		g.Go(func() error {
 			defer r.controller.Stop()
+			// Closing the client once it is no longer being maintained is what
+			// ends the connections reached through it, see pssh.WithProxyHost:
+			// a proxy host that has given up must not be retried through.
+			defer r.client.Close()
+			if r.proxy != nil && r.proxy.proxyOnly {
+				defer func() {
+					if r.proxy.dependents.Add(-1) == 0 {
+						r.proxy.client.Close()
+					}
+				}()
+			}
 
 			hostPort := r.conn.HostPort()
 			logger.Info("maintaining persistent connection",
@@ -297,6 +362,7 @@ func maintainConnections(
 				"unlimited_retries", r.conn.ShouldUnlimitedRetries(cf.UnlimitedRetries),
 				"interface_recovery", cf.InterfaceRecovery,
 				"forwards", formatForwards(r.conn.SSH.PortForward.Forwards),
+				"proxy", formatProxy(r.conn),
 			)
 
 			r.waiter.connecting()
@@ -361,6 +427,14 @@ func identityOptions(conn ConnectionConfig, forwardAgent bool) []pssh.Option {
 		opts = append(opts, pssh.WithAgentForwarding(true))
 	}
 	return opts
+}
+
+// formatProxy names the connection that conn is reached through, for logging.
+func formatProxy(conn ConnectionConfig) string {
+	if hop, ok := conn.ProxyHost(); ok {
+		return hop.Name
+	}
+	return "none"
 }
 
 func formatForwards(forwards []ForwardConfig) string {

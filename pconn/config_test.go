@@ -475,7 +475,7 @@ func parseExampleConfig(t *testing.T) Config {
 
 func testExampleConfigConnections(t *testing.T) {
 	cfg := parseExampleConfig(t)
-	if got, want := len(cfg.Connections), 4; got != want {
+	if got, want := len(cfg.Connections), 6; got != want {
 		t.Fatalf("got %v connections, want %v", got, want)
 	}
 	for i, tc := range []struct {
@@ -489,6 +489,9 @@ func testExampleConfigConnections(t *testing.T) {
 		// type, port and dial_timeout are all defaulted.
 		{"shared-cache", "redis.internal.example.com:22", "", pssh.DefaultDialTimeout, []string{"6379:6379"}},
 		{"build-box", "build.example.com:22", "", pssh.DefaultDialTimeout, nil},
+		// A proxy host, and the connection that is reached through it.
+		{"bastion", "bastion.example.com:22", "admin", pssh.DefaultDialTimeout, nil},
+		{"metrics", "metrics.internal:22", "", pssh.DefaultDialTimeout, []string{"9090:9090"}},
 	} {
 		conn := cfg.Connections[i]
 		if got, want := conn.Name, tc.name; got != want {
@@ -532,12 +535,12 @@ func testExampleConfigGroups(t *testing.T) {
 	}{
 		{"dev", []string{"dev-web", "db.dev.example.com:2222"}},
 		{"frontend", []string{"dev-web"}},
-		{"backend", []string{"db.dev.example.com:2222", "shared-cache"}},
+		{"backend", []string{"db.dev.example.com:2222", "shared-cache", "metrics"}},
 		{"staging", []string{"shared-cache"}},
 		// Every connection maintained by connect belongs to a group, so "all"
-		// selects them all and none are left ungrouped. build-box only has
-		// a tmux block.
-		{"all", []string{"dev-web", "db.dev.example.com:2222", "shared-cache"}},
+		// selects them all and none are left ungrouped. build-box only has a
+		// tmux block, and bastion is only a proxy host.
+		{"all", []string{"dev-web", "db.dev.example.com:2222", "shared-cache", "metrics"}},
 	} {
 		conns, err := cfg.ConnectionsForGroup(tc.group)
 		if err != nil {
@@ -575,8 +578,40 @@ func testExampleConfigTmux(t *testing.T) {
 	for _, c := range cfg.ConnectConnections() {
 		maintained = append(maintained, c.Name)
 	}
-	if slices.Contains(maintained, "build-box") || len(maintained) != 3 {
-		t.Errorf("got %v maintained by connect, want the three port forwarding connections", maintained)
+	if slices.Contains(maintained, "build-box") || len(maintained) != 4 {
+		t.Errorf("got %v maintained by connect, want the four port forwarding connections", maintained)
+	}
+}
+
+// testExampleConfigProxy covers the example's proxy host: the connection behind
+// it is reached through it, and it is maintained with that connection rather
+// than being one to connect to in its own right.
+func testExampleConfigProxy(t *testing.T) {
+	cfg := parseExampleConfig(t)
+	metrics, err := cfg.Connection("metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hop, ok := metrics.ProxyHost()
+	if !ok {
+		t.Fatal("metrics has no proxy host")
+	}
+	if got, want := hop.Name, "bastion"; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	// The hop is reached as its own connection says, not as metrics is.
+	if got, want := hop.ParsedUser(), "admin"; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if !cfg.ProxyHostOnly("bastion") {
+		t.Error("bastion has no forwards and no tmux of its own, so it is only a proxy host")
+	}
+	var maintained []string
+	for _, c := range cfg.ConnectConnections() {
+		maintained = append(maintained, c.Name)
+	}
+	if slices.Contains(maintained, "bastion") {
+		t.Errorf("got %v maintained by connect, which should not include the proxy host", maintained)
 	}
 }
 
@@ -608,6 +643,7 @@ func TestExampleConfig(t *testing.T) {
 	t.Run("connections", testExampleConfigConnections)
 	t.Run("groups", testExampleConfigGroups)
 	t.Run("tmux", testExampleConfigTmux)
+	t.Run("proxy", testExampleConfigProxy)
 	t.Run("ports and retries", testExampleConfigPortsAndRetries)
 }
 
