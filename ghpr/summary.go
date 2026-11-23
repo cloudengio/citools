@@ -15,11 +15,18 @@ import (
 // excludedPaths are left out of the diff an agent is asked to summarize.
 // They are generated or vendored content: they say nothing about the intent
 // of a change and crowd out what does.
+//
+// Each one starts with a "*" so that it excludes the file wherever it is in
+// the tree. A pathspec is relative to the directory git runs in, so a bare
+// name would only exclude the file in that directory, which in a repository of
+// several modules leaves every module's own copy in the diff; "*" matches "/"
+// as well as anything else in a pathspec, and matches nothing at all for the
+// copy at the root.
 var excludedPaths = []string{
-	":!package-lock.json",
-	":!pnpm-lock.yaml",
-	":!yarn.lock",
-	":!go.sum",
+	":!*package-lock.json",
+	":!*pnpm-lock.yaml",
+	":!*yarn.lock",
+	":!*go.sum",
 	":!*.pb.go",
 	":!*.gen.*",
 	":!*.min.js",
@@ -54,6 +61,10 @@ type Summarizer struct {
 	prompt       string
 	prompts      map[string]string
 	log          func(string, ...any)
+	// diffFromToplevel takes the diff from the root of the working tree
+	// rather than from the directory ghpr was run in, see the
+	// --cwd-to-git-toplevel flag of create-pr and update-summary.
+	diffFromToplevel bool
 }
 
 func (s *Summarizer) instructions() string {
@@ -103,7 +114,11 @@ func (s *Summarizer) diff(ctx context.Context, base, ref string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	diff, err := s.git.Diff(ctx, mergeBase, ref, excludedPaths)
+	dir, err := s.diffDir(ctx)
+	if err != nil {
+		return "", err
+	}
+	diff, err := s.git.Diff(ctx, dir, mergeBase, ref, excludedPaths)
 	if err != nil {
 		return "", err
 	}
@@ -112,13 +127,23 @@ func (s *Summarizer) diff(ctx context.Context, base, ref string) (string, error)
 	}
 	if lines := strings.Count(diff, "\n"); s.maxDiffLines > 0 && lines > s.maxDiffLines {
 		s.log("the diff is %v lines, over the %v line limit: summarizing the stat instead", lines, s.maxDiffLines)
-		stat, err := s.git.DiffStat(ctx, mergeBase, ref)
+		stat, err := s.git.DiffStat(ctx, dir, mergeBase, ref)
 		if err != nil {
 			return "", err
 		}
 		return stat, nil
 	}
 	return diff, nil
+}
+
+// diffDir is the directory the diff commands run in: the root of the working
+// tree, so that the diff covers the whole repository, or nothing, which leaves
+// them in the directory ghpr was run in and so limits the diff to it.
+func (s *Summarizer) diffDir(ctx context.Context) (string, error) {
+	if !s.diffFromToplevel {
+		return "", nil
+	}
+	return s.git.Toplevel(ctx)
 }
 
 func (s *Summarizer) command(diff string) (stdin []byte, name string, args []string, cleanup func(), err error) {

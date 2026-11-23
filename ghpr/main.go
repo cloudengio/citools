@@ -89,10 +89,20 @@ type GlobalFlags struct {
 
 var globalFlags GlobalFlags
 
+// DiffScopeFlags say how much of the repository the diff a description is
+// generated from covers. They are shared by the commands that generate one,
+// which are create-pr and update-summary: the diff is limited to the directory
+// git runs in, so a command run in a subdirectory would otherwise describe the
+// branch by the part of it that happens to be under that directory.
+type DiffScopeFlags struct {
+	CwdToGitToplevel bool `subcmd:"cwd-to-git-toplevel,true,take the diff from the top level of the repository rather than from the current directory"`
+}
+
 // CreateFlags are the flags for create-pr.
 type CreateFlags struct {
 	Draft bool `subcmd:"draft,false,create the pull request as a draft"`
 	Push  bool `subcmd:"push,true,push the branch to origin if it is not there yet"`
+	DiffScopeFlags
 	SummaryCommandFlags
 }
 
@@ -131,6 +141,7 @@ type ListCommitsWithNotesFlags struct{}
 
 // UpdateFlags are the flags for update-summary.
 type UpdateFlags struct {
+	DiffScopeFlags
 	SummaryCommandFlags
 }
 
@@ -229,6 +240,7 @@ func createPR(ctx context.Context, flags any, args []string) error {
 	}
 	cf := flags.(*CreateFlags)
 	app := newApp(ctx)
+	app.Summarizer.diffFromToplevel = cf.CwdToGitToplevel
 	if cf.ShowSummaryCommand || cf.ShowCommand {
 		app.ShowSummaryCommand = true
 	}
@@ -245,6 +257,7 @@ func updateSummary(ctx context.Context, flags any, args []string) error {
 	}
 	uf := flags.(*UpdateFlags)
 	app := newApp(ctx)
+	app.Summarizer.diffFromToplevel = uf.CwdToGitToplevel
 	if uf.ShowSummaryCommand || uf.ShowCommand {
 		app.ShowSummaryCommand = true
 	}

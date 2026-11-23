@@ -14,9 +14,37 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"cloudeng.io/cmdutil/subcmd"
 )
 
 const noPRErr = "exit status 1: no pull requests found for branch \"my-feature\""
+
+// TestCommandFlagDefaults covers the defaults the commands are registered
+// with, which is where a mistyped subcmd tag would show up.
+func TestCommandFlagDefaults(t *testing.T) {
+	var cf CreateFlags
+	var uf UpdateFlags
+	subcmd.NewFlagSet().MustRegisterFlagStruct(&cf, nil, nil)
+	subcmd.NewFlagSet().MustRegisterFlagStruct(&uf, nil, nil)
+
+	// The diff covers the whole repository unless it is asked not to: a
+	// command run in a subdirectory describing only that subdirectory is a
+	// surprise, and the wrong description outlives the squash merge. Both
+	// commands generate a description, so both take the flag.
+	if !cf.CwdToGitToplevel {
+		t.Error("create-pr: --cwd-to-git-toplevel does not default to true")
+	}
+	if !uf.CwdToGitToplevel {
+		t.Error("update-summary: --cwd-to-git-toplevel does not default to true")
+	}
+	if !cf.Push {
+		t.Error("--push does not default to true")
+	}
+	if cf.Draft {
+		t.Error("--draft does not default to false")
+	}
+}
 
 // onFeatureBranch scripts the state every command starts by establishing.
 func onFeatureBranch(run *fakeRunner) *fakeRunner {
