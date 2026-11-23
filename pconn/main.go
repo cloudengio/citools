@@ -13,8 +13,7 @@
 // command, and tmux, which is used by the tmux command. A host that cannot be
 // reached from where pconn runs is reached through one that can, which its proxy
 // field names, as ssh's ProxyJump ('ssh -J') does. The config command shows
-// and documents the
-// configuration.
+// and documents the configuration.
 //
 // The tmux command attaches to a tmux session over one of the configured
 // connections, running the command line that its tmux block configures,

@@ -199,11 +199,12 @@ func (c *ConnectionConfig) connectionType() (string, error) {
 // own but which another is reached through is maintained for as long as that
 // one is, and so is not a connection to select in its own right.
 func (c *ConnectionConfig) MaintainedByConnect() bool {
-	noWorkOfItsOwn := reflect.ValueOf(c.SSH.PortForward).IsZero() && reflect.ValueOf(c.SSH.Tmux).IsZero()
-	if c.usedAsProxy && noWorkOfItsOwn {
-		return false
+	if c.SSH == nil {
+		return !c.usedAsProxy
 	}
-	return !reflect.ValueOf(c.SSH.PortForward).IsZero() || reflect.ValueOf(c.SSH.Tmux).IsZero()
+	hasForward := !reflect.ValueOf(c.SSH.PortForward).IsZero()
+	noTmux := reflect.ValueOf(c.SSH.Tmux).IsZero()
+	return hasForward || (!c.usedAsProxy && noTmux)
 }
 
 // InGroup reports whether this connection belongs to the specified group.
@@ -525,6 +526,7 @@ func inlineProxyHost(spec string, from *ConnectionConfig) (*ConnectionConfig, er
 			AcceptNewHostKeys: from.SSH.AcceptNewHostKeys,
 			KnownHosts:        slices.Clone(from.SSH.KnownHosts),
 		},
+		usedAsProxy: true,
 	}
 	if err := hop.Validate(); err != nil {
 		return nil, err

@@ -218,10 +218,23 @@ func serveTestChannel(nc ssh.NewChannel) {
 		return
 	}
 	go ssh.DiscardRequests(requests)
-	defer func() { _ = target.Close() }()
-	defer func() { _ = ch.Close() }()
-	go func() { _, _ = io.Copy(target, ch) }()
+	var closeOnce sync.Once
+	closeBoth := func() {
+		closeOnce.Do(func() {
+			_ = target.Close()
+			_ = ch.Close()
+		})
+	}
+	defer closeBoth()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer closeBoth()
+		_, _ = io.Copy(target, ch)
+	}()
 	_, _ = io.Copy(ch, target)
+	closeBoth()
+	<-done
 }
 
 // connCount returns how many connections the server has accepted, which says

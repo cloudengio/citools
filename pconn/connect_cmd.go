@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"cloudeng.io/algo/ratecontrol"
@@ -207,6 +208,9 @@ type connRunner struct {
 	client     *pssh.Client
 	controller *ratecontrol.Controller
 	waiter     *connWaiter
+	proxy      *connRunner
+	proxyOnly  bool
+	dependents atomic.Int32
 }
 
 // newConnRunner creates the client that maintains conn, which is reached over
@@ -259,6 +263,8 @@ func newConnRunner(
 		client:     pssh.NewClient(ctx, "tcp", hostPort, psshOpts...),
 		controller: newBackoffController(unlimited),
 		waiter:     waiter,
+		proxy:      proxy,
+		proxyOnly:  !conn.MaintainedByConnect(),
 	}
 }
 
@@ -298,6 +304,9 @@ func maintainConnections(
 			}
 		}
 		r := newConnRunner(runCtx, reporter, logger, conn, proxy, cf)
+		if proxy != nil && proxy.proxyOnly {
+			proxy.dependents.Add(1)
+		}
 		byName[conn.Name] = r
 		// Appended after its proxy host, so that the host is the first of the
 		// two to be reported. Nothing requires that order: a connection waits
@@ -335,6 +344,13 @@ func maintainConnections(
 			// ends the connections reached through it, see pssh.WithProxyHost:
 			// a proxy host that has given up must not be retried through.
 			defer r.client.Close()
+			if r.proxy != nil && r.proxy.proxyOnly {
+				defer func() {
+					if r.proxy.dependents.Add(-1) == 0 {
+						r.proxy.client.Close()
+					}
+				}()
+			}
 
 			hostPort := r.conn.HostPort()
 			logger.Info("maintaining persistent connection",
