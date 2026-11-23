@@ -10,8 +10,11 @@
 // the block implies; ssh is the only type. The ssh block has two optional blocks:
 // port_forward, whose connections can belong to multiple groups, allowing sets of
 // related connections to be started and maintained together by the connect
-// command, and tmux, which is used by the tmux command. The config command shows
-// and documents the configuration.
+// command, and tmux, which is used by the tmux command. A host that cannot be
+// reached from where pconn runs is reached through one that can, which its proxy
+// field names, as ssh's ProxyJump ('ssh -J') does. The config command shows
+// and documents the
+// configuration.
 //
 // The tmux command attaches to a tmux session over one of the configured
 // connections, running the command line that its tmux block configures,
@@ -81,7 +84,7 @@ func createCLI() *subcmd.CommandSetYAML {
 
 // configCommands implements 'config show' and 'config describe'.
 var configCommands = cmdconfig.ConfigCommands[Config]{
-	Summary: "pconn is configured using a YAML file with the following fields. Each connection has a name and one block of fields for its type, which is also its type: ssh is the only one. Its port_forward block is used by 'pconn connect', and its tmux block by 'pconn tmux <name>'. Only port forwards have groups.\n\n",
+	Summary: "pconn is configured using a YAML file with the following fields. Each connection has a name and one block of fields for its type, which is also its type: ssh is the only one. Its port_forward block is used by 'pconn connect', and its tmux block by 'pconn tmux <name>'. Only port forwards have groups. A host behind a bastion is reached through it with the proxy field.\n\n",
 }
 
 // appDir is pconn's own directory within each of the user's configuration

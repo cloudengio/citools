@@ -66,3 +66,29 @@ connections:
     ssh:
       tmux:
         command: /usr/local/bin/tmux -CC new -A -s main
+
+  # A bastion, which carries the connection below. It is a connection of its
+  # own so that the fields saying how to reach it are stated once however many
+  # connections are reached through it, and they share one connection to it.
+  # Having no port forwards and no tmux of its own, it is maintained for as
+  # long as they are rather than being one to connect to in its own right.
+  - name: bastion
+    host: bastion.example.com
+    ssh:
+      user: admin
+      accept_new_host_keys: true
+
+  # A host that is not reachable from here, so it is reached through the
+  # bastion, as ssh's ProxyJump ('ssh -J') does. Its forwards run over both connections, and it
+  # is verified by its own host key. A proxy host that has no connection of its
+  # own can be given here as host, user@host or user@host:port instead, and
+  # then takes its dial_timeout, known_hosts and accept_new_host_keys from this
+  # connection. A proxy host must itself be reachable directly: only one hop is
+  # supported.
+  - name: metrics
+    host: metrics.internal
+    ssh:
+      proxy: bastion
+      port_forward:
+        groups: [backend]
+        forwards: [9090:9090]

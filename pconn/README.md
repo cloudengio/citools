@@ -42,7 +42,9 @@ fields for its type, which the block implies; ssh is the only type. The ssh
 block has two optional blocks: port_forward, whose connections can belong
 to multiple groups, allowing sets of related connections to be started and
 maintained together by the connect command, and tmux, which is used by the
-tmux command. The config command shows and documents the configuration.
+tmux command. A host that cannot be reached from where `pconn` runs is reached
+through one that can, which its proxy field names, as ssh's ProxyJump ('ssh
+-J') does. The config command shows and documents the configuration.
 
 The tmux command attaches to a tmux session over one of the configured
 connections, running the command line that its tmux block configures, eg.
@@ -123,6 +125,27 @@ connections:
     ssh:
       tmux:
         command: /usr/local/bin/tmux -CC new -A -s main
+
+  # A bastion, which carries the connection below. It is a connection of its
+  # own so that the fields saying how to reach it are stated once however many
+  # connections are reached through it, and they share one connection to it.
+  # Having no port forwards and no tmux of its own, it is maintained for as
+  # long as they are rather than being one to connect to in its own right.
+  - name: bastion
+    host: bastion.example.com
+    ssh:
+      user: admin
+      accept_new_host_keys: true
+
+  # A host that is not reachable from here, so it is reached through the
+  # bastion, as ssh's ProxyJump ('ssh -J') does.
+  - name: metrics
+    host: metrics.internal
+    ssh:
+      proxy: bastion
+      port_forward:
+        groups: [backend]
+        forwards: [9090:9090]
 ```
 
 #### Configuration Specification
@@ -157,10 +180,11 @@ The `ssh` block says how to connect to the host, and what is done over it:
 - `dial_timeout` *(optional)*: Duration to wait when establishing the connection (e.g. `10s`, `30s`, `1m`). Defaults to `30s`.
 - `accept_new_host_keys` *(optional)*: When true, automatically trusts and records newly encountered SSH host public keys.
 - `known_hosts` *(optional)*: List of custom `known_hosts` file paths to consult during SSH host verification.
+- `proxy` *(optional)*: Another host to reach this one through, as ssh's `ProxyJump` (`ssh -J`) does, for example a host behind a bastion, see [Proxy Hosts](#proxy-hosts).
 - `port_forward` *(optional)*: The port forwards that `pconn connect` maintains, see [ssh port_forward Fields](#ssh-port_forward-fields).
 - `tmux` *(optional)*: How `pconn tmux` runs tmux, see [ssh tmux Fields](#ssh-tmux-fields).
 
-`pconn connect` maintains every connection that has a `port_forward` block, and every connection that has neither block. A connection that only has a `tmux` block is left to `pconn tmux`. Each of the two commands makes its own connection, so the blocks of one connection do not share one.
+`pconn connect` maintains every connection that has a `port_forward` block, and every connection that has neither block, except one that exists only to be proxyed through, see [Proxy Hosts](#proxy-hosts). A connection that only has a `tmux` block is left to `pconn tmux`. Each of the two commands makes its own connection, so the blocks of one connection do not share one.
 
 ##### ssh port_forward Fields
 
@@ -183,6 +207,21 @@ connections:
         forward_agent: true
         command: /opt/homebrew/bin/tmux -u -CC -L work new -A -s main
 ```
+
+##### Proxy Hosts
+
+A host that cannot be reached from where `pconn` runs is reached through one that can, which the `proxy` field of its `ssh` block names, as ssh's `ProxyJump` (`ssh -J`) does. The connection to it is carried by the connection to the proxy host: only the transport changes, so the host is still verified by its own host key under its own name, and its port forwards run over both connections.
+
+`proxy` takes either of two forms:
+
+- **The name of another connection**, for example `proxy: bastion`. That connection says how the proxy host is reached — its user, port, `known_hosts` and so on — so those fields are stated once however many connections are reached through it, and all of them share one connection to it rather than each making its own.
+- **A host that has no connection of its own**, given as `host`, `user@host` or `user@host:port`, for example `proxy: admin@bastion.example.com:2222`. It has nowhere of its own to state the rest, so it takes its `dial_timeout`, `known_hosts` and `accept_new_host_keys` from the connection that names it. A value that is a bare word and names no connection is reported as a misspelt connection name rather than taken as a hostname.
+
+A proxy host must itself be reachable directly: one that has a `proxy` of its own is an error rather than the start of a chain, as is a connection that names itself.
+
+The two connections recover together. The connection to the host is carried by the proxy host's connection, so losing that loses this one too, and it is established again once the proxy host has reconnected; a proxy host that cannot be established at all ends the connections through it rather than leaving them retrying through one that will never come back. Both are reported by `pconn connect`, so a connection that is not yet established and a proxy host that is why are distinguishable, and the log line for each connection names the proxy host it goes through.
+
+A connection that has neither `port_forward` nor `tmux` of its own and is used as a proxy host is maintained for as long as the connections reached through it are, rather than being one to connect to in its own right: it is not selected by `pconn connect all` or by group, and naming it says so. A proxy host that does have forwards of its own is maintained in its own right as well, over the same single connection.
 
 ##### Port Forwarding Fields
 

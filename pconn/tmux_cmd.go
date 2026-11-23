@@ -98,18 +98,28 @@ func (c TmuxCommand) Run(ctx context.Context, flags any, args []string) error {
 	if tmuxLogPath != "" {
 		status("logging to %s", tmuxLogPath)
 	}
+	// Only say why a connection cannot be made when nothing is attached, since
+	// anything written to the terminal then would corrupt the session. That
+	// applies to the proxy host as much as to the connection it carries.
+	attemptFailed := func(name string) func(error, bool) {
+		return func(err error, _ bool) {
+			if !attached.Load() {
+				status("connecting to %s failed: %v", name, err)
+			}
+		}
+	}
 	psshOpts := append(identityOptions(conn, conn.SSH.Tmux.ForwardAgent),
 		pssh.WithDialTimeout(conn.SSH.DialTimeout),
 		pssh.WithKeepAlive(tf.KeepAlive),
-		// Only say why a connection cannot be made when nothing is attached,
-		// since anything written to the terminal then would corrupt the
-		// session.
-		pssh.WithOnAttemptFailed(func(err error, _ bool) {
-			if !attached.Load() {
-				status("connecting to %s failed: %v", conn.Name, err)
-			}
-		}),
+		pssh.WithOnAttemptFailed(attemptFailed(conn.Name)),
 	)
+	if hop, ok := conn.ProxyHost(); ok {
+		status("reaching %s through %s", conn.Name, hop.Name)
+	}
+	proxyClient, stopProxy := runProxyHost(runCtx, conn, tf, attemptFailed)
+	if proxyClient != nil {
+		psshOpts = append(psshOpts, pssh.WithProxyHost(proxyClient))
+	}
 	client := pssh.NewClient(runCtx, "tcp", conn.HostPort(), psshOpts...)
 	controller := newBackoffController(true)
 	defer controller.Stop()
@@ -142,14 +152,65 @@ func (c TmuxCommand) Run(ctx context.Context, flags any, args []string) error {
 	cancel()
 	client.Close()
 	<-connDone
+	proxyErr := stopProxy()
 	switch {
 	case connErr != nil:
 		return connErr
+	case proxyErr != nil:
+		// The connection is reached through the proxy host, so a proxy host that
+		// stopped is the reason this connection did, and the error it stopped
+		// with says more than the ErrClientClosed that ended this one.
+		return proxyErr
 	case ctx.Err() != nil:
 		// Shutting down because the caller asked is not a failure.
 		return nil
 	}
 	return err
+}
+
+// runProxyHost establishes and maintains the connection to the proxy host that
+// conn is reached through, if it has one, and returns the client to reach conn
+// through, which is nil when it has none, and a function that stops it and
+// reports why it stopped.
+//
+// The client is closed as soon as its ConnectAndWait returns, which
+// pssh.WithProxyHost requires: a proxy host that has given up has to end the
+// connection it carries rather than leave it retrying through one that will
+// never come back. Commands are run on conn's host rather than on this one, so
+// the agent is not forwarded to it whatever the connection asks for.
+func runProxyHost(
+	ctx context.Context,
+	conn ConnectionConfig,
+	tf *TmuxFlags,
+	attemptFailed func(name string) func(error, bool),
+) (*pssh.Client, func() error) {
+	hop, ok := conn.ProxyHost()
+	if !ok {
+		return nil, func() error { return nil }
+	}
+	opts := append(identityOptions(hop, false),
+		pssh.WithDialTimeout(hop.SSH.DialTimeout),
+		pssh.WithKeepAlive(tf.KeepAlive),
+		pssh.WithOnAttemptFailed(attemptFailed("proxy host "+hop.Name)),
+	)
+	client := pssh.NewClient(ctx, "tcp", hop.HostPort(), opts...)
+	controller := newBackoffController(true)
+	var connErr error
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer controller.Stop()
+		defer client.Close()
+		connErr = client.ConnectAndWait(ctx, controller.Backoff)
+	}()
+	return client, func() error {
+		client.Close()
+		<-done
+		if connErr != nil && !isCleanShutdown(connErr) && !errors.Is(connErr, pssh.ErrClientClosed) {
+			return fmt.Errorf("proxy host %q (%s): %w", hop.Name, hop.HostPort(), connErr)
+		}
+		return nil
+	}
 }
 
 // attacher is the part of a pssh.Client that an attachment uses.
