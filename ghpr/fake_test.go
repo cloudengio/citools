@@ -189,5 +189,18 @@ func testApp(tb testing.TB, run Runner, answer string) (*App, *bytes.Buffer) {
 // diffCmd is the command the summarizer takes a diff with, which every test
 // that reaches the agent has to script.
 func diffCmd(from, to string) string {
-	return commandLine("git", append([]string{"diff", "-U3", from + ".." + to, "--", "."}, excludedPaths...))
+	return diffCmdIn("", from, to)
+}
+
+// diffCmdIn is diffCmd for a summarizer that takes the diff from dir rather
+// than from the directory it was run in, see --cwd-to-git-toplevel.
+func diffCmdIn(dir, from, to string) string {
+	args := append(inDir(dir), "diff", "-U3", from+".."+to, "--", ".")
+	return commandLine("git", append(args, excludedPaths...))
+}
+
+// diffStatCmdIn is the command the summarizer falls back to for a diff that is
+// over the line limit.
+func diffStatCmdIn(dir, from, to string) string {
+	return commandLine("git", append(inDir(dir), "diff", "--stat", from+".."+to))
 }

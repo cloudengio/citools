@@ -59,11 +59,36 @@ func (g *Git) MergeBase(ctx context.Context, ref, base string) (string, error) {
 	return sha, nil
 }
 
+// Toplevel returns the absolute path of the root of the working tree, which is
+// where a command has to run for a path-limited one to cover the whole
+// repository rather than a part of it, see Diff.
+func (g *Git) Toplevel(ctx context.Context) (string, error) {
+	dir, err := g.output(ctx, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", fmt.Errorf("cannot find the top level of the repository: %w", err)
+	}
+	return dir, nil
+}
+
+// inDir is the "-C <dir>" that runs git in dir rather than in the directory
+// ghpr was run from, or nothing when no directory is named.
+func inDir(dir string) []string {
+	if dir == "" {
+		return nil
+	}
+	return []string{"-C", dir}
+}
+
 // Diff returns the diff of the range, excluding the paths in exclude, which
 // are git pathspecs.
-func (g *Git) Diff(ctx context.Context, from, to string, exclude []string) (string, error) {
-	args := append([]string{"diff", "-U3", from + ".." + to, "--", "."}, exclude...)
-	out, err := g.read.Run(ctx, nil, "git", args...)
+//
+// dir, when not empty, is the directory git runs in. It matters here: the diff
+// is limited to the "." pathspec, so it covers the directory git ran in and
+// below it and nothing else in the repository. Pass the working tree's root to
+// cover all of it, see Toplevel.
+func (g *Git) Diff(ctx context.Context, dir, from, to string, exclude []string) (string, error) {
+	args := append(inDir(dir), "diff", "-U3", from+".."+to, "--", ".")
+	out, err := g.read.Run(ctx, nil, "git", append(args, exclude...)...)
 	if err != nil {
 		return "", err
 	}
@@ -71,8 +96,14 @@ func (g *Git) Diff(ctx context.Context, from, to string, exclude []string) (stri
 }
 
 // DiffStat returns the summary of the range that Diff would return in full.
-func (g *Git) DiffStat(ctx context.Context, from, to string) (string, error) {
-	out, err := g.read.Run(ctx, nil, "git", "diff", "--stat", from+".."+to)
+//
+// dir is where git runs, as it is for Diff, so that the two report on the same
+// range from the same place. It makes no difference to what is reported: this
+// diff is limited to no pathspec, and git covers the whole repository when it
+// is given none, wherever it was run.
+func (g *Git) DiffStat(ctx context.Context, dir, from, to string) (string, error) {
+	args := append(inDir(dir), "diff", "--stat", from+".."+to)
+	out, err := g.read.Run(ctx, nil, "git", args...)
 	if err != nil {
 		return "", err
 	}

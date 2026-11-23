@@ -77,17 +77,67 @@ func TestGitMergeBase(t *testing.T) {
 func TestGitDiffExcludesGeneratedFiles(t *testing.T) {
 	cmd := diffCmd("base", "head")
 	run := newFakeRunner(t).expect(cmd, "the diff\n", nil)
-	if got, want := must(NewGit(run).Diff(t.Context(), "base", "head", excludedPaths)), "the diff\n"; got != want {
+	if got, want := must(NewGit(run).Diff(t.Context(), "", "base", "head", excludedPaths)), "the diff\n"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 	// Lock files and generated code say nothing about the intent of a change
 	// and crowd out what does.
-	for _, want := range []string{":!go.sum", ":!*.pb.go", ":!package-lock.json", ":!*.min.js"} {
+	for _, want := range []string{":!*go.sum", ":!*.pb.go", ":!*package-lock.json", ":!*.min.js"} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("the diff command does not exclude %v: %v", want, cmd)
 		}
 	}
+	// Every exclusion has to apply at any depth, since the diff is taken from
+	// the top of the repository and a bare name would only match there: a
+	// module in a subdirectory has a go.sum of its own.
+	for _, exclude := range excludedPaths {
+		if !strings.HasPrefix(exclude, ":!*") {
+			t.Errorf("%v only excludes that path in the directory git runs in", exclude)
+		}
+	}
 	run.assertNoUnexpected()
+}
+
+// TestGitDiffInDir covers the directory the diff is taken from, which is what
+// decides how much of the repository it covers: the diff is limited to the "."
+// pathspec, so git has to run at the top level for it to cover all of it.
+func TestGitDiffInDir(t *testing.T) {
+	run := newFakeRunner(t).
+		expect(diffCmdIn("/repo", "base", "head"), "the diff\n", nil).
+		expect(diffStatCmdIn("/repo", "base", "head"), " x | 2 +-\n", nil)
+	g := NewGit(run)
+
+	if got, want := must(g.Diff(t.Context(), "/repo", "base", "head", excludedPaths)), "the diff\n"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if got, want := must(g.DiffStat(t.Context(), "/repo", "base", "head")), " x | 2 +-\n"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	// "-C <dir>" is a global git option, so it has to precede the subcommand
+	// rather than follow it.
+	for _, cmd := range run.ranCommands() {
+		if !strings.HasPrefix(cmd, "git -C /repo diff") {
+			t.Errorf("%v does not run git in /repo", cmd)
+		}
+	}
+	run.assertNoUnexpected()
+}
+
+func TestGitToplevel(t *testing.T) {
+	run := newFakeRunner(t).
+		expect("git rev-parse --show-toplevel", "/repo/top\n", nil)
+	if got, want := must(NewGit(run).Toplevel(t.Context())), "/repo/top"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+
+	// Outside a repository there is no top level, and the error says so
+	// rather than reporting an empty path as one.
+	run = newFakeRunner(t).
+		expect("git rev-parse --show-toplevel", "", errors.New("not a git repository"))
+	_, err := NewGit(run).Toplevel(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "cannot find the top level of the repository") {
+		t.Errorf("got %v, want an error about the top level", err)
+	}
 }
 
 func TestGitNotes(t *testing.T) {

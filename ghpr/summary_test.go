@@ -232,6 +232,64 @@ func TestSummarizeLargeDiffUsesStat(t *testing.T) {
 	run.assertNoUnexpected()
 }
 
+// TestSummarizeFromToplevel covers --cwd-to-git-toplevel: the diff is limited
+// to the directory git runs in, so a summary taken from a subdirectory would
+// otherwise describe only the part of the branch that is under it.
+func TestSummarizeFromToplevel(t *testing.T) {
+	run := newFakeRunner(t).
+		expect("git merge-base my-feature origin/main", "mergebase\n", nil).
+		expect("git rev-parse --show-toplevel", "/repo/top\n", nil).
+		expect(diffCmdIn("/repo/top", "mergebase", "my-feature"), "a diff\n", nil).
+		expect(`claude -p --allowedTools ""`, "a summary", nil)
+
+	s := newTestSummarizer(run, "claude", "")
+	s.diffFromToplevel = true
+	if _, err := s.Summarize(t.Context(), "main", "my-feature"); err != nil {
+		t.Fatalf("Summarize: %v", err)
+	}
+	run.assertNoUnexpected()
+
+	// The stat the summary falls back to for a large diff comes from the same
+	// place, so that the two cannot report on different parts of the tree.
+	big := strings.Repeat("+a line\n", 50)
+	run = newFakeRunner(t).
+		expect("git merge-base my-feature origin/main", "mergebase\n", nil).
+		expect("git rev-parse --show-toplevel", "/repo/top\n", nil).
+		expect(diffCmdIn("/repo/top", "mergebase", "my-feature"), big, nil).
+		expect(diffStatCmdIn("/repo/top", "mergebase", "my-feature"), " x | 2 +-\n", nil).
+		expect(`claude -p --allowedTools ""`, "a summary", nil)
+
+	s = newTestSummarizer(run, "claude", "")
+	s.diffFromToplevel = true
+	s.maxDiffLines = 10
+	if _, err := s.Summarize(t.Context(), "main", "my-feature"); err != nil {
+		t.Fatalf("Summarize: %v", err)
+	}
+	run.assertNoUnexpected()
+}
+
+// TestSummarizeFromCurrentDirectory covers --cwd-to-git-toplevel=false, which
+// leaves the diff as it was: taken wherever ghpr was run, and so limited to
+// that directory.
+func TestSummarizeFromCurrentDirectory(t *testing.T) {
+	run := newFakeRunner(t)
+	scriptMergeBaseAndDiff(run, "a diff\n").
+		expect(`claude -p --allowedTools ""`, "a summary", nil)
+
+	s := newTestSummarizer(run, "claude", "")
+	s.diffFromToplevel = false
+	if _, err := s.Summarize(t.Context(), "main", "my-feature"); err != nil {
+		t.Fatalf("Summarize: %v", err)
+	}
+	// Nothing asks git where the top level is when the answer is not wanted.
+	for _, cmd := range run.ranCommands() {
+		if strings.Contains(cmd, "--show-toplevel") {
+			t.Errorf("the top level was looked up for a diff that does not use it: %v", cmd)
+		}
+	}
+	run.assertNoUnexpected()
+}
+
 func TestSummarizeNoLimit(t *testing.T) {
 	big := strings.Repeat("+a line\n", 50)
 	run := newFakeRunner(t)
