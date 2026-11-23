@@ -108,7 +108,7 @@ func (c ConnectCommand) Run(ctx context.Context, flags any, args []string) error
 			matched, err := cfg.ConnectionsForGroup(target)
 			if err != nil {
 				var byName []ConnectionConfig
-				for _, conn := range cfg.Connections {
+				for _, conn := range cfg.ConnectConnections() {
 					if conn.Name == target {
 						byName = append(byName, conn)
 					}
@@ -151,10 +151,10 @@ func (c ConnectCommand) Run(ctx context.Context, flags any, args []string) error
 				return fmt.Errorf("multiple groups configured with conflicting port %d (between %q and %q); please specify a group to connect (available: %s)",
 					port, c1, c2, strings.Join(groups, ", "))
 			}
-			connsToMaintain = cfg.Connections
+			connsToMaintain = cfg.ConnectConnections()
 			targetDesc = fmt.Sprintf("all connections (%d connections)", len(connsToMaintain))
 		} else {
-			connsToMaintain = cfg.Connections
+			connsToMaintain = cfg.ConnectConnections()
 			targetDesc = fmt.Sprintf("all connections (%d connections)", len(connsToMaintain))
 		}
 	}
@@ -229,7 +229,7 @@ func maintainConnections(
 
 			var psshOpts []pssh.Option
 			psshOpts = append(psshOpts,
-				pssh.WithDialTimeout(conn.DialTimeout),
+				pssh.WithDialTimeout(conn.SSH.DialTimeout),
 				pssh.WithInterfaceRecovery(cf.InterfaceRecovery),
 				pssh.WithLogger(connLogger),
 				pssh.WithOnConnect(func(c *pssh.Client) {
@@ -247,16 +247,8 @@ func maintainConnections(
 				// never reported: pssh retries, so it does not return it.
 				pssh.WithOnAttemptFailed(waiter.attemptFailed),
 			)
-			if conn.parsedUser != "" {
-				psshOpts = append(psshOpts, pssh.WithUser(conn.parsedUser))
-			}
-			if conn.AcceptNewHostKeys {
-				psshOpts = append(psshOpts, pssh.WithAcceptNewHostKeys(true))
-			}
-			if len(conn.KnownHosts) > 0 {
-				psshOpts = append(psshOpts, pssh.WithKnownHosts(conn.KnownHosts...))
-			}
-			for _, f := range conn.Forwards {
+			psshOpts = append(psshOpts, identityOptions(conn, conn.SSH.PortForward.ForwardAgent)...)
+			for _, f := range conn.SSH.PortForward.Forwards {
 				psshOpts = append(psshOpts, pssh.WithLocalPortForward(f.LocalPort, f.RemotePort))
 			}
 
@@ -301,10 +293,10 @@ func maintainConnections(
 				"type", r.conn.Type,
 				"host", hostPort,
 				"user", r.conn.ParsedUser(),
-				"dial_timeout", r.conn.DialTimeout,
+				"dial_timeout", r.conn.SSH.DialTimeout,
 				"unlimited_retries", r.conn.ShouldUnlimitedRetries(cf.UnlimitedRetries),
 				"interface_recovery", cf.InterfaceRecovery,
-				"forwards", formatForwards(r.conn.Forwards),
+				"forwards", formatForwards(r.conn.SSH.PortForward.Forwards),
 			)
 
 			r.waiter.connecting()
@@ -350,6 +342,25 @@ func maintainConnections(
 		return nil
 	}
 	return err
+}
+
+// identityOptions returns the options that say who to connect as and how to
+// verify the server, which are the same however the connection is used.
+func identityOptions(conn ConnectionConfig, forwardAgent bool) []pssh.Option {
+	var opts []pssh.Option
+	if conn.SSH.parsedUser != "" {
+		opts = append(opts, pssh.WithUser(conn.SSH.parsedUser))
+	}
+	if conn.SSH.AcceptNewHostKeys {
+		opts = append(opts, pssh.WithAcceptNewHostKeys(true))
+	}
+	if len(conn.SSH.KnownHosts) > 0 {
+		opts = append(opts, pssh.WithKnownHosts(conn.SSH.KnownHosts...))
+	}
+	if forwardAgent {
+		opts = append(opts, pssh.WithAgentForwarding(true))
+	}
+	return opts
 }
 
 func formatForwards(forwards []ForwardConfig) string {

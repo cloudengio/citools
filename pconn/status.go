@@ -145,9 +145,9 @@ func (w *connWaiter) report() bool {
 	attrs := []any{
 		"user", w.conn.ParsedUser(),
 		"waiting_for", waited.Round(time.Millisecond),
-		"dial_timeout", w.conn.DialTimeout,
+		"dial_timeout", w.conn.SSH.DialTimeout,
 		"unlimited_retries", w.unlimited,
-		"forwards", formatForwards(w.conn.Forwards),
+		"forwards", formatForwards(w.conn.SSH.PortForward.Forwards),
 		"failed_attempts", attempts,
 	}
 	if lastErr != nil {
