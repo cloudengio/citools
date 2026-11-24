@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 )
@@ -121,6 +122,46 @@ func (w *connWaiter) established(key string) {
 	}
 }
 
+// connState is what is known about one connection at a moment, for the status
+// page to render. It is a snapshot: the connection may have changed by the time
+// it is rendered.
+type connState struct {
+	// Status is one of starting, connecting, reconnecting or up.
+	Status         string
+	Waiting        time.Duration
+	Attempts       int
+	Establishments int
+	LastErr        error
+}
+
+// state returns what is known about the connection now.
+func (w *connWaiter) state() connState {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	st := connState{
+		Attempts:       w.attempts,
+		Establishments: w.establishments,
+		LastErr:        w.lastErr,
+	}
+	switch {
+	case !w.waitingSince.IsZero():
+		// A connection that has been established before and is being waited
+		// for again is an outage rather than a start.
+		st.Status = "connecting"
+		if w.establishments > 0 {
+			st.Status = "reconnecting"
+		}
+		st.Waiting = time.Since(w.waitingSince)
+	case w.establishments > 0:
+		st.Status = "up"
+	default:
+		// Neither waited for nor established: the connection has not been
+		// started yet, which is a moment at the beginning of the run.
+		st.Status = "starting"
+	}
+	return st
+}
+
 // pending reports whether the connection is still waiting to be established
 // and, if it is, how long it has been waiting, marking the wait as reported.
 func (w *connWaiter) pending() (waited time.Duration, attempts int, lastErr error, pending bool) {
@@ -161,13 +202,15 @@ func (w *connWaiter) report() bool {
 }
 
 // statusReporter periodically reports on the connections that have not yet
-// been established. Connections are registered with add before run is
-// called, which is the only ordering it requires: the waiters themselves are
-// safe for concurrent use.
+// been established. Connections may be registered and forgotten whilst it
+// runs, since 'pconn serve' starts and stops them, so the registrations are
+// guarded; the waiters themselves are safe for concurrent use.
 type statusReporter struct {
 	logger   *slog.Logger
 	interval time.Duration
-	waiters  []*connWaiter
+
+	mu      sync.Mutex
+	waiters []*connWaiter
 }
 
 func newStatusReporter(logger *slog.Logger, interval time.Duration) *statusReporter {
@@ -178,8 +221,25 @@ func newStatusReporter(logger *slog.Logger, interval time.Duration) *statusRepor
 // logger should already carry the connection's identifying attributes.
 func (r *statusReporter) add(logger *slog.Logger, conn ConnectionConfig, unlimited bool) *connWaiter {
 	w := &connWaiter{logger: logger, conn: conn, unlimited: unlimited}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.waiters = append(r.waiters, w)
 	return w
+}
+
+// remove forgets w, so that a connection which has been stopped is no longer
+// reported on as one that has not been established.
+func (r *statusReporter) remove(w *connWaiter) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.waiters = slices.DeleteFunc(r.waiters, func(have *connWaiter) bool { return have == w })
+}
+
+// registered returns the waiters to report on.
+func (r *statusReporter) registered() []*connWaiter {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.waiters)
 }
 
 // report logs the state of every connection that has not yet been
@@ -187,8 +247,9 @@ func (r *statusReporter) add(logger *slog.Logger, conn ConnectionConfig, unlimit
 // returns how many are. Reporting each connection separately is what carries
 // the detail; the summary is what makes the scale of an outage obvious.
 func (r *statusReporter) report() int {
+	waiters := r.registered()
 	pending := 0
-	for _, w := range r.waiters {
+	for _, w := range waiters {
 		if w.report() {
 			pending++
 		}
@@ -196,7 +257,7 @@ func (r *statusReporter) report() int {
 	if pending > 1 {
 		r.logger.Warn("connections not yet established",
 			"pending", pending,
-			"connections", len(r.waiters),
+			"connections", len(waiters),
 		)
 	}
 	return pending

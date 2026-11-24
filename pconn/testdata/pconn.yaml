@@ -46,11 +46,13 @@ connections:
       port_forward:
         unlimited_retries: false # give up once the retries are exhausted
         groups: [dev, backend]
+        # The longer form of a forward: the same <local>:<remote> string, with
+        # a url for 'pconn serve' to open. It defaults to
+        # http://127.0.0.1:<local>, and none says there is nothing to open, as
+        # for a database.
         forwards:
-          # A forward may also be written as a mapping. local/remote are
-          # accepted as aliases for local_port/remote_port.
-          - local_port: 5432
-            remote_port: 5432
+          - forward: 5432:5432
+            url: none
 
   # A minimal connection: port, user and dial_timeout all default.
   - name: shared-cache
@@ -79,16 +81,23 @@ connections:
       accept_new_host_keys: true
 
   # A host that is not reachable from here, so it is reached through the
-  # bastion, as ssh's ProxyJump ('ssh -J') does. Its forwards run over both connections, and it
-  # is verified by its own host key. A proxy host that has no connection of its
-  # own can be given here as host, user@host or user@host:port instead, and
-  # then takes its dial_timeout, known_hosts and accept_new_host_keys from this
-  # connection. A proxy host must itself be reachable directly: only one hop is
-  # supported.
+  # bastion, as ssh's ProxyJump ('ssh -J') does: its forwards run over both
+  # connections, and it is verified by its own host key. A proxy may also be
+  # given as host, user@host or user@host:port for a host with no connection of
+  # its own. Only one hop is supported.
   - name: metrics
     host: metrics.internal
     ssh:
       proxy: bastion
       port_forward:
         groups: [backend]
-        forwards: [9090:9090]
+        forwards:
+          # Its web interface is served under a path rather than at the root.
+          - forward: 9090:9090
+            url: /metrics
+          # <local>:<host>:<remote> forwards to a port on a host that
+          # metrics.internal reaches but this host does not, for a service
+          # with no ssh server of its own to connect to. Where it has one,
+          # give it a connection of its own with a proxy instead: the traffic
+          # is then encrypted the whole way.
+          - 15432:pg.internal:5432
