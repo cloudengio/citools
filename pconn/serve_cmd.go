@@ -75,6 +75,8 @@ func (c ServeCommand) Run(ctx context.Context, flags any, args []string) error {
 	// from the page.
 	if len(args) > 0 {
 		if err := sup.Start(args...); err != nil {
+			web.close()
+			sup.StopAll()
 			return err
 		}
 	}

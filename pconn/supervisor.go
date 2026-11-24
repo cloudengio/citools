@@ -8,7 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -166,6 +166,7 @@ func (s *supervisor) boundPortLocked(conn ConnectionConfig) (int, string, bool) 
 // finished records that a connection is no longer being maintained, so that it
 // can be started again, and releases the proxy host it was the last user of.
 func (s *supervisor) finished(r *connRunner, err error) {
+	var closeProxy *connRunner
 	s.mu.Lock()
 	// Only if it is still the current runner for that name: a connection that
 	// was stopped and started again has a new one, which this must not evict.
@@ -175,13 +176,16 @@ func (s *supervisor) finished(r *connRunner, err error) {
 			s.failed[r.conn.Name] = err
 		}
 	}
-	s.mu.Unlock()
-
-	s.reporter.remove(r.waiter)
 	if r.proxy != nil && r.proxy.proxyOnly && r.proxy.dependents.Add(-1) == 0 {
 		// Nothing is reached through it any more, and it has no forwards of
 		// its own, so there is nothing left for it to carry.
-		r.proxy.client.Close()
+		closeProxy = r.proxy
+	}
+	s.mu.Unlock()
+
+	s.reporter.remove(r.waiter)
+	if closeProxy != nil {
+		closeProxy.client.Close()
 	}
 }
 
@@ -310,6 +314,6 @@ func (s *supervisor) Groups() ([]string, map[string][]ConnectionConfig, []Connec
 	for name := range byGroup {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names, byGroup, ungrouped
 }

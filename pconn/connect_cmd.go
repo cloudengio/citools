@@ -441,9 +441,14 @@ func maintainConnections(
 	// As for the reporter: runCtx is always cancelled by the deferred cancel
 	// above, which is what stops serving, so this goroutine never outlives the
 	// call.
+	var webDone chan struct{}
 	if web != nil {
 		logger.Info("serving the list of connections", "url", web.url())
-		go web.serve(runCtx)
+		webDone = make(chan struct{})
+		go func() {
+			defer close(webDone)
+			web.serve(runCtx)
+		}()
 	}
 
 	for _, r := range runners {
@@ -481,6 +486,10 @@ func maintainConnections(
 	// goroutine has already filtered out its own clean shutdown, so anything
 	// left is a real failure.
 	err := g.Wait()
+	cancel()
+	if webDone != nil {
+		<-webDone
+	}
 	if ctx.Err() != nil {
 		// Shutting down because the caller asked is not a failure, whatever
 		// the connections reported as they were torn down.

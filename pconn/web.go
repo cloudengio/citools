@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"encoding/json"
@@ -193,14 +194,18 @@ func (s *webServer) handle(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	var buf bytes.Buffer
+	if err := webPage.Execute(&buf, s.page()); err != nil {
+		s.logger.Error("could not render the connection list", "err", err)
+		http.Error(w, "could not render the connection list", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// The state changes as connections come and go, so a cached copy of the
 	// page would be worse than none.
 	w.Header().Set("Cache-Control", "no-store")
-	if err := webPage.Execute(w, s.page()); err != nil {
-		// The response has already begun, so this cannot be reported to the
-		// client; it is a bug in the template rather than a bad request.
-		s.logger.Error("could not render the connection list", "err", err)
+	if _, err := buf.WriteTo(w); err != nil {
+		s.logger.Error("could not write the connection list", "err", err)
 	}
 }
 
