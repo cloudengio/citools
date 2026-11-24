@@ -621,6 +621,21 @@ func (cfg *Config) ConnectionsWithoutGroup() []ConnectionConfig {
 	return result
 }
 
+// ForwardsLocalPort returns the name of a connection that forwards the local
+// port, and whether one does. It is what anything else that wants to bind a
+// local port has to ask first, since the two would otherwise bind the same
+// port and one of them would fail.
+func (cfg *Config) ForwardsLocalPort(port int) (string, bool) {
+	for _, c := range cfg.Connections {
+		for _, f := range c.SSH.PortForward.Forwards {
+			if f.LocalPort() == port {
+				return c.Name, true
+			}
+		}
+	}
+	return "", false
+}
+
 // HasConflictingPorts reports whether any two connections in conns share a local port forward.
 func HasConflictingPorts(conns []ConnectionConfig) (int, string, string, bool) {
 	ports := make(map[int]string)

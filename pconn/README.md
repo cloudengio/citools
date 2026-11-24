@@ -297,7 +297,7 @@ The groups and connections a command line names are brought up at startup, as `p
 
 The page is rendered by `pconn` itself and loads nothing from anywhere — no script, stylesheet or image of its own — so it needs no files alongside the binary and no network beyond this host. It brings itself up to date every five seconds, since what it shows changes as connections are established and lost.
 
-A bare port is served on the loopback interface, because the page names internal hosts and the ports that reach them, and can start connections. An address that names an interface is served on it, which is how to ask for that deliberately. The address is bound before anything is started, so one that cannot be used is reported straight away. Requests that change the connections are accepted only from the page itself, so that another page in the same browser cannot drive it.
+A bare port is served on the loopback interface, because the page names internal hosts and the ports that reach them, and can start connections. An address that names an interface is served on it, which is how to ask for that deliberately. The address is bound before anything is started, so one that cannot be used is reported straight away, and it is refused outright if any connection in the configuration forwards that port: both would bind it here, so one of them would fail and which one would depend on the order they started in. Requests that change the connections are accepted only from the page itself, so that another page in the same browser cannot drive it.
 
 #### Groups and Membership
 

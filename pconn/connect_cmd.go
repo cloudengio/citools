@@ -36,7 +36,7 @@ type ConnectFlags struct {
 	//nolint:lll // The usage has to say when this is worth using.
 	InterfaceRecovery bool `subcmd:"interface-recovery,false,'retry a connection that cannot be routed to by way of each local interface in turn; only of use when this host is attached to the target subnet more than once, such as over both ethernet and wi-fi'"`
 	//nolint:lll // The usage has to say what the address means.
-	HTTP string `subcmd:"http,,'serve a page listing the connections being maintained, their groups and their local ports, at this address; a bare port is served on the loopback interface, eg. 8099, and an address names the interface to serve on, eg. 0.0.0.0:8099. Empty serves nothing'"`
+	HTTP string `subcmd:"http,,'serve a page listing the connections being maintained, their groups and their local ports, at this address; a bare port is served on the loopback interface, eg. 8099, and an address names the interface to serve on, eg. 0.0.0.0:8099. It must not be a port that a connection forwards. Empty serves nothing'"`
 }
 
 func newBackoffController(unlimitedRetries bool) *ratecontrol.Controller {
@@ -181,7 +181,7 @@ func (c ConnectCommand) Run(ctx context.Context, flags any, args []string) error
 
 	logger := ctxlog.Logger(ctx)
 	logger.Info("starting persistent connection management", "target", targetDesc)
-	return maintainConnections(ctx, logger, connsToMaintain, cf)
+	return maintainConnections(ctx, logger, cfg, connsToMaintain, cf)
 }
 
 func filterConnections(conns []ConnectionConfig, names []string) ([]ConnectionConfig, error) {
@@ -349,9 +349,14 @@ func runConnection(ctx context.Context, logger *slog.Logger, r *connRunner, opts
 	return nil
 }
 
+// maintainConnections maintains conns, which are the connections of cfg that
+// were selected, until they stop being maintained. cfg itself is needed for
+// the page that --http serves: a port it is served on has to be checked
+// against every connection's forwards and not only the selected ones.
 func maintainConnections(
 	ctx context.Context,
 	logger *slog.Logger,
+	cfg Config,
 	conns []ConnectionConfig,
 	cf *ConnectFlags,
 ) error {
@@ -408,6 +413,10 @@ func maintainConnections(
 	if cf.HTTP != "" {
 		var err error
 		if web, err = listenWeb(cf.HTTP, fixedConns(runners), logger); err != nil {
+			return err
+		}
+		if err := web.checkForwardPorts(cfg); err != nil {
+			web.close()
 			return err
 		}
 	}

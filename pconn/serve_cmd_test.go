@@ -311,3 +311,41 @@ func TestServeRejects(t *testing.T) {
 		t.Errorf("got %v, want %v", code, http.StatusNotFound)
 	}
 }
+
+// TestServePortClash covers both commands refusing to serve the page on a port
+// that a connection forwards, which is checked before anything is started:
+// the two would bind the same port here and one of them would fail.
+func TestServePortClash(t *testing.T) {
+	forwarded := freePort(t)
+	cfgPath := writeTestConfig(t, t.TempDir(), fmt.Sprintf(`
+connections:
+  - name: web
+    host: web.example.com
+    ssh:
+      port_forward:
+        groups: [ci]
+        forwards: [%d:80]
+`, forwarded))
+
+	for _, args := range [][]string{
+		{"serve", fmt.Sprintf("--http=%d", forwarded)},
+		// connect serves the same page, read-only, and the port it is served
+		// on is checked against every connection in the configuration and not
+		// only those it was asked to maintain.
+		{"connect", fmt.Sprintf("--http=%d", forwarded), "--status-interval=0"},
+	} {
+		cli := newTestCLI(t)
+		err := cli.DispatchWithArgs(t.Context(), "pconn", append([]string{"--config=" + cfgPath}, args...)...)
+		if err == nil || !strings.Contains(err.Error(), `connection "web" forwards that port`) {
+			t.Errorf("%v: got %v, want an error naming the connection that forwards the port", args[0], err)
+		}
+	}
+
+	// The port is left free by the attempt that was refused.
+	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", forwarded))
+	if err != nil {
+		t.Errorf("the address was not released: %v", err)
+	} else {
+		_ = l.Close()
+	}
+}

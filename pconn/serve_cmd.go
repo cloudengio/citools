@@ -22,7 +22,7 @@ type ServeCommand struct{}
 type ServeFlags struct {
 	Config cmdconfig.FilesFlag `subcmd:"config,,YAML configuration file (overrides global --config)"`
 	//nolint:lll // The usage has to say what the address means.
-	HTTP             string        `subcmd:"http,localhost:8099,'address to serve the page on; a bare port is served on the loopback interface, eg. 8099, and an address names the interface to serve on, eg. 0.0.0.0:8099'"`
+	HTTP             string        `subcmd:"http,localhost:8099,'address to serve the page on; a bare port is served on the loopback interface, eg. 8099, and an address names the interface to serve on, eg. 0.0.0.0:8099. It must not be a port that a connection forwards'"`
 	UnlimitedRetries bool          `subcmd:"unlimited-retries,true,continue retrying connections indefinitely"`
 	StatusInterval   time.Duration `subcmd:"status-interval,15s,how often to report on connections that have not yet been established; 0 disables"`
 	//nolint:lll // The usage has to say when this is worth using.
@@ -62,6 +62,12 @@ func (c ServeCommand) Run(ctx context.Context, flags any, args []string) error {
 	// reach the page that lists them.
 	web, err := listenWeb(sf.HTTP, sup, logger)
 	if err != nil {
+		return err
+	}
+	// Before anything is started, since a connection that forwards this port
+	// could not be started at all whilst the page is served on it.
+	if err := web.checkForwardPorts(cfg); err != nil {
+		web.close()
 		return err
 	}
 

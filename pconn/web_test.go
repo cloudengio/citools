@@ -7,11 +7,13 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -240,5 +242,89 @@ func TestWebServes(t *testing.T) {
 		t.Errorf("the address was not released: %v", err)
 	} else {
 		_ = closed.Close()
+	}
+}
+
+// TestForwardsLocalPort covers the lookup that anything wanting to bind a
+// local port asks first, which is what keeps the page's port and a forward's
+// port apart.
+func TestForwardsLocalPort(t *testing.T) {
+	cfg := parseConfig(t, `
+connections:
+  - name: web
+    host: web.example.com
+    ssh:
+      port_forward:
+        forwards: [8080:80, 8443:443]
+  - name: db
+    host: db.example.com
+    ssh:
+      port_forward:
+        forwards: [5432:pg.internal:5432]
+  # A connection that only runs tmux forwards nothing.
+  - name: build-box
+    host: build.example.com
+    ssh:
+      tmux:
+        command: tmux -CC new -A -s main
+`)
+	for _, tc := range []struct {
+		port int
+		want string
+	}{
+		{8080, "web"},
+		{8443, "web"},
+		// The local port is what is bound here; the remote port is not.
+		{5432, "db"},
+		{80, ""},
+		{443, ""},
+		{8099, ""},
+	} {
+		name, ok := cfg.ForwardsLocalPort(tc.port)
+		if got := name; got != tc.want || ok != (tc.want != "") {
+			t.Errorf("port %v: got %q, want %q", tc.port, got, tc.want)
+		}
+	}
+}
+
+// TestWebPortClash covers the check that keeps the page off a port that a
+// connection forwards: both bind it here, so one of them would fail.
+func TestWebPortClash(t *testing.T) {
+	forwarded := freePort(t)
+	cfg := parseConfig(t, fmt.Sprintf(`
+connections:
+  - name: web
+    host: web.example.com
+    ssh:
+      port_forward:
+        forwards: [%d:80]
+`, forwarded))
+
+	logger := slog.New(slog.DiscardHandler)
+	clashing, err := listenWeb(strconv.Itoa(forwarded), fixedConns(nil), logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clashing.close()
+	err = clashing.checkForwardPorts(cfg)
+	if err == nil || !strings.Contains(err.Error(), `connection "web" forwards that port`) {
+		t.Errorf("got %v, want an error naming the connection that forwards the port", err)
+	}
+
+	// Another port is not a clash, and nor is asking for any port at all: the
+	// one that is bound is what is checked, so a port of 0 is checked as the
+	// port it was given.
+	for _, addr := range []string{"127.0.0.1:0", strconv.Itoa(freePort(t))} {
+		srv, err := listenWeb(addr, fixedConns(nil), logger)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := srv.checkForwardPorts(cfg); err != nil {
+			t.Errorf("%v: %v", addr, err)
+		}
+		if got := srv.port(); got == 0 {
+			t.Errorf("%v: the bound port should be known", addr)
+		}
+		srv.close()
 	}
 }

@@ -111,6 +111,44 @@ func (s *webServer) url() string {
 	return "http://" + s.listener.Addr().String() + "/"
 }
 
+// port is the port the page is served on, which is the one that was bound and
+// so is a real port even where the address asked for any.
+func (s *webServer) port() int {
+	_, portStr, err := net.SplitHostPort(s.listener.Addr().String())
+	if err != nil {
+		return 0
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return 0
+	}
+	return port
+}
+
+// checkForwardPorts reports a clash between the port the page is served on and
+// a port that a connection forwards. Both bind that port on this host, so one
+// of them would fail, and which one depends on the order they happen to start
+// in: the forward is refused with EADDRINUSE if the page is already served, and
+// the page cannot be served at all if the forward is up. It is checked against
+// every connection in the configuration rather than only those that are
+// running, so that a connection started later cannot collide with it either.
+func (s *webServer) checkForwardPorts(cfg Config) error {
+	port := s.port()
+	if port == 0 {
+		return nil
+	}
+	if name, ok := cfg.ForwardsLocalPort(port); ok {
+		return fmt.Errorf("the list of connections cannot be served on port %d: connection %q forwards that port; serve it on another one with --http", port, name)
+	}
+	return nil
+}
+
+// close releases the address the page is served on, for a server that will not
+// be served after all.
+func (s *webServer) close() {
+	_ = s.listener.Close()
+}
+
 // controller returns the source as one whose connections can be changed, and
 // whether it is one.
 func (s *webServer) controller() (pageController, bool) {
