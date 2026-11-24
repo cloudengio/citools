@@ -354,6 +354,11 @@ func TestViewCommandArgsValidation(t *testing.T) {
 // TestViewCommandEndToEnd exercises the full port-forwarding and browser
 // launch flow against an in-process SSH server and in-process SSH agent.
 func TestViewCommandEndToEnd(t *testing.T) {
+	// The command accepts new host keys, which records the test server's key in
+	// ~/.ssh/known_hosts, and view has no flag to name another file: without a
+	// home of its own every run would add a line to the user's known_hosts.
+	t.Setenv("HOME", t.TempDir())
+
 	// 1. Start a simulated remote Web UI HTTP server.
 	webListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

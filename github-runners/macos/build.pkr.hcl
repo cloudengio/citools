@@ -115,6 +115,10 @@ build {
   }
 
   provisioner "shell" {
+    script = "scripts/10-npm.sh"
+  }
+
+  provisioner "shell" {
     script = "scripts/11-tart.sh"
   }
 
