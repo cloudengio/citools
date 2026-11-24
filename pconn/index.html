@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{{if not .Interactive}}<meta http-equiv="refresh" content="{{.RefreshSecs}}">{{end}}
+<title>pconn connections</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfbfc;
+    --fg: #1a1c20;
+    --muted: #61656d;
+    --line: #dcdee3;
+    --card: #ffffff;
+    --code: #f1f2f5;
+    --up: #1a7f45;
+    --wait: #9a6207;
+    --bad: #b3261e;
+    --accent: #2b4d7e;
+    --btn: #2b4d7e;
+    --btn-fg: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c;
+      --fg: #e7e9ee;
+      --muted: #9aa0ab;
+      --line: #2d3138;
+      --card: #1d2026;
+      --code: #24282f;
+      --up: #5fd08a;
+      --wait: #e0b155;
+      --bad: #f2928b;
+      --accent: #8fb3e8;
+      --btn: #3a5f96;
+      --btn-fg: #f3f6fb;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 1.5rem 1rem 3rem;
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  main { max-width: 62rem; margin: 0 auto; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: .75rem; margin-bottom: 1.25rem; }
+  h1 { font-size: 1.25rem; margin: 0 0 .25rem; }
+  .sub, .detail, .meta { color: var(--muted); font-size: .85rem; }
+  .group {
+    margin-top: 1.5rem; background: var(--card);
+    border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+  }
+  .group > h2 {
+    display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+    margin: 0; padding: .6rem .75rem; border-bottom: 1px solid var(--line);
+    font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; color: var(--accent);
+  }
+  .gname { font-weight: 700; }
+  .count { color: var(--muted); text-transform: none; letter-spacing: 0; font-weight: 400; }
+  .controls { margin-left: auto; display: flex; gap: .4rem; }
+  button {
+    font: inherit; font-size: .8rem; padding: .25rem .7rem; border-radius: 5px;
+    border: 1px solid var(--btn); background: var(--btn); color: var(--btn-fg); cursor: pointer;
+  }
+  button.ghost { background: transparent; color: var(--accent); border-color: var(--line); }
+  button:disabled { opacity: .55; cursor: progress; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    text-align: left; font-size: .72rem; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); font-weight: 600; padding: .4rem .75rem; border-bottom: 1px solid var(--line);
+  }
+  td { padding: .55rem .75rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: 0; }
+  .name { font-weight: 600; }
+  code {
+    font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--code); padding: .1rem .3rem; border-radius: 3px;
+  }
+  a code { color: var(--accent); text-decoration: underline; }
+  .fwd { display: block; white-space: nowrap; overflow-x: auto; }
+  .fwd + .fwd { margin-top: .3rem; }
+  .arrow { color: var(--muted); padding: 0 .3rem; }
+  .status { font-weight: 600; white-space: nowrap; }
+  .s-up { color: var(--up); }
+  .s-connecting, .s-reconnecting, .s-starting { color: var(--wait); }
+  .s-failed { color: var(--bad); }
+  .s-stopped { color: var(--muted); }
+  .none { color: var(--muted); }
+  .detail { display: block; margin-top: .2rem; max-width: 24rem; }
+  #message {
+    margin: 1rem 0 0; padding: .6rem .75rem; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--card); font-size: .9rem;
+  }
+  #message.bad { border-color: var(--bad); color: var(--bad); }
+  [hidden] { display: none !important; }
+  @media (max-width: 40rem) {
+    thead { display: none; }
+    tbody tr { display: block; padding: .5rem 0; }
+    td { display: block; border: 0; padding: .1rem .75rem; }
+    .detail { max-width: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>pconn connections</h1>
+  <p class="sub">
+    {{.Up}} of {{.Total}} established
+    {{if .Interactive}}&middot; click a group or a connection to start it and open its pages{{end}}
+    &middot; <span id="generated">{{.Generated}}</span>
+  </p>
+</header>
+
+<p id="message" hidden></p>
+
+{{define "conns"}}
+<table>
+  <thead>
+    <tr><th>Connection</th><th>Local ports</th><th>Status</th>{{if $.Interactive}}<th></th>{{end}}</tr>
+  </thead>
+  <tbody>
+  {{range .Conns}}
+    <tr>
+      <td>
+        <span class="name">{{.Name}}</span>
+        <span class="meta">
+          {{if .User}}{{.User}}@{{end}}{{.Host}}{{if .Proxy}} via {{.Proxy}}{{end}}
+        </span>
+      </td>
+      <td>
+        {{if .Forwards}}
+          {{range .Forwards}}
+            <span class="fwd">
+              {{if .URL}}<a href="{{.URL}}" target="_blank" rel="noopener"><code>localhost:{{.Local}}</code></a>
+              {{else}}<code>localhost:{{.Local}}</code>{{end}}
+              <span class="arrow">&rarr;</span><code>{{.Target}}</code>
+            </span>
+          {{end}}
+        {{else if .Tmux}}
+          <span class="none">tmux session</span>
+        {{else}}
+          <span class="none">none</span>
+        {{end}}
+      </td>
+      <td>
+        <span class="status s-{{.Status}}">{{.Status}}</span>
+        {{if .Detail}}<span class="detail">{{.Detail}}</span>{{end}}
+      </td>
+      {{if $.Interactive}}
+      <td>
+        {{if .Running}}
+          <button class="ghost" data-stop="{{.Name}}">stop</button>
+        {{else}}
+          <button data-start="{{.Name}}" data-open="{{urls .URLs}}">start</button>
+        {{end}}
+      </td>
+      {{end}}
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+{{end}}
+
+{{$page := .}}
+{{range .Groups}}
+<section class="group">
+  <h2>
+    <span class="gname">{{.Name}}</span>
+    <span class="count">{{.Running}} of {{len .Conns}} running</span>
+    {{if $page.Interactive}}
+    <span class="controls">
+      <button data-start="{{.Name}}" data-open="{{urls .URLs}}">start group</button>
+      <button class="ghost" data-stop="{{.Name}}">stop</button>
+    </span>
+    {{end}}
+  </h2>
+  {{template "conns" (dict "Conns" .Conns "Interactive" $page.Interactive)}}
+</section>
+{{end}}
+
+{{if .Ungrouped}}
+<section class="group">
+  <h2><span class="gname">{{if .Groups}}no group{{else}}connections{{end}}</span></h2>
+  {{template "conns" (dict "Conns" .Ungrouped "Interactive" .Interactive)}}
+</section>
+{{end}}
+
+{{if and (not .Groups) (not .Ungrouped)}}
+<p class="sub">No connections are configured.</p>
+{{end}}
+</main>
+
+{{if .Interactive}}
+<script>
+(function () {
+  "use strict";
+  const message = document.getElementById("message");
+  let busy = false;
+
+  function say(text, bad) {
+    message.textContent = text;
+    message.classList.toggle("bad", !!bad);
+    message.hidden = !text;
+  }
+
+  // The tabs are opened here, during the click, because a browser only allows
+  // it then: they are opened empty and pointed at their pages once the
+  // connection is up. A browser that blocks them leaves the links in the
+  // table, which open the same pages.
+  function openBlank(urls) {
+    const tabs = [];
+    for (const url of urls) {
+      const tab = window.open("", "_blank");
+      if (!tab) {
+        tabs.forEach((t) => t.close());
+        return null;
+      }
+      try {
+        tab.document.write("<title>starting…</title><p style='font:15px system-ui;padding:2rem'>" +
+          "waiting for pconn to establish the connection…");
+        tab.document.close();
+      } catch (e) { /* about:blank is enough on its own. */ }
+      tabs.push(tab);
+    }
+    return tabs;
+  }
+
+  function post(path, target) {
+    return fetch(path + "?target=" + encodeURIComponent(target), {
+      method: "POST",
+      headers: { "X-Pconn": "1" },
+    }).then(async (resp) => {
+      const body = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        throw new Error(body.error || resp.statusText);
+      }
+      return body;
+    });
+  }
+
+  // established resolves once every connection of the target is up, and
+  // rejects with the reason when one of them cannot be.
+  function established(target, deadline) {
+    return fetch("/api/established?target=" + encodeURIComponent(target), {
+      headers: { "X-Pconn": "1" },
+    }).then((resp) => resp.json()).then((state) => {
+      if (state.ready) {
+        return true;
+      }
+      if (Date.now() > deadline) {
+        throw new Error(state.error
+          ? state.waiting + ": " + state.error
+          : "timed out waiting for " + (state.waiting || target));
+      }
+      if (state.error) {
+        say("waiting for " + state.waiting + ": " + state.error);
+      }
+      return new Promise((resolve) => setTimeout(resolve, 500))
+        .then(() => established(target, deadline));
+    });
+  }
+
+  async function start(target, urls, button) {
+    const tabs = urls.length ? openBlank(urls) : [];
+    if (urls.length && !tabs) {
+      say("the browser blocked the new tabs: allow pop-ups for this page, or use the links in the table", true);
+    }
+    busy = true;
+    button.disabled = true;
+    say("starting " + target + "…");
+    try {
+      await post("/api/start", target);
+      await established(target, Date.now() + 120000);
+      if (tabs) {
+        tabs.forEach((tab, i) => { tab.location = urls[i]; });
+      }
+      say(target + " is up");
+    } catch (err) {
+      if (tabs) {
+        tabs.forEach((tab) => tab.close());
+      }
+      say("could not start " + target + ": " + err.message, true);
+    } finally {
+      busy = false;
+      button.disabled = false;
+      location.reload();
+    }
+  }
+
+  async function stop(target, button) {
+    busy = true;
+    button.disabled = true;
+    say("stopping " + target + "…");
+    try {
+      await post("/api/stop", target);
+      say(target + " is stopped");
+    } catch (err) {
+      say("could not stop " + target + ": " + err.message, true);
+    } finally {
+      busy = false;
+      button.disabled = false;
+      location.reload();
+    }
+  }
+
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("button");
+    if (!button || busy) {
+      return;
+    }
+    if (button.dataset.start !== undefined) {
+      const urls = (button.dataset.open || "").split(/\s+/).filter(Boolean);
+      start(button.dataset.start, urls, button);
+      return;
+    }
+    if (button.dataset.stop !== undefined) {
+      stop(button.dataset.stop, button);
+    }
+  });
+
+  // Brought up to date on a timer, as the read-only page is by a meta
+  // refresh, but never whilst a connection is being started or stopped.
+  setInterval(() => {
+    if (!busy) {
+      location.reload();
+    }
+  }, {{.RefreshSecs}} * 1000);
+})();
+</script>
+{{end}}
+</body>
+</html>

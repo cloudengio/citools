@@ -3,10 +3,10 @@ module cloudeng.io/citools/pconn
 go 1.27.0
 
 require (
-	cloudeng.io/algo v0.0.0-20261123003439-99f3783fd9bf
+	cloudeng.io/algo v0.0.0-20261123235553-076c9b54dc11
 	cloudeng.io/cmdutil v0.0.0-20261123003439-99f3783fd9bf
-	cloudeng.io/logging v0.0.0-20261123003439-99f3783fd9bf
-	cloudeng.io/net v0.0.0-20261123223900-33f693803b87
+	cloudeng.io/logging v0.0.0-20261123235553-076c9b54dc11
+	cloudeng.io/net v0.0.0-20261123235553-076c9b54dc11
 	cloudeng.io/sync v0.0.12-0.20261112002641-3f0b5fb85a24
 	golang.org/x/crypto v0.59.0
 	golang.org/x/term v0.48.0

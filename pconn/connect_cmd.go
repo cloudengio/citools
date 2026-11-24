@@ -35,6 +35,8 @@ type ConnectFlags struct {
 	StatusInterval   time.Duration       `subcmd:"status-interval,15s,how often to report on connections that have not yet been established; 0 disables"`
 	//nolint:lll // The usage has to say when this is worth using.
 	InterfaceRecovery bool `subcmd:"interface-recovery,false,'retry a connection that cannot be routed to by way of each local interface in turn; only of use when this host is attached to the target subnet more than once, such as over both ethernet and wi-fi'"`
+	//nolint:lll // The usage has to say what the address means.
+	HTTP string `subcmd:"http,,'serve a page listing the connections being maintained, their groups and their local ports, at this address; a bare port is served on the loopback interface, eg. 8099, and an address names the interface to serve on, eg. 0.0.0.0:8099. It must not be a port that a connection forwards. Empty serves nothing'"`
 }
 
 func newBackoffController(unlimitedRetries bool) *ratecontrol.Controller {
@@ -65,25 +67,35 @@ func configFileNames(loc *cmdconfig.Located, files *cmdconfig.FilesFlag) string 
 	return "(none)"
 }
 
+// configForCommand returns the configuration the command runs with: the one
+// the pre-hook loaded, or the file that the command's own --config names, which
+// overrides it.
+func configForCommand(ctx context.Context, files *cmdconfig.FilesFlag) (Config, error) {
+	cfg, ok := cmdutil.ContextValue[Config](ctx)
+	if !ok {
+		return Config{}, fmt.Errorf("no configuration found in context")
+	}
+	if !files.HasSet(cmdconfig.FileTypeYAML) {
+		return cfg, nil
+	}
+	var newCfg Config
+	loc, err := cmdconfig.Load(ctx, &newCfg, files, configSpecFor(files))
+	if err != nil {
+		return Config{}, fmt.Errorf("failed to read the configuration file: %w", err)
+	}
+	if err := newCfg.Validate(); err != nil {
+		return Config{}, fmt.Errorf("configuration file %q is invalid: %w", configFileNames(loc, files), err)
+	}
+	return newCfg, nil
+}
+
 // Run executes the connect command.
 func (c ConnectCommand) Run(ctx context.Context, flags any, args []string) error {
 	cf := flags.(*ConnectFlags)
 
-	cfg, ok := cmdutil.ContextValue[Config](ctx)
-	if !ok {
-		return fmt.Errorf("no configuration found in context")
-	}
-
-	if cf.Config.HasSet(cmdconfig.FileTypeYAML) {
-		var newCfg Config
-		loc, err := cmdconfig.Load(ctx, &newCfg, &cf.Config, configSpecFor(&cf.Config))
-		if err != nil {
-			return fmt.Errorf("failed to read the configuration file: %w", err)
-		}
-		if err := newCfg.Validate(); err != nil {
-			return fmt.Errorf("configuration file %q is invalid: %w", configFileNames(loc, &cf.Config), err)
-		}
-		cfg = newCfg
+	cfg, err := configForCommand(ctx, &cf.Config)
+	if err != nil {
+		return err
 	}
 
 	var targets []string
@@ -169,7 +181,7 @@ func (c ConnectCommand) Run(ctx context.Context, flags any, args []string) error
 
 	logger := ctxlog.Logger(ctx)
 	logger.Info("starting persistent connection management", "target", targetDesc)
-	return maintainConnections(ctx, logger, connsToMaintain, cf)
+	return maintainConnections(ctx, logger, cfg, connsToMaintain, cf)
 }
 
 func filterConnections(conns []ConnectionConfig, names []string) ([]ConnectionConfig, error) {
@@ -211,6 +223,28 @@ type connRunner struct {
 	proxy      *connRunner
 	proxyOnly  bool
 	dependents atomic.Int32
+	// done is closed once the connection is no longer being maintained and
+	// its local ports have been released, which is what a caller that stopped
+	// it waits for. Whoever runs the connection closes it.
+	done chan struct{}
+}
+
+// stopped is closed when the connection has stopped being maintained.
+func (r *connRunner) stopped() <-chan struct{} { return r.done }
+
+// connOpts are the parts of a command line that shape every connection that
+// the command maintains, which 'pconn connect' and 'pconn serve' have in
+// common.
+type connOpts struct {
+	unlimitedRetries  bool
+	interfaceRecovery bool
+}
+
+func (cf *ConnectFlags) connOpts() connOpts {
+	return connOpts{
+		unlimitedRetries:  cf.UnlimitedRetries,
+		interfaceRecovery: cf.InterfaceRecovery,
+	}
 }
 
 // newConnRunner creates the client that maintains conn, which is reached over
@@ -221,18 +255,18 @@ func newConnRunner(
 	logger *slog.Logger,
 	conn ConnectionConfig,
 	proxy *connRunner,
-	cf *ConnectFlags,
+	opts connOpts,
 ) *connRunner {
 	hostPort := conn.HostPort()
 	connLogger := logger.With("connection", conn.Name, "type", conn.Type)
-	unlimited := conn.ShouldUnlimitedRetries(cf.UnlimitedRetries)
+	unlimited := conn.ShouldUnlimitedRetries(opts.unlimitedRetries)
 	// pssh adds ssh.network and ssh.addr to the logger it is given, so only
 	// the waiter's own lines need the address adding.
 	waiter := reporter.add(connLogger.With("ssh.addr", hostPort), conn, unlimited)
 
 	psshOpts := []pssh.Option{
 		pssh.WithDialTimeout(conn.SSH.DialTimeout),
-		pssh.WithInterfaceRecovery(cf.InterfaceRecovery),
+		pssh.WithInterfaceRecovery(opts.interfaceRecovery),
 		pssh.WithLogger(connLogger),
 		pssh.WithOnConnect(func(c *pssh.Client) {
 			key, comment := c.AuthKey()
@@ -256,7 +290,13 @@ func newConnRunner(
 	}
 	psshOpts = append(psshOpts, identityOptions(conn, conn.SSH.PortForward.ForwardAgent)...)
 	for _, f := range conn.SSH.PortForward.Forwards {
-		psshOpts = append(psshOpts, pssh.WithLocalPortForward(f.LocalPort, f.RemotePort))
+		if f.RemoteHost() != "" {
+			// The remote host connects to the named host, which only it need
+			// be able to reach.
+			psshOpts = append(psshOpts, pssh.WithLocalPortForwardTo(f.LocalPort(), f.RemoteHost(), f.RemotePort()))
+			continue
+		}
+		psshOpts = append(psshOpts, pssh.WithLocalPortForward(f.LocalPort(), f.RemotePort()))
 	}
 	return &connRunner{
 		conn:       conn,
@@ -265,12 +305,58 @@ func newConnRunner(
 		waiter:     waiter,
 		proxy:      proxy,
 		proxyOnly:  !conn.MaintainedByConnect(),
+		done:       make(chan struct{}),
 	}
 }
 
+// runConnection maintains r's connection until it stops being maintained,
+// which is when the context is cancelled, the client is closed, or an attempt
+// fails for a reason that retrying cannot resolve. It reports what it is
+// maintaining and why it stopped, and returns an error only for the last of
+// those: the other two are what shutting down looks like.
+func runConnection(ctx context.Context, logger *slog.Logger, r *connRunner, opts connOpts) error {
+	hostPort := r.conn.HostPort()
+	logger.Info("maintaining persistent connection",
+		"connection", r.conn.Name,
+		"type", r.conn.Type,
+		"host", hostPort,
+		"user", r.conn.ParsedUser(),
+		"dial_timeout", r.conn.SSH.DialTimeout,
+		"unlimited_retries", r.conn.ShouldUnlimitedRetries(opts.unlimitedRetries),
+		"interface_recovery", opts.interfaceRecovery,
+		"forwards", formatForwards(r.conn.SSH.PortForward.Forwards),
+		"proxy", formatProxy(r.conn),
+	)
+
+	r.waiter.connecting()
+	err := r.client.ConnectAndWait(ctx, r.controller.Backoff)
+	// The errors.Is accepts ErrClientClosed anywhere in err, whereas
+	// isCleanShutdown requires every error to be clean.
+	if err != nil && !isCleanShutdown(err) && !errors.Is(err, pssh.ErrClientClosed) {
+		logger.Error("connection terminated with error",
+			"connection", r.conn.Name,
+			"type", r.conn.Type,
+			"host", hostPort,
+			"err", err,
+		)
+		return fmt.Errorf("connection %q (%s): %w", r.conn.Name, hostPort, err)
+	}
+	logger.Info("connection closed",
+		"connection", r.conn.Name,
+		"type", r.conn.Type,
+		"host", hostPort,
+	)
+	return nil
+}
+
+// maintainConnections maintains conns, which are the connections of cfg that
+// were selected, until they stop being maintained. cfg itself is needed for
+// the page that --http serves: a port it is served on has to be checked
+// against every connection's forwards and not only the selected ones.
 func maintainConnections(
 	ctx context.Context,
 	logger *slog.Logger,
+	cfg Config,
 	conns []ConnectionConfig,
 	cf *ConnectFlags,
 ) error {
@@ -303,7 +389,7 @@ func maintainConnections(
 				return nil, fmt.Errorf("connection %q: its proxy host: %w", conn.Name, err)
 			}
 		}
-		r := newConnRunner(runCtx, reporter, logger, conn, proxy, cf)
+		r := newConnRunner(runCtx, reporter, logger, conn, proxy, cf.connOpts())
 		if proxy != nil && proxy.proxyOnly {
 			proxy.dependents.Add(1)
 		}
@@ -316,6 +402,21 @@ func maintainConnections(
 	}
 	for _, conn := range conns {
 		if _, err := runnerFor(conn); err != nil {
+			return err
+		}
+	}
+
+	// Bound before any connection is made, so that an address which cannot be
+	// served is reported straight away, as a local forward port that cannot be
+	// bound is, rather than once the connections are up.
+	var web *webServer
+	if cf.HTTP != "" {
+		var err error
+		if web, err = listenWeb(cf.HTTP, fixedConns(runners), logger); err != nil {
+			return err
+		}
+		if err := web.checkForwardPorts(cfg); err != nil {
+			web.close()
 			return err
 		}
 	}
@@ -337,8 +438,22 @@ func maintainConnections(
 	// goroutine never outlives the call.
 	go reporter.run(runCtx)
 
+	// As for the reporter: runCtx is always cancelled by the deferred cancel
+	// above, which is what stops serving, so this goroutine never outlives the
+	// call.
+	var webDone chan struct{}
+	if web != nil {
+		logger.Info("serving the list of connections", "url", web.browseURL())
+		webDone = make(chan struct{})
+		go func() {
+			defer close(webDone)
+			web.serve(runCtx)
+		}()
+	}
+
 	for _, r := range runners {
 		g.Go(func() error {
+			defer close(r.done)
 			defer r.controller.Stop()
 			// Closing the client once it is no longer being maintained is what
 			// ends the connections reached through it, see pssh.WithProxyHost:
@@ -352,38 +467,7 @@ func maintainConnections(
 				}()
 			}
 
-			hostPort := r.conn.HostPort()
-			logger.Info("maintaining persistent connection",
-				"connection", r.conn.Name,
-				"type", r.conn.Type,
-				"host", hostPort,
-				"user", r.conn.ParsedUser(),
-				"dial_timeout", r.conn.SSH.DialTimeout,
-				"unlimited_retries", r.conn.ShouldUnlimitedRetries(cf.UnlimitedRetries),
-				"interface_recovery", cf.InterfaceRecovery,
-				"forwards", formatForwards(r.conn.SSH.PortForward.Forwards),
-				"proxy", formatProxy(r.conn),
-			)
-
-			r.waiter.connecting()
-			err := r.client.ConnectAndWait(runCtx, r.controller.Backoff)
-			// The errors.Is accepts ErrClientClosed anywhere in err, whereas
-			// isCleanShutdown requires every error to be clean.
-			if err != nil && !isCleanShutdown(err) && !errors.Is(err, pssh.ErrClientClosed) {
-				logger.Error("connection terminated with error",
-					"connection", r.conn.Name,
-					"type", r.conn.Type,
-					"host", hostPort,
-					"err", err,
-				)
-				return fmt.Errorf("connection %q (%s): %w", r.conn.Name, hostPort, err)
-			}
-			logger.Info("connection closed",
-				"connection", r.conn.Name,
-				"type", r.conn.Type,
-				"host", hostPort,
-			)
-			return nil
+			return runConnection(runCtx, logger, r, cf.connOpts())
 		})
 	}
 
@@ -402,6 +486,10 @@ func maintainConnections(
 	// goroutine has already filtered out its own clean shutdown, so anything
 	// left is a real failure.
 	err := g.Wait()
+	cancel()
+	if webDone != nil {
+		<-webDone
+	}
 	if ctx.Err() != nil {
 		// Shutting down because the caller asked is not a failure, whatever
 		// the connections reported as they were torn down.
@@ -443,7 +531,13 @@ func formatForwards(forwards []ForwardConfig) string {
 	}
 	parts := make([]string, len(forwards))
 	for i, f := range forwards {
-		parts[i] = fmt.Sprintf("127.0.0.1:%d->:%d", f.LocalPort, f.RemotePort)
+		// The far end is named only when it is a host other than the remote
+		// host, which is what the empty host in RemoteAddr's place means.
+		far := fmt.Sprintf(":%d", f.RemotePort())
+		if f.RemoteHost() != "" {
+			far = f.RemoteAddr()
+		}
+		parts[i] = fmt.Sprintf("127.0.0.1:%d->%s", f.LocalPort(), far)
 	}
 	return strings.Join(parts, ", ")
 }

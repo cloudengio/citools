@@ -1,0 +1,122 @@
+// Copyright 2026 cloudeng llc. All rights reserved.
+// Use of this source code is governed by the Apache-2.0
+// license that can be found in the LICENSE file.
+
+package main
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"cloudeng.io/cmdutil/cmdconfig"
+	"cloudeng.io/logging/ctxlog"
+)
+
+// ServeCommand implements the 'serve' subcommand, which serves a page listing
+// the configured connections and starts and stops them as the page asks.
+type ServeCommand struct{}
+
+// ServeFlags defines flags for the serve subcommand.
+type ServeFlags struct {
+	Config cmdconfig.FilesFlag `subcmd:"config,,YAML configuration file (overrides global --config)"`
+	//nolint:lll // The usage has to say what the address means.
+	HTTP             string        `subcmd:"http,localhost:8099,'address to serve the page on; a bare port is served on the loopback interface, eg. 8099, and an address names the interface to serve on, eg. 0.0.0.0:8099. It must not be a port that a connection forwards'"`
+	NoBrowser        bool          `subcmd:"no-browser,false,'do not open the page in the browser; for a pconn run by a service rather than by hand'"`
+	UnlimitedRetries bool          `subcmd:"unlimited-retries,true,continue retrying connections indefinitely"`
+	StatusInterval   time.Duration `subcmd:"status-interval,15s,how often to report on connections that have not yet been established; 0 disables"`
+	//nolint:lll // The usage has to say when this is worth using.
+	InterfaceRecovery bool `subcmd:"interface-recovery,false,'retry a connection that cannot be routed to by way of each local interface in turn; only of use when this host is attached to the target subnet more than once, such as over both ethernet and wi-fi'"`
+}
+
+func (sf *ServeFlags) connOpts() connOpts {
+	return connOpts{
+		unlimitedRetries:  sf.UnlimitedRetries,
+		interfaceRecovery: sf.InterfaceRecovery,
+	}
+}
+
+// Run executes the serve command. It serves the page until the context is
+// cancelled and then stops every connection it started, which is what releases
+// their local ports.
+func (c ServeCommand) Run(ctx context.Context, flags any, args []string) error {
+	sf := flags.(*ServeFlags)
+
+	cfg, err := configForCommand(ctx, &sf.Config)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(sf.HTTP) == "" {
+		return fmt.Errorf("--http must name the address to serve the page on, eg. 8099 or localhost:8099")
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	logger := ctxlog.Logger(ctx)
+	reporter := newStatusReporter(logger, sf.StatusInterval)
+	sup := newSupervisor(runCtx, cfg, sf.connOpts(), logger, reporter)
+
+	// Bound before anything is started, so that an address which cannot be
+	// served is reported rather than leaving connections up with no way to
+	// reach the page that lists them.
+	web, err := listenWeb(sf.HTTP, sup, logger)
+	if err != nil {
+		return err
+	}
+	// Before anything is started, since a connection that forwards this port
+	// could not be started at all whilst the page is served on it.
+	if err := web.checkForwardPorts(cfg); err != nil {
+		web.close()
+		return err
+	}
+
+	// Whatever was named is brought up at once; the rest wait to be started
+	// from the page.
+	if len(args) > 0 {
+		if err := sup.Start(args...); err != nil {
+			web.close()
+			sup.StopAll()
+			return err
+		}
+	}
+
+	go reporter.run(runCtx)
+
+	// The browsable url rather than the address that was bound: an address
+	// that is served on every interface cannot be used by a browser, and this
+	// line is what is copied when nothing is opened.
+	logger.Info("serving the list of connections",
+		"url", web.browseURL(),
+		"started", startedDesc(args),
+	)
+	if !sf.NoBrowser {
+		// The page is what this command is for, so it is opened rather than
+		// left to be copied out of the log. A browser that cannot be opened is
+		// not a failure: the page is still served, and the url above is how to
+		// reach it.
+		if err := openBrowserFn(web.browseURL()); err != nil {
+			logger.Warn("could not open the page in the browser",
+				"url", web.browseURL(), "err", err)
+		}
+	}
+	// Returns when the context is done, which is what ends serving.
+	web.serve(runCtx)
+
+	// The connections outlive the server by as long as it takes them to stop,
+	// which is waited for so that the ports are released before pconn exits.
+	cancel()
+	sup.StopAll()
+	logger.Info("stopped serving the list of connections", "url", web.browseURL())
+	return nil
+}
+
+// startedDesc describes what was brought up at startup, for the log line that
+// says the page is being served.
+func startedDesc(args []string) string {
+	if len(args) == 0 {
+		return "nothing yet"
+	}
+	return strings.Join(args, ", ")
+}

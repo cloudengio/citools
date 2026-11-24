@@ -15,6 +15,15 @@
 // field names, as ssh's ProxyJump ('ssh -J') does. The config command shows
 // and documents the configuration.
 //
+// The serve command opens and serves a page listing every configured
+// connection, as groups and individually, and starts and stops them as the
+// page asks: clicking
+// a group brings up its connections and opens a browser tab for each of their
+// web forwards, so that a connection can be used without remembering which
+// local port reaches what. The connect command's --http flag serves the same
+// page, read-only, for the connections it was told to maintain. The page is
+// embedded in the binary and loads nothing from anywhere.
+//
 // The tmux command attaches to a tmux session over one of the configured
 // connections, running the command line that its tmux block configures,
 // eg. 'tmux -CC new -A -s main' to create or attach to a session using the control
@@ -47,6 +56,10 @@ commands:
     summary: maintain the connections that have port forwards, for one or more groups or for all of them
     args:
       - "<group>... - optional group(s) of connections to connect (use 'all' for all connections); defaults to all if omitted"
+  - name: serve
+    summary: open and serve a page listing the configured connections, which starts and stops them on demand
+    args:
+      - "<group>|<name>... - optional group(s) or connection(s) to bring up at once; the rest are started from the page"
   - name: tmux
     summary: attach to a tmux session over a connection, reconnecting and reattaching if it is lost
     args:
@@ -70,6 +83,10 @@ func createCLI() *subcmd.CommandSetYAML {
 	connectCmd := ConnectCommand{}
 	cmdSet.Set("connect").MustRunner(connectCmd.Run, &ConnectFlags{})
 	cmdSet.Set("connect").MustSetPreHooks(configPrehook)
+
+	serveCmd := ServeCommand{}
+	cmdSet.Set("serve").MustRunner(serveCmd.Run, &ServeFlags{})
+	cmdSet.Set("serve").MustSetPreHooks(configPrehook)
 
 	tmuxCmd := TmuxCommand{}
 	cmdSet.Set("tmux").MustRunner(tmuxCmd.Run, &TmuxFlags{})

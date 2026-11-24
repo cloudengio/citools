@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -63,10 +64,16 @@ func TestFormatForwards(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 	forwards := []ForwardConfig{
-		{LocalPort: 8080, RemotePort: 80},
-		{LocalPort: 9090, RemotePort: 9000},
+		mustForward(t, "8080:80"),
+		mustForward(t, "9090:9000"),
 	}
 	if got, want := formatForwards(forwards), "127.0.0.1:8080->:80, 127.0.0.1:9090->:9000"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	// A forward to a host that the remote host reaches names it, since which
+	// host answers is then not implied by the connection.
+	toHost := []ForwardConfig{mustForward(t, "5432:db.internal:5432")}
+	if got, want := formatForwards(toHost), "127.0.0.1:5432->db.internal:5432"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
@@ -177,6 +184,12 @@ func newTestSSHServer(t *testing.T, hostSigner, userSigner ssh.Signer, user stri
 	return s
 }
 
+// lastForwardDest records the destination of the most recent direct-tcpip
+// channel, so that a forward can be shown to have asked the remote host for
+// the address it was configured with rather than merely to have carried
+// traffic. The tests in this package do not run in parallel.
+var lastForwardDest atomic.Value // string
+
 // directTCPIP is the payload of the channel request that a port forward opens
 // for each connection it carries, and that a proxy host opens to reach the host
 // on the far side of it.
@@ -207,6 +220,7 @@ func serveTestChannel(nc ssh.NewChannel) {
 		_ = nc.Reject(ssh.ConnectionFailed, err.Error())
 		return
 	}
+	lastForwardDest.Store(fmt.Sprintf("%v:%v", req.DestAddr, req.DestPort))
 	target, err := net.Dial("tcp", fmt.Sprintf("%v:%v", req.DestAddr, req.DestPort))
 	if err != nil {
 		_ = nc.Reject(ssh.ConnectionFailed, err.Error())
@@ -392,8 +406,7 @@ connections:
         - %s
       port_forward:
         forwards:
-          - local_port: %d
-            remote_port: %d
+          - %d:%d
 `, logPath, srv.addr(), user, knownHostsPath, localForwardPort, remoteEchoPort)
 
 	cfgPath := writeTestConfig(t, tmpDir, cfgContent)
@@ -980,5 +993,71 @@ connections:
 	cancel()
 	if err := <-dispatchDone; !isCleanShutdown(err) {
 		t.Fatalf("expected clean shutdown, got: %v", err)
+	}
+}
+
+// TestConnectCommandForwardToHostIntegration covers a forward whose far end is
+// a host that the remote host reaches rather than the remote host itself: the
+// remote host is asked for the host named, which is what reaches a service
+// that only it can reach.
+func TestConnectCommandForwardToHostIntegration(t *testing.T) {
+	userPriv, userSigner := newTestKey(t)
+	_, hostKey := newTestKey(t)
+	serveTestAgent(t, userPriv)
+
+	const user = "testuser"
+	srv := newTestSSHServer(t, hostKey, userSigner, user)
+	remoteEcho := echoServer(t)
+	localForwardPort := freePort(t)
+
+	tmpDir := t.TempDir()
+	knownHostsPath := filepath.Join(tmpDir, "known_hosts")
+	if err := os.WriteFile(knownHostsPath, []byte(knownHostsLine(srv, hostKey.PublicKey())), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// localhost rather than 127.0.0.1, so that a host which was dropped in
+	// favour of the remote host's own loopback would not look the same.
+	cfgPath := writeTestConfig(t, tmpDir, fmt.Sprintf(`
+connections:
+  - name: has-db
+    host: %s
+    ssh:
+      user: %s
+      known_hosts: [%s]
+      port_forward:
+        forwards: [%d:localhost:%d]
+`, srv.addr(), user, knownHostsPath, localForwardPort, remoteEcho))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cli := newTestCLI(t)
+	dispatchDone := make(chan error, 1)
+	go func() {
+		dispatchDone <- cli.DispatchWithArgs(ctx, "pconn", "--config="+cfgPath, "connect")
+	}()
+
+	select {
+	case err := <-dispatchDone:
+		cancel()
+		t.Fatalf("dispatch returned early: %v", err)
+	case <-srv.accepted:
+	case <-time.After(30 * time.Second):
+		cancel()
+		t.Fatal("timed out waiting for the connection")
+	}
+	echoCheck(t, localForwardPort, "ping-to-host")
+
+	if got, _ := lastForwardDest.Load().(string); got != fmt.Sprintf("localhost:%d", remoteEcho) {
+		t.Errorf("the remote host was asked to connect to %v, want localhost:%d", got, remoteEcho)
+	}
+
+	cancel()
+	select {
+	case err := <-dispatchDone:
+		if !isCleanShutdown(err) {
+			t.Fatalf("expected a clean shutdown, got: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("timed out waiting for the shutdown")
 	}
 }

@@ -29,7 +29,7 @@ func TestConfigDescribe(t *testing.T) {
 	}
 	for _, want := range []string{
 		"logging:", "connections:", "type:", "ssh:", "dial_timeout:", "accept_new_host_keys:", "proxy:", // the connection
-		"port_forward:", "forwards:", "groups:", "unlimited_retries:", // its port forwards
+		"port_forward:", "forwards:", "forward:", "url:", "groups:", "unlimited_retries:", // its port forwards
 		"tmux:", "command:", // its tmux session
 	} {
 		if !strings.Contains(out, want) {

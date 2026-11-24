@@ -6,6 +6,7 @@ Usage of `pconn`
     manage persistent network connections
 
     connect - maintain the connections that have port forwards, for one or more groups or for all of them
+      serve - open and serve a page listing the configured connections, which starts and stops them on demand
        tmux - attach to a tmux session over a connection, reconnecting and reattaching if it is lost
      config - show the configuration, and its documentation.
 
@@ -45,6 +46,15 @@ maintained together by the connect command, and tmux, which is used by the
 tmux command. A host that cannot be reached from where `pconn` runs is reached
 through one that can, which its proxy field names, as ssh's ProxyJump ('ssh
 -J') does. The config command shows and documents the configuration.
+
+The serve command opens and serves a page listing every configured
+connection, as groups and individually, and starts and stops them as the
+page asks: clicking a group brings up its connections and opens a browser
+tab for each of their web forwards, so that a connection can be used
+without remembering which local port reaches what. The connect command's
+--http flag serves the same page, read-only, for the connections it was
+told to maintain. The page is embedded in the binary and loads nothing from
+anywhere.
 
 The tmux command attaches to a tmux session over one of the configured
 connections, running the command line that its tmux block configures, eg.
@@ -105,11 +115,13 @@ connections:
       port_forward:
         unlimited_retries: false # give up once the retries are exhausted
         groups: [dev, backend]
+        # The longer form of a forward: the same <local>:<remote> string, with
+        # a url for 'pconn serve' to open. It defaults to
+        # http://127.0.0.1:<local>, and none says there is nothing to open, as
+        # for a database.
         forwards:
-          # A forward may also be written as a mapping. local/remote are
-          # accepted as aliases for local_port/remote_port.
-          - local_port: 5432
-            remote_port: 5432
+          - forward: 5432:5432
+            url: none
 
   # A minimal connection: port, user and dial_timeout all default.
   - name: shared-cache
@@ -138,14 +150,26 @@ connections:
       accept_new_host_keys: true
 
   # A host that is not reachable from here, so it is reached through the
-  # bastion, as ssh's ProxyJump ('ssh -J') does.
+  # bastion, as ssh's ProxyJump ('ssh -J') does: its forwards run over both
+  # connections, and it is verified by its own host key. A proxy may also be
+  # given as host, user@host or user@host:port for a host with no connection of
+  # its own. Only one hop is supported.
   - name: metrics
     host: metrics.internal
     ssh:
       proxy: bastion
       port_forward:
         groups: [backend]
-        forwards: [9090:9090]
+        forwards:
+          # Its web interface is served under a path rather than at the root.
+          - forward: 9090:9090
+            url: /metrics
+          # <local>:<host>:<remote> forwards to a port on a host that
+          # metrics.internal reaches but this host does not, for a service
+          # with no ssh server of its own to connect to. Where it has one,
+          # give it a connection of its own with a proxy instead: the traffic
+          # is then encrypted the whole way.
+          - 15432:pg.internal:5432
 ```
 
 #### Configuration Specification
@@ -188,7 +212,7 @@ The `ssh` block says how to connect to the host, and what is done over it:
 
 ##### ssh port_forward Fields
 
-- `forwards` *(optional)*: List of local TCP port forwarding tunnels to establish and maintain over this connection, specified using flow syntax (e.g. `[11001:11000]` or `[8080:80, 8443:443]`), see [Port Forwarding Fields](#port-forwarding-fields).
+- `forwards` *(optional)*: The local TCP ports to forward over this connection, each written as one string, typically in flow syntax: `[11001:11000]`, `[8080:80, 8443:443]`. See [Port Forwarding Fields](#port-forwarding-fields).
 - `groups` *(optional)*: List of group names that this connection belongs to, typically specified using flow syntax (e.g. `[ci]` or `[dev, frontend]`). A connection may belong to multiple groups simultaneously. Groups only apply to port forwards.
 - `unlimited_retries` *(optional)*: Boolean flag specifying whether reconnection attempts should back off and retry indefinitely. If unspecified, inherits the command-line flag setting (default `true`).
 - `forward_agent` *(optional)*: As for `tmux`, but `pconn connect` runs no commands on the host, so there is nothing to make the agent available to and it has no practical effect.
@@ -225,12 +249,59 @@ A connection that has neither `port_forward` nor `tmux` of its own and is used a
 
 ##### Port Forwarding Fields
 
-Each item under `forwards` can be specified as a `<local>:<remote>` string or mapping:
+A forward is one string:
 
-- **String syntax**: `<local>:<remote>` (e.g. `11001:11000`, `8080:80`).
-- **Mapping syntax** *(backwards-compatible)*:
-  - `local_port` (or alias `local`) *(required)*: Local TCP port on `127.0.0.1` to listen on (must be between 1 and 65535).
-  - `remote_port` (or alias `remote`) *(required)*: Remote TCP port on the target host (or reachable from the remote host) to forward incoming connections to (must be between 1 and 65535).
+```yaml
+        forwards: [8080:80, 8443:443, 5432:pg.internal:5432]
+```
+
+- `<local>:<remote>` forwards the local port to that port on the remote host, e.g. `8080:80`.
+- `<local>:<host>:<remote>` forwards it to a port on a host that the **remote host** reaches rather than to the remote host itself, e.g. `5432:pg.internal:5432`. An IPv6 host is bracketed so that its colons are not read as ports: `1521:[2001:db8::1]:1521`. A middle field of nothing but digits is rejected, since a third port is a mistyped forward rather than a hostname.
+
+That is all a forward needs, including for [`pconn serve`](#the-connection-list), which opens `http://127.0.0.1:<local>` for it. The longer form is the same string with a `url` alongside it, for when that is not what should be opened:
+
+```yaml
+        forwards:
+          - 8080:80                    # http://127.0.0.1:8080
+          - forward: 9090:9090
+            url: /metrics              # http://127.0.0.1:9090/metrics
+          - forward: 8443:443
+            url: https://              # https://127.0.0.1:8443
+          - forward: 5432:5432
+            url: none                  # nothing to open; the port is still listed
+```
+
+- `forward` *(required)*: The string above.
+- `url` *(optional)*: What `pconn serve` opens. A path keeps the scheme and address and replaces the path. A complete URL replaces all of it, taking the local port where it names no port of its own. `none` says there is nothing for a browser to open, as for a database port.
+
+Naming a host in a forward reaches a service that only the remote host can reach and that has no ssh server of its own to connect to, such as a managed database endpoint. Where the host *does* have one, give it a connection of its own with a [proxy](#proxy-hosts) instead: the traffic is then encrypted the whole way rather than only as far as the remote host, and the host is verified by its own key.
+
+#### The Connection List
+
+`pconn serve` serves a page listing every connection in the configuration, as groups and individually, so that a connection can be started and used without reading the configuration file or remembering which local port reaches what.
+
+```
+pconn serve                      # opens http://127.0.0.1:8099/, nothing connected yet
+pconn serve ci                   # the same, with the ci group already up
+pconn serve --http=0.0.0.0:8099
+pconn serve --no-browser         # serve it, but open nothing
+```
+
+The page is opened in the browser once it is being served, since reaching it is the point of the command; `--no-browser` is for a `pconn serve` that a service runs rather than a person. A browser that cannot be opened is not a failure: the page is still served, and the address is logged.
+
+Clicking a group starts every connection in it; clicking a single connection starts that one. Once they are established — which the page waits for, since a port that is not forwarded yet refuses connections — a browser tab is opened for each of the group's web forwards, at the [`url`](#port-forwarding-fields) of each. A connection that is running can be stopped from the page, which releases its local ports.
+
+For each connection the page shows who it connects as, the proxy host it is reached through if any, each local port and what answers on it, and its state: `stopped`, `starting`, `connecting`, `reconnecting`, `up`, or `failed` with the reason. Each forwarded port is also a link, so a tab can be opened by hand at any time.
+
+The tabs are opened by the page, in the browser the click happened in, which means a browser may ask once to allow pop-ups for the page. One that refuses them changes nothing else: the ports are still forwarded, and the links in the table open the same pages.
+
+The groups and connections a command line names are brought up at startup, as `pconn connect` would, and the rest wait to be started from the page. A connection whose local port is already forwarded by one that is running is refused with the name of the connection that has it, rather than failing once it has been started.
+
+`pconn connect --http=<address>` serves the same page for the connections that command was told to maintain. There it is read-only: that command's set of connections is fixed when it starts, so the page lists them and reports on them but has no controls, and refreshes itself without needing a script.
+
+The page is rendered by `pconn` itself and loads nothing from anywhere — no script, stylesheet or image of its own — so it needs no files alongside the binary and no network beyond this host. It brings itself up to date every five seconds, since what it shows changes as connections are established and lost.
+
+A bare port is served on the loopback interface, because the page names internal hosts and the ports that reach them, and can start connections. An address that names an interface is served on it, which is how to ask for that deliberately. The address is bound before anything is started, so one that cannot be used is reported straight away, and it is refused outright if any connection in the configuration forwards that port: both would bind it here, so one of them would fail and which one would depend on the order they started in. Requests that change the connections are accepted only from the page itself, so that another page in the same browser cannot drive it.
 
 #### Groups and Membership
 

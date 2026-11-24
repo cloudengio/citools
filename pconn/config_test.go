@@ -20,6 +20,17 @@ import (
 	"cloudeng.io/net/pssh"
 )
 
+// mustForward returns the forward that spec describes, in the one line form
+// that the configuration uses, which must be valid.
+func mustForward(t *testing.T, spec string) ForwardConfig {
+	t.Helper()
+	f := ForwardConfig{Forward: spec}
+	if err := f.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
 func TestConfigParseAndValidate(t *testing.T) {
 	spec := `
 logging:
@@ -37,18 +48,15 @@ connections:
       port_forward:
         unlimited_retries: false
         forwards:
-          - local_port: 8080
-            remote_port: 80
-          - local: 9090
-            remote: 90
+          - 8080:80
+          - 9090:90
   -
     host: user2@db.example.com
     ssh:
       ssh_port: 2200
       port_forward:
         forwards:
-          - local_port: 5432
-            remote_port: 5432
+          - 5432:5432
   - name: host-from-name.example.com
     ssh:
       port_forward:
@@ -94,11 +102,11 @@ connections:
 	if len(c1.SSH.PortForward.Forwards) != 2 {
 		t.Fatalf("got %d forwards, want 2", len(c1.SSH.PortForward.Forwards))
 	}
-	if c1.SSH.PortForward.Forwards[0].LocalPort != 8080 || c1.SSH.PortForward.Forwards[0].RemotePort != 80 {
-		t.Errorf("forward 0: got %d:%d, want 8080:80", c1.SSH.PortForward.Forwards[0].LocalPort, c1.SSH.PortForward.Forwards[0].RemotePort)
+	if c1.SSH.PortForward.Forwards[0].LocalPort() != 8080 || c1.SSH.PortForward.Forwards[0].RemotePort() != 80 {
+		t.Errorf("forward 0: got %d:%d, want 8080:80", c1.SSH.PortForward.Forwards[0].LocalPort(), c1.SSH.PortForward.Forwards[0].RemotePort())
 	}
-	if c1.SSH.PortForward.Forwards[1].LocalPort != 9090 || c1.SSH.PortForward.Forwards[1].RemotePort != 90 {
-		t.Errorf("forward 1: got %d:%d, want 9090:90", c1.SSH.PortForward.Forwards[1].LocalPort, c1.SSH.PortForward.Forwards[1].RemotePort)
+	if c1.SSH.PortForward.Forwards[1].LocalPort() != 9090 || c1.SSH.PortForward.Forwards[1].RemotePort() != 90 {
+		t.Errorf("forward 1: got %d:%d, want 9090:90", c1.SSH.PortForward.Forwards[1].LocalPort(), c1.SSH.PortForward.Forwards[1].RemotePort())
 	}
 
 	c2 := cfg.Connections[1]
@@ -128,11 +136,11 @@ connections:
 	if len(c3.SSH.PortForward.Forwards) != 2 {
 		t.Fatalf("c3: got %d forwards, want 2", len(c3.SSH.PortForward.Forwards))
 	}
-	if c3.SSH.PortForward.Forwards[0].LocalPort != 7070 || c3.SSH.PortForward.Forwards[0].RemotePort != 70 {
-		t.Errorf("c3 forward 0: got %d:%d, want 7070:70", c3.SSH.PortForward.Forwards[0].LocalPort, c3.SSH.PortForward.Forwards[0].RemotePort)
+	if c3.SSH.PortForward.Forwards[0].LocalPort() != 7070 || c3.SSH.PortForward.Forwards[0].RemotePort() != 70 {
+		t.Errorf("c3 forward 0: got %d:%d, want 7070:70", c3.SSH.PortForward.Forwards[0].LocalPort(), c3.SSH.PortForward.Forwards[0].RemotePort())
 	}
-	if c3.SSH.PortForward.Forwards[1].LocalPort != 7071 || c3.SSH.PortForward.Forwards[1].RemotePort != 71 {
-		t.Errorf("c3 forward 1: got %d:%d, want 7071:71", c3.SSH.PortForward.Forwards[1].LocalPort, c3.SSH.PortForward.Forwards[1].RemotePort)
+	if c3.SSH.PortForward.Forwards[1].LocalPort() != 7071 || c3.SSH.PortForward.Forwards[1].RemotePort() != 71 {
+		t.Errorf("c3 forward 1: got %d:%d, want 7071:71", c3.SSH.PortForward.Forwards[1].LocalPort(), c3.SSH.PortForward.Forwards[1].RemotePort())
 	}
 }
 
@@ -234,8 +242,8 @@ func TestConfigValidationErrors(t *testing.T) {
 				{
 					Name: "c1",
 					Host: "host1.example.com", SSH: &SSHConfig{PortForward: PortForwardConfig{Forwards: []ForwardConfig{
-						{LocalPort: 8080, RemotePort: 80},
-						{LocalPort: 8080, RemotePort: 8080},
+						mustForward(t, "8080:80"),
+						mustForward(t, "8080:8080"),
 					}}},
 				},
 			},
@@ -251,13 +259,13 @@ func TestConfigValidationErrors(t *testing.T) {
 				{
 					Name: "c1",
 					Host: "host1.example.com", SSH: &SSHConfig{PortForward: PortForwardConfig{Forwards: []ForwardConfig{
-						{LocalPort: 8080, RemotePort: 80},
+						mustForward(t, "8080:80"),
 					}}},
 				},
 				{
 					Name: "c2",
 					Host: "host2.example.com", SSH: &SSHConfig{PortForward: PortForwardConfig{Forwards: []ForwardConfig{
-						{LocalPort: 8080, RemotePort: 8088},
+						mustForward(t, "8080:8088"),
 					}}},
 				},
 			},
@@ -273,7 +281,7 @@ func TestConfigValidationErrors(t *testing.T) {
 				{
 					Name: "c1",
 					Host: "host1.example.com", SSH: &SSHConfig{PortForward: PortForwardConfig{Forwards: []ForwardConfig{
-						{LocalPort: 99999, RemotePort: 80},
+						{Forward: "99999:80"},
 					}}},
 				},
 			},
@@ -349,8 +357,13 @@ connections:
         forwards:
           - 8080:80
           - "9090:90"
-          - local_port: 7070
-            remote_port: 70
+          # A port on a host that the remote host reaches, and an IPv6
+          # address, which is bracketed to separate its colons from the ports.
+          - 5432:db.internal:5432
+          - "1521:[2001:db8::1]:1521"
+          # The longer form, which is the same string with a url alongside it.
+          - forward: 7070:70
+            url: /app
 `
 	var cfg Config
 	if err := cmdyaml.ParseConfigsStrict(&cfg, []byte(spec)); err != nil {
@@ -359,18 +372,50 @@ connections:
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("unexpected validation error: %v", err)
 	}
-	if len(cfg.Connections[0].SSH.PortForward.Forwards) != 3 {
-		t.Fatalf("expected 3 forwards, got %d", len(cfg.Connections[0].SSH.PortForward.Forwards))
-	}
 	fwds := cfg.Connections[0].SSH.PortForward.Forwards
-	if fwds[0].LocalPort != 8080 || fwds[0].RemotePort != 80 {
-		t.Errorf("fwd 0: got %v, want 8080:80", fwds[0])
+	if len(fwds) != 5 {
+		t.Fatalf("expected 5 forwards, got %d", len(fwds))
 	}
-	if fwds[1].LocalPort != 9090 || fwds[1].RemotePort != 90 {
-		t.Errorf("fwd 1: got %v, want 9090:90", fwds[1])
-	}
-	if fwds[2].LocalPort != 7070 || fwds[2].RemotePort != 70 {
-		t.Errorf("fwd 2: got %v, want 7070:70", fwds[2])
+	for i, tc := range []struct {
+		local      int
+		host       string
+		remote     int
+		str        string // the string form, which must parse back to this.
+		remoteAddr string
+		browse     string
+	}{
+		{8080, "", 80, "8080:80", "127.0.0.1:80", "http://127.0.0.1:8080"},
+		{9090, "", 90, "9090:90", "127.0.0.1:90", "http://127.0.0.1:9090"},
+		{5432, "db.internal", 5432, "5432:db.internal:5432", "db.internal:5432", "http://127.0.0.1:5432"},
+		{1521, "2001:db8::1", 1521, "1521:[2001:db8::1]:1521", "[2001:db8::1]:1521", "http://127.0.0.1:1521"},
+		{7070, "", 70, "7070:70", "127.0.0.1:70", "http://127.0.0.1:7070/app"},
+	} {
+		f := fwds[i]
+		if f.LocalPort() != tc.local || f.RemoteHost() != tc.host || f.RemotePort() != tc.remote {
+			t.Errorf("fwd %d: got %d:%q:%d, want %d:%q:%d",
+				i, f.LocalPort(), f.RemoteHost(), f.RemotePort(), tc.local, tc.host, tc.remote)
+		}
+		if got := f.String(); got != tc.str {
+			t.Errorf("fwd %d: got %v, want %v", i, got, tc.str)
+		}
+		if got := f.RemoteAddr(); got != tc.remoteAddr {
+			t.Errorf("fwd %d: got %v, want %v", i, got, tc.remoteAddr)
+		}
+		// The default is the forward's own local port, which is what makes
+		// the one line form enough for a web service.
+		if got, ok := f.BrowseURL(); !ok || got != tc.browse {
+			t.Errorf("fwd %d: got %v, want %v", i, got, tc.browse)
+		}
+		// The string form is what MarshalYAML writes, so it has to parse back
+		// to the same forward for 'pconn config show' to be reusable as input.
+		back := ForwardConfig{Forward: tc.str, URL: f.URL}
+		if err := back.Validate(); err != nil {
+			t.Errorf("fwd %d: %v does not parse back: %v", i, tc.str, err)
+			continue
+		}
+		if back != f {
+			t.Errorf("fwd %d: parsed back as %v, want %v", i, back, f)
+		}
 	}
 
 	invalidSpecs := []string{
@@ -491,7 +536,9 @@ func testExampleConfigConnections(t *testing.T) {
 		{"build-box", "build.example.com:22", "", pssh.DefaultDialTimeout, nil},
 		// A proxy host, and the connection that is reached through it.
 		{"bastion", "bastion.example.com:22", "admin", pssh.DefaultDialTimeout, nil},
-		{"metrics", "metrics.internal:22", "", pssh.DefaultDialTimeout, []string{"9090:9090"}},
+		// Its second forward is to a port on a host that metrics.internal
+		// reaches rather than on metrics.internal itself.
+		{"metrics", "metrics.internal:22", "", pssh.DefaultDialTimeout, []string{"9090:9090", "15432:pg.internal:5432"}},
 	} {
 		conn := cfg.Connections[i]
 		if got, want := conn.Name, tc.name; got != want {
@@ -658,8 +705,7 @@ connections:
           - dev
           - frontend
         forwards:
-          - local_port: 8080
-            remote_port: 80
+          - 8080:80
   - name: db
     host: db.example.com
     ssh:
@@ -668,8 +714,7 @@ connections:
           - dev
           - backend
         forwards:
-          - local_port: 5432
-            remote_port: 5432
+          - 5432:5432
   - name: cache
     host: cache.example.com
     ssh:
@@ -677,8 +722,7 @@ connections:
         groups:
           - backend
         forwards:
-          - local_port: 6379
-            remote_port: 6379
+          - 6379:6379
   - name: staging-db
     host: db.staging.example.com
     ssh:
@@ -686,8 +730,7 @@ connections:
         groups:
           - staging
         forwards:
-          - local_port: 5432
-            remote_port: 5432
+          - 5432:5432
 `
 	var cfg Config
 	if err := cmdyaml.ParseConfigsStrict(&cfg, []byte(spec)); err != nil {
@@ -775,8 +818,7 @@ connections:
         groups:
           - dev
         forwards:
-          - local_port: 8080
-            remote_port: 80
+          - 8080:80
   - name: c2
     host: h2.example.com
     ssh:
@@ -784,8 +826,7 @@ connections:
         groups:
           - dev
         forwards:
-          - local_port: 8080
-            remote_port: 8080
+          - 8080:8080
 `
 	var cfg Config
 	if err := cmdyaml.ParseConfigsStrict(&cfg, []byte(spec)); err != nil {

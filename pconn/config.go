@@ -7,6 +7,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"reflect"
 	"slices"
@@ -19,77 +20,209 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ForwardConfig specifies a local TCP port forward over a connection.
-// In YAML, it can be specified as a string "<local>:<remote>" (e.g. "8080:80")
-// or as a mapping with local_port/remote_port fields.
+// ForwardConfig specifies a local TCP port forward over a connection. In YAML
+// it is a string, "<local>:<remote>", or "<local>:<host>:<remote>" for a port
+// on a host that the remote host reaches rather than on the remote host
+// itself, eg. "8080:80" or "5432:db.internal:5432".
+//
+// The longer form is a mapping of that same string as forward and a url, which
+// is only needed when what 'pconn serve' should open for the forward is not
+// http://127.0.0.1:<local>:
+//
+//	forwards:
+//	  - 8080:80
+//	  - forward: 9090:9090
+//	    url: /metrics
 type ForwardConfig struct {
-	LocalPort  int `yaml:"local_port,omitempty" doc:"local port to bind (alias: local)"`
-	RemotePort int `yaml:"remote_port,omitempty" doc:"remote port to forward to (alias: remote)"`
-	Local      int `yaml:"local,omitempty" doc:"local port (alias for local_port)"`
-	Remote     int `yaml:"remote,omitempty" doc:"remote port (alias for remote_port)"`
+	//nolint:lll // Both of the forms the field takes have to be described here.
+	Forward string `yaml:"forward,omitempty" doc:"the forward, as <local>:<remote>, or <local>:<host>:<remote> for a port on a host that the remote host reaches rather than on the remote host itself; an IPv6 host is bracketed, eg. 1521:[2001:db8::1]:1521"`
+	//nolint:lll // Each of the forms the field takes has to be described here.
+	URL string `yaml:"url,omitempty" doc:"what 'pconn serve' opens in the browser for this forward, which defaults to http://127.0.0.1:<local>: a path to open that instead, eg. /jenkins, a complete URL to replace it, eg. https://127.0.0.1:8443/app, or none for a forward that is not a web service, eg. a database"`
+
+	// The fields of Forward, which parse reads from it.
+	localPort  int
+	remoteHost string
+	remotePort int
 }
 
-func (f *ForwardConfig) parseString(s string) error {
-	s = strings.TrimSpace(s)
-	parts := strings.Split(s, ":")
-	if len(parts) != 2 {
-		return fmt.Errorf("invalid forward format %q: expected <local>:<remote>", s)
+// LocalPort is the port bound on 127.0.0.1 here.
+func (f ForwardConfig) LocalPort() int { return f.localPort }
+
+// RemoteHost is the host that the remote host forwards to, which is empty for
+// the remote host itself.
+func (f ForwardConfig) RemoteHost() string { return f.remoteHost }
+
+// RemotePort is the port forwarded to on RemoteHost.
+func (f ForwardConfig) RemotePort() int { return f.remotePort }
+
+// noBrowseURL is the url of a forward that is not a web service, and so has
+// nothing for a browser to open.
+const noBrowseURL = "none"
+
+// BrowseURL returns what a browser is pointed at for this forward, and whether
+// there is anything to point it at. The default is http://127.0.0.1:<local>,
+// since that is what a forwarded web service is reached by, and url overrides
+// it: a path keeps the default scheme and address, a complete URL replaces
+// them, supplying the local port where it names no port of its own, and none
+// says there is nothing to open.
+func (f ForwardConfig) BrowseURL() (string, bool) {
+	spec := strings.TrimSpace(f.URL)
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(f.localPort))
+	switch {
+	case strings.EqualFold(spec, noBrowseURL):
+		return "", false
+	case spec == "":
+		return "http://" + addr, true
+	case strings.HasPrefix(spec, "/"):
+		return "http://" + addr + spec, true
 	}
-	lpStr := strings.TrimSpace(parts[0])
-	rpStr := strings.TrimSpace(parts[1])
-	lp, err := strconv.Atoi(lpStr)
+	u, err := url.Parse(spec)
+	if err != nil || u.Scheme == "" {
+		// Neither a path nor a URL with a scheme, which Validate rejects.
+		return "", false
+	}
+	switch {
+	case u.Host == "":
+		u.Host = addr
+	case u.Port() == "":
+		// A URL that names a host but no port is served on the forward's own
+		// local port, which is the port the browser has to use.
+		u.Host = net.JoinHostPort(u.Hostname(), strconv.Itoa(f.localPort))
+	}
+	return u.String(), true
+}
+
+// parse reads the fields of Forward: "<local>:<remote>", or
+// "<local>:<host>:<remote>" where the host may be a bracketed IPv6 address.
+func (f *ForwardConfig) parse() error {
+	s := strings.TrimSpace(f.Forward)
+	lpStr, rest, ok := strings.Cut(s, ":")
+	if !ok {
+		return fmt.Errorf("invalid forward %q: expected <local>:<remote> or <local>:<host>:<remote>", s)
+	}
+	// The remote port is the last field, so whatever lies between the two
+	// ports is the host, colons of an IPv6 address included.
+	host, rpStr := "", rest
+	if i := strings.LastIndex(rest, ":"); i >= 0 {
+		host, rpStr = rest[:i], rest[i+1:]
+	}
+	lp, err := strconv.Atoi(strings.TrimSpace(lpStr))
 	if err != nil {
 		return fmt.Errorf("invalid local port %q in forward %q: %w", lpStr, s, err)
 	}
-	rp, err := strconv.Atoi(rpStr)
+	rp, err := strconv.Atoi(strings.TrimSpace(rpStr))
 	if err != nil {
 		return fmt.Errorf("invalid remote port %q in forward %q: %w", rpStr, s, err)
 	}
-	f.LocalPort = lp
-	f.RemotePort = rp
+	host = unbracket(strings.TrimSpace(host))
+	// A host of nothing but digits is neither a name nor an address, so it is
+	// a third port, which means the forward was mistyped.
+	if _, err := strconv.Atoi(host); err == nil {
+		return fmt.Errorf("invalid forward %q: %q is where the host goes, so a third port is not accepted: expected <local>:<remote> or <local>:<host>:<remote>", s, host)
+	}
+	f.localPort = lp
+	f.remoteHost = host
+	f.remotePort = rp
 	return nil
 }
 
-// UnmarshalYAML decodes either a string "<local>:<remote>" or a mapping.
-func (f *ForwardConfig) UnmarshalYAML(value *yaml.Node) error {
-	if value.Kind == yaml.ScalarNode {
-		return f.parseString(value.Value)
+// unbracket removes the brackets from an IPv6 address written with them, which
+// is how one is given where a port follows it.
+func unbracket(host string) string {
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		return host[1 : len(host)-1]
 	}
-	if value.Kind == yaml.MappingNode {
+	return host
+}
+
+// UnmarshalYAML decodes a forward written as a string, or as the longer form
+// of a mapping of forward and url.
+func (f *ForwardConfig) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		f.Forward = value.Value
+		return f.parse()
+	case yaml.MappingNode:
+		if err := forwardFields(value); err != nil {
+			return err
+		}
 		type plain ForwardConfig
 		var p plain
 		if err := value.Decode(&p); err != nil {
 			return err
 		}
 		*f = ForwardConfig(p)
-		return nil
+		return f.parse()
 	}
-	return fmt.Errorf("forward specification must be <local>:<remote> string or map, got yaml kind %d", value.Kind)
+	return fmt.Errorf("a forward must be <local>:<remote>, or a mapping of forward and url, got yaml kind %d", value.Kind)
 }
 
-// MarshalYAML encodes ForwardConfig as "<local>:<remote>".
+// forwardFields rejects a field that the longer form does not have. The strict
+// parsing that rejects an unknown field elsewhere in the configuration cannot
+// do it here, since a type that decodes itself decodes its own fields.
+func forwardFields(value *yaml.Node) error {
+	for i := 0; i+1 < len(value.Content); i += 2 {
+		switch key := value.Content[i].Value; key {
+		case "forward", "url":
+		default:
+			return fmt.Errorf("unknown field %q in a forward: it has forward and url, eg. {forward: 8080:80, url: /app}", key)
+		}
+	}
+	return nil
+}
+
+// MarshalYAML encodes the forward as the string that String returns, or as the
+// longer form when it has a url, so that what 'pconn config show' prints is
+// what it would read.
 func (f ForwardConfig) MarshalYAML() (any, error) {
-	return f.String(), nil
+	if f.URL == "" {
+		return f.String(), nil
+	}
+	return struct {
+		Forward string `yaml:"forward"`
+		URL     string `yaml:"url"`
+	}{f.String(), f.URL}, nil
 }
 
-// String returns "<local>:<remote>".
+// String returns "<local>:<remote>", or "<local>:<host>:<remote>" when the
+// forward names a host, with an IPv6 address bracketed so that it parses back.
 func (f ForwardConfig) String() string {
-	return fmt.Sprintf("%d:%d", f.LocalPort, f.RemotePort)
+	if f.remoteHost == "" {
+		return fmt.Sprintf("%d:%d", f.localPort, f.remotePort)
+	}
+	host := f.remoteHost
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	return fmt.Sprintf("%d:%s:%d", f.localPort, host, f.remotePort)
 }
 
-// Validate normalizes aliases and checks port bounds.
+// RemoteAddr returns the host and port that the remote host forwards to, as
+// pssh reports it: the forward's own host, or the remote host's loopback.
+func (f ForwardConfig) RemoteAddr() string {
+	host := f.remoteHost
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, strconv.Itoa(f.remotePort))
+}
+
+// Validate parses the forward and checks that its ports and url can be used.
 func (f *ForwardConfig) Validate() error {
-	if f.LocalPort == 0 && f.Local != 0 {
-		f.LocalPort = f.Local
+	// Parsed again because a forward built in Go rather than read from YAML
+	// has only its Forward field set.
+	if err := f.parse(); err != nil {
+		return err
 	}
-	if f.RemotePort == 0 && f.Remote != 0 {
-		f.RemotePort = f.Remote
+	if f.localPort < 1 || f.localPort > 65535 {
+		return fmt.Errorf("invalid local port %d: must be between 1 and 65535", f.localPort)
 	}
-	if f.LocalPort < 1 || f.LocalPort > 65535 {
-		return fmt.Errorf("invalid local port %d: must be between 1 and 65535", f.LocalPort)
+	if f.remotePort < 1 || f.remotePort > 65535 {
+		return fmt.Errorf("invalid remote port %d: must be between 1 and 65535", f.remotePort)
 	}
-	if f.RemotePort < 1 || f.RemotePort > 65535 {
-		return fmt.Errorf("invalid remote port %d: must be between 1 and 65535", f.RemotePort)
+	f.URL = strings.TrimSpace(f.URL)
+	if _, ok := f.BrowseURL(); !ok && !strings.EqualFold(f.URL, noBrowseURL) {
+		return fmt.Errorf("invalid url %q for forward %v: expected a path, eg. /app, a complete URL, eg. https://127.0.0.1:8443/app, or %v", f.URL, f, noBrowseURL)
 	}
 	return nil
 }
@@ -97,7 +230,8 @@ func (f *ForwardConfig) Validate() error {
 // PortForwardConfig specifies the local port forwards that 'pconn connect'
 // maintains over a connection.
 type PortForwardConfig struct {
-	Forwards         []ForwardConfig `yaml:"forwards,omitempty" doc:"local port forwards to establish, as <local>:<remote>"`
+	//nolint:lll // Both of the forms a forward takes have to be described here.
+	Forwards         []ForwardConfig `yaml:"forwards,omitempty" doc:"local port forwards to establish, each as <local>:<remote> or <local>:<host>:<remote>, eg. [8080:80, 5432:db.internal:5432], or as a mapping of forward and url"`
 	UnlimitedRetries *bool           `yaml:"unlimited_retries,omitempty" doc:"continue retrying indefinitely; defaults to true"`
 	Groups           []string        `yaml:"groups,omitempty" doc:"groups that this connection belongs to, which are selected when running 'pconn connect <group>'"`
 	ForwardAgent     bool            `yaml:"forward_agent,omitempty" doc:"make the local ssh agent available to the remote host; since pconn connect runs no commands on it this has no effect on its own"`
@@ -298,7 +432,7 @@ func (c *SSHConfig) validate(name string) error {
 		if err := c.PortForward.Forwards[i].Validate(); err != nil {
 			return fmt.Errorf("connection %q forward #%d: %w", name, i+1, err)
 		}
-		lp := c.PortForward.Forwards[i].LocalPort
+		lp := c.PortForward.Forwards[i].LocalPort()
 		if localPorts[lp] {
 			return fmt.Errorf("connection %q: duplicate local forward port %d", name, lp)
 		}
@@ -487,15 +621,30 @@ func (cfg *Config) ConnectionsWithoutGroup() []ConnectionConfig {
 	return result
 }
 
+// ForwardsLocalPort returns the name of a connection that forwards the local
+// port, and whether one does. It is what anything else that wants to bind a
+// local port has to ask first, since the two would otherwise bind the same
+// port and one of them would fail.
+func (cfg *Config) ForwardsLocalPort(port int) (string, bool) {
+	for _, c := range cfg.Connections {
+		for _, f := range c.SSH.PortForward.Forwards {
+			if f.LocalPort() == port {
+				return c.Name, true
+			}
+		}
+	}
+	return "", false
+}
+
 // HasConflictingPorts reports whether any two connections in conns share a local port forward.
 func HasConflictingPorts(conns []ConnectionConfig) (int, string, string, bool) {
 	ports := make(map[int]string)
 	for _, c := range conns {
 		for _, f := range c.SSH.PortForward.Forwards {
-			if prev, exists := ports[f.LocalPort]; exists {
-				return f.LocalPort, prev, c.Name, true
+			if prev, exists := ports[f.LocalPort()]; exists {
+				return f.LocalPort(), prev, c.Name, true
 			}
-			ports[f.LocalPort] = c.Name
+			ports[f.LocalPort()] = c.Name
 		}
 	}
 	return 0, "", "", false
@@ -611,10 +760,10 @@ func (cfg *Config) Validate() error {
 		allLocalPorts := make(map[int]string)
 		for _, c := range cfg.Connections {
 			for _, f := range c.SSH.PortForward.Forwards {
-				if prevConn, exists := allLocalPorts[f.LocalPort]; exists {
-					return fmt.Errorf("conflict on local port %d: used by both connection %q and %q", f.LocalPort, prevConn, c.Name)
+				if prevConn, exists := allLocalPorts[f.LocalPort()]; exists {
+					return fmt.Errorf("conflict on local port %d: used by both connection %q and %q", f.LocalPort(), prevConn, c.Name)
 				}
-				allLocalPorts[f.LocalPort] = c.Name
+				allLocalPorts[f.LocalPort()] = c.Name
 			}
 		}
 		return nil
@@ -625,11 +774,11 @@ func (cfg *Config) Validate() error {
 		for _, c := range cfg.Connections {
 			if c.InGroup(group) {
 				for _, f := range c.SSH.PortForward.Forwards {
-					if prevConn, exists := localPorts[f.LocalPort]; exists {
+					if prevConn, exists := localPorts[f.LocalPort()]; exists {
 						return fmt.Errorf("group %q: conflict on local port %d between connection %q and %q",
-							group, f.LocalPort, prevConn, c.Name)
+							group, f.LocalPort(), prevConn, c.Name)
 					}
-					localPorts[f.LocalPort] = c.Name
+					localPorts[f.LocalPort()] = c.Name
 				}
 			}
 		}

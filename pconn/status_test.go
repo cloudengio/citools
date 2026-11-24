@@ -51,7 +51,7 @@ func testWaiterConfig(t *testing.T) ConnectionConfig {
 		SSH: &SSHConfig{
 			User:        "someone",
 			DialTimeout: 7 * time.Second,
-			PortForward: PortForwardConfig{Forwards: []ForwardConfig{{LocalPort: 8080, RemotePort: 80}}},
+			PortForward: PortForwardConfig{Forwards: []ForwardConfig{mustForward(t, "8080:80")}},
 		},
 	}
 	if err := conn.Validate(); err != nil {
