@@ -10,14 +10,13 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os/exec"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
 	"cloudeng.io/algo/ratecontrol"
 	"cloudeng.io/net/pssh"
+	"cloudeng.io/webapp"
 )
 
 // ViewCommand forwards a local port to a remote host running the orchestrator
@@ -35,20 +34,8 @@ type ViewFlags struct {
 	UnlimitedRetries  bool          `subcmd:"unlimited-retries,true,continue retrying SSH connection indefinitely"`
 }
 
-var openBrowserFn = openBrowser
-
-func openBrowser(targetURL string) error {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("open", targetURL)
-	case "windows":
-		cmd = exec.Command("cmd", "/c", "start", targetURL)
-	default:
-		cmd = exec.Command("xdg-open", targetURL)
-	}
-	return cmd.Start()
-}
+// openBrowserFn opens the forwarded web UI, and is replaced by the tests.
+var openBrowserFn = webapp.OpenLink
 
 type parsedTarget struct {
 	user       string

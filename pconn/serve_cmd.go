@@ -12,7 +12,12 @@ import (
 
 	"cloudeng.io/cmdutil/cmdconfig"
 	"cloudeng.io/logging/ctxlog"
+	"cloudeng.io/webapp"
 )
+
+// openBrowserFn opens the page that the command serves, and is replaced by the
+// tests so that running them opens nothing.
+var openBrowserFn = webapp.OpenLink
 
 // ServeCommand implements the 'serve' subcommand, which serves a page listing
 // the configured connections and starts and stops them as the page asks.
