@@ -354,3 +354,60 @@ connections:
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
+
+// TestSupervisorIndependentGroups covers two groups started together, one of
+// which cannot come up: the other is established regardless, and the one that
+// is failing can be stopped without disturbing it.
+func TestSupervisorIndependentGroups(t *testing.T) {
+	userPriv, userSigner := newTestKey(t)
+	_, hostSigner := newTestKey(t)
+	serveTestAgent(t, userPriv)
+	srv := newTestSSHServer(t, hostSigner, userSigner, "testuser")
+	echo := echoServer(t)
+	good, bad, dead := freePort(t), freePort(t), freePort(t)
+
+	sup, _ := newTestSupervisor(t, liveConfig(t, srv, knownHostsLine(srv, hostSigner.PublicKey()), fmt.Sprintf(`
+connections:
+  - name: up
+    host: $ADDR
+    ssh:
+      user: testuser
+      known_hosts: [$KNOWN]
+      port_forward:
+        groups: [good]
+        forwards: [%d:%d]
+  # Nothing listens here, so this one keeps on failing to connect.
+  - name: down
+    host: 127.0.0.1:%d
+    ssh:
+      user: testuser
+      known_hosts: [$KNOWN]
+      port_forward:
+        groups: [bad]
+        forwards: [%d:%d]
+`, good, echo, dead, bad, echo)))
+
+	if err := sup.Start("bad"); err != nil {
+		t.Fatal(err)
+	}
+	if err := sup.Start("good"); err != nil {
+		t.Fatalf("a group could not be started while another was failing: %v", err)
+	}
+	waitEstablished(t, sup, "good")
+	echoCheck(t, good, "while-the-other-fails")
+	if waiting, _ := sup.Established("bad"); waiting != "down" {
+		t.Errorf("got %q, want the failing group still waiting on down", waiting)
+	}
+
+	// Giving up on the failing group leaves the other alone.
+	if err := sup.Stop("bad"); err != nil {
+		t.Fatal(err)
+	}
+	if sup.Running("down") {
+		t.Error("the failing group was not stopped")
+	}
+	if !sup.Running("up") {
+		t.Fatal("stopping one group stopped the other")
+	}
+	echoCheck(t, good, "after-the-other-stopped")
+}

@@ -7,9 +7,15 @@ By default the file is `config.yaml` in `pconn`'s own configuration directory: `
 ## Example Configuration
 
 ```yaml
+# Where the logs go and what is in them. 'pconn serve' links to the log file
+# from the page it serves, and 'pconn tmux' logs to a temporary file of its own
+# when none is configured here, since it must not write to the terminal that
+# the tmux session has taken over.
 logging:
   level: 1 # 0=error, 1=warn, 2=info, 3=debug
   format: text # text or json
+  # file: /tmp/pconn.log # the default writes to stderr, and - to stdout
+  # temp_file: pconn-XXXXXX.log # a unique file instead; exclusive with file
 
 # Each connection has a name and exactly one block of fields specific to its
 # type, which is implied by the block. Only ssh is supported at present. For
@@ -106,11 +112,15 @@ connections:
 
 ### Top-Level Fields
 
-- `logging` *(optional)*: Configures logging level and format.
+- `logging` *(optional)*: Where the logs go and what is in them. It is `cmdutil.LoggingConfig`, so the same fields are available to every command, and each field is overridden by its `--log-*` flag when one is given.
   - `level`: Integer log level (`0` = error, `1` = warn, `2` = info, `3` = debug).
   - `format`: Output format, either `text` or `json`.
-  - `file`: Path to write log output (default writes to stderr; `-` writes to stdout).
+  - `file`: Path to write the log to. The default writes to stderr, and `-` writes to stdout.
+  - `temp_file`: An mktemp pattern, e.g. `pconn-XXXXXX.log`, from which a unique file is created in the temporary directory, or in the directory the pattern names, which is created if needed. Mutually exclusive with `file`.
+  - `source_code`: Include the source file and line of each log call.
 - `connections`: List of connection definitions. At least one connection must be specified.
+
+A log file is worth configuring for `pconn serve`, which [links to it](#the-connection-list) from the page it serves, and for `pconn tmux`, which must not write to the terminal that the tmux session has taken over and so logs to a temporary file when neither field is set.
 
 ### Connection Fields
 
@@ -219,11 +229,17 @@ pconn serve --no-browser         # serve it, but open nothing
 
 The page is opened in the browser once it is being served, since reaching it is the point of the command; `--no-browser` is for a `pconn serve` that a service runs rather than a person. A browser that cannot be opened is not a failure: the page is still served, and the address is logged.
 
-Clicking a group starts every connection in it; clicking a single connection starts that one. Once they are established — which the page waits for, since a port that is not forwarded yet refuses connections — a browser tab is opened for each of the group's web forwards, at the [`url`](#port-forwarding-fields) of each. A connection that is running can be stopped from the page, which releases its local ports.
+Clicking a group starts every connection in it; clicking a single connection starts that one.
+
+Each start and stop runs independently of the others, so one group can be started, used or stopped while another is still being started, or is failing to come up. The only requests that are refused are those that would act on a connection that another request is already starting or stopping: a connection that belongs to a group which is being started or stopped cannot be started or stopped on its own until that has finished, and nor can a group while one of its connections is. Stopping a group, or a connection, while it is being started is allowed, and cancels the start; it is how a group that is failing to come up is given up on. Each operation reports on a line of its own, so the reports of operations that run at the same time do not overwrite each other, and the page brings itself up to date in place rather than by reloading, which would end any operation that was in progress. Once they are established — which the page waits for, since a port that is not forwarded yet refuses connections — a browser tab is opened for each of the group's web forwards, at the [`url`](#port-forwarding-fields) of each. A connection that is running can be stopped from the page, which releases its local ports.
+
+The page header links to the log, when `logging` names a file, and says that the logs are going to the terminal when it does not; the log is never opened by itself. The log view follows the end of the file, bringing itself up to date every two seconds, so it shows what happens next rather than only what had happened when it was opened; it shows the last 256KB and links to the plain text of that. Both are served by `pconn` itself rather than being a `file://` link, which a browser will not follow from a page served over http.
+
+The tabs that starting a group opens, one for each of its web forwards, are left in the background and the focus is given back to the list of connections, which is where the next thing is done from. Whether a browser honours that is its own decision rather than the page's, as is whether it allows the tabs at all.
 
 For each connection the page shows who it connects as, the proxy host it is reached through if any, each local port and what answers on it, and its state: `stopped`, `starting`, `connecting`, `reconnecting`, `up`, or `failed` with the reason. Each forwarded port is also a link, so a tab can be opened by hand at any time.
 
-The tabs are opened by the page, in the browser the click happened in, which means a browser may ask once to allow pop-ups for the page. One that refuses them changes nothing else: the ports are still forwarded, and the links in the table open the same pages.
+Nothing is opened while a group is being started: its pages are opened, at their own urls, only once its connections are up. They are opened by the page, in the browser the click happened in, which means a browser may ask once to allow pop-ups for the page. One that refuses them changes nothing else: the ports are still forwarded, and the links in the table open the same pages.
 
 The groups and connections a command line names are brought up at startup, as `pconn connect` would, and the rest wait to be started from the page. A connection whose local port is already forwarded by one that is running is refused with the name of the connection that has it, rather than failing once it has been started.
 

@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -13,6 +14,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -81,7 +84,7 @@ func newWebServer(t *testing.T, spec string) (*webServer, map[string]*connRunner
 func get(t *testing.T, s *webServer, path string) (int, string) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	s.handle(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	s.handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 	return rec.Code, rec.Body.String()
 }
 
@@ -348,5 +351,133 @@ func TestWebBrowseURL(t *testing.T) {
 			t.Errorf("%v: got %v, want %v", tc.addr, got, want)
 		}
 		srv.close()
+	}
+}
+
+// TestWebLogFile covers the link to the log: it is served by the page's own
+// server, since a browser will not follow a file:// link from a page it was
+// served over http, and it says so when there is no file to link to.
+func TestWebLogFile(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "pconn.log")
+	const logLine = "time=2026-11-24T09:00:00.000-08:00 level=INFO msg=\"connection established\""
+	if err := os.WriteFile(logPath, []byte(logLine+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	s, _ := newWebServer(t, webTestConfig)
+	s.logFile = logPath
+
+	_, body := get(t, s, "/")
+	for _, want := range []string{
+		`href="/log"`,
+		// The name is the link, the path is what it says on hover: the path
+		// is what a person needs in order to tail it themselves.
+		">pconn.log</a>",
+		`title="` + logPath + `"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the page does not contain %q:\n%v", want, body)
+		}
+	}
+
+	// The log view shows the log and follows the end of it, so that it says
+	// what happens next and not only what had happened when it was opened.
+	code, view := get(t, s, "/log")
+	if code != http.StatusOK {
+		t.Fatalf("got %v: %v", code, view)
+	}
+	for _, want := range []string{
+		"<title>pconn log</title>", ">pconn.log</h1>", logPath,
+		`href="/log/raw"`, `data-raw="/log/raw"`, "the last 256KB", "setInterval(refresh",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the log view does not contain %q", want)
+		}
+	}
+
+	// Its text is served separately, to be read in the browser rather than
+	// downloaded.
+	rec := httptest.NewRecorder()
+	s.handleLogRaw(rec, httptest.NewRequest(http.MethodGet, webLogRawPath, nil))
+	if got, want := rec.Code, http.StatusOK; got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if got, want := rec.Header().Get("Content-Type"), "text/plain; charset=utf-8"; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if !strings.Contains(rec.Body.String(), logLine) {
+		t.Errorf("got %q, want the contents of the log", rec.Body.String())
+	}
+
+	// The log is linked to rather than opened: nothing on the page opens it.
+	if strings.Contains(body, "pconn-log") || strings.Contains(body, "openLog") {
+		t.Error("the page opens the log by itself")
+	}
+
+	// With the logs going to the terminal there is nothing to link to, and
+	// the page says that rather than offering a link that cannot work.
+	s.logFile = ""
+	_, body = get(t, s, "/")
+	if strings.Contains(body, `href="/log"`) {
+		t.Error("the page links to a log file that there is none of")
+	}
+	if !strings.Contains(body, "logging to the terminal") {
+		t.Errorf("the page does not say where the logs go:\n%v", body)
+	}
+	for _, path := range []string{"/log", webLogRawPath} {
+		code, body := get(t, s, path)
+		if code != http.StatusNotFound {
+			t.Errorf("%v: got %v, want %v", path, code, http.StatusNotFound)
+		}
+		if !strings.Contains(body, "logging to the terminal") {
+			t.Errorf("%v: got %q, want an answer that says how to configure a log file", path, body)
+		}
+	}
+}
+
+// TestWebLogTail covers the end of a log that is larger than the page fetches:
+// a log of any size is bounded to the last part of it, which starts at a line
+// boundary rather than part way through one.
+func TestWebLogTail(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "big.log")
+	var buf bytes.Buffer
+	for i := 0; buf.Len() <= webLogTail*2; i++ {
+		fmt.Fprintf(&buf, "line %d: %s\n", i, strings.Repeat("x", 80))
+	}
+	if err := os.WriteFile(logPath, buf.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var tail bytes.Buffer
+	if err := writeLogTail(&tail, logPath); err != nil {
+		t.Fatal(err)
+	}
+	if tail.Len() > webLogTail {
+		t.Errorf("got %v bytes, want no more than %v", tail.Len(), webLogTail)
+	}
+	if !strings.HasPrefix(tail.String(), "line ") {
+		t.Errorf("the tail starts part way through a line: %q", tail.String()[:40])
+	}
+	// The end of the log is what it is for.
+	if !strings.HasSuffix(tail.String(), buf.String()[buf.Len()-200:]) {
+		t.Error("the tail does not end with the end of the log")
+	}
+
+	// A log smaller than the limit is served whole.
+	small := filepath.Join(t.TempDir(), "small.log")
+	if err := os.WriteFile(small, []byte("one\ntwo\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	tail.Reset()
+	if err := writeLogTail(&tail, small); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := tail.String(), "one\ntwo\n"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+
+	// A log that cannot be read is reported rather than served as empty.
+	if err := writeLogTail(&tail, filepath.Join(t.TempDir(), "nosuch.log")); err == nil {
+		t.Error("expected a missing log to be reported")
 	}
 }

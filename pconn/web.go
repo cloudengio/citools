@@ -5,16 +5,20 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -26,13 +30,15 @@ import (
 // refers to nothing outside itself, so that a running pconn needs no files
 // alongside the binary and no network of its own to render it.
 //
-//go:embed index.html
+//go:embed index.html log.html
 var webAssets embed.FS
 
 var webPage = template.Must(template.New("index.html").Funcs(template.FuncMap{
 	"dict": webDict,
 	"urls": webURLList,
-}).ParseFS(webAssets, "index.html"))
+	"json": webJSON,
+	"list": webList,
+}).ParseFS(webAssets, "index.html", "log.html"))
 
 // webDict builds the value for a part of the page that needs more than one,
 // which the table of connections does: the connections to list, and whether
@@ -47,6 +53,19 @@ func webDict(pairs ...any) map[string]any {
 		out[key] = pairs[i+1]
 	}
 	return out
+}
+
+// webJSON encodes v for an attribute that the script decodes, which is how a
+// list whose items may hold any character, such as the names of connections,
+// gets there intact.
+func webJSON(v any) (string, error) {
+	b, err := json.Marshal(v)
+	return string(b), err
+}
+
+// webList makes a list of its arguments, for webJSON.
+func webList(items ...string) []string {
+	return items
 }
 
 // webURLList joins the URLs of a group or connection for the attribute that
@@ -83,7 +102,27 @@ type webServer struct {
 	src      pageSource
 	listener net.Listener
 	logger   *slog.Logger
+	// logFile is the file that this pconn is logging to, which the page links
+	// to; it is empty when the logs go to the terminal, see logFilePath.
+	logFile string
 }
+
+const (
+	// webLogPath is where the log is shown, and webLogRawPath where its text
+	// is served. Both are served by the page's own server rather than being a
+	// file:// link, which a browser will not follow from a page it was served
+	// over http.
+	webLogPath    = "/log"
+	webLogRawPath = "/log/raw"
+	// webLogTail is how much of the end of the log is served, which bounds
+	// what a page that refreshes itself has to fetch each time. The whole file
+	// is on disk, at the path the log view names.
+	webLogTail = 256 << 10
+	// webLogRefresh is how often the log view brings itself up to date, which
+	// is more often than the list of connections: it is open because something
+	// is being watched.
+	webLogRefresh = 2 * time.Second
+)
 
 // listenWeb binds addr, so that an address that cannot be used is reported
 // before any connection is made, as a port forward that cannot be bound is.
@@ -176,14 +215,8 @@ func (s *webServer) controller() (pageController, bool) {
 // is a convenience, and losing it is no reason to stop maintaining the
 // connections it describes.
 func (s *webServer) serve(ctx context.Context) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", s.handle)
-	mux.HandleFunc("/api/state", s.handleState)
-	mux.HandleFunc("/api/established", s.handleEstablished)
-	mux.HandleFunc("/api/start", s.handleStart)
-	mux.HandleFunc("/api/stop", s.handleStop)
 	srv := &http.Server{
-		Handler: mux,
+		Handler: s.handler(),
 		// The page is read-only and served to this host, but a header that
 		// never arrives would hold a connection open indefinitely.
 		ReadHeaderTimeout: 5 * time.Second,
@@ -201,6 +234,19 @@ func (s *webServer) serve(ctx context.Context) {
 	_ = srv.Shutdown(shutdownCtx) // Close below ends anything it did not.
 	_ = srv.Close()
 	<-done
+}
+
+// handler serves the page and everything it fetches.
+func (s *webServer) handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", s.handle)
+	mux.HandleFunc(webLogPath, s.handleLog)
+	mux.HandleFunc(webLogRawPath, s.handleLogRaw)
+	mux.HandleFunc("/api/state", s.handleState)
+	mux.HandleFunc("/api/established", s.handleEstablished)
+	mux.HandleFunc("/api/start", s.handleStart)
+	mux.HandleFunc("/api/stop", s.handleStop)
+	return mux
 }
 
 func (s *webServer) handle(w http.ResponseWriter, r *http.Request) {
@@ -221,6 +267,81 @@ func (s *webServer) handle(w http.ResponseWriter, r *http.Request) {
 	if _, err := buf.WriteTo(w); err != nil {
 		s.logger.Error("could not write the connection list", "err", err)
 	}
+}
+
+// noLogFile says that there is no log to show and how to configure one, which
+// is the answer to both of the log requests when the logs go to the terminal.
+const noLogFile = "pconn is logging to the terminal rather than to a file: set file or temp_file in the logging section of the configuration, or --log-file"
+
+// handleLog shows the log that this pconn is writing, so that the reason a
+// connection will not come up can be watched from the page that said so. It
+// follows the end of the log rather than serving it once, which is what makes
+// it worth opening while a connection is being established.
+func (s *webServer) handleLog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.logFile == "" {
+		http.Error(w, noLogFile, http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	if err := webPage.ExecuteTemplate(w, "log.html", s.page()); err != nil {
+		s.logger.Error("could not render the log", "err", err)
+	}
+}
+
+// handleLogRaw serves the end of the log as text. The path is the one the
+// logger is writing to and never comes from the request, so there is nothing
+// else this can serve.
+func (s *webServer) handleLogRaw(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.logFile == "" {
+		http.Error(w, noLogFile, http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	if err := writeLogTail(w, s.logFile); err != nil {
+		// The log is the thing that would otherwise say why, so this has to
+		// be answered as well as logged.
+		s.logger.Error("could not read the log", "file", s.logFile, "err", err)
+		http.Error(w, "could not read "+s.logFile+": "+err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// writeLogTail writes the last webLogTail bytes of the log to w, starting at a
+// line boundary so that a truncated first line is not shown as if it were one.
+func writeLogTail(w io.Writer, path string) error {
+	f, err := os.Open(path) //nolint:gosec // The path is the logger's own, not the request's.
+	if err != nil {
+		return err
+	}
+	defer f.Close() //nolint:errcheck // Read only.
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if info.Size() <= webLogTail {
+		_, err = io.Copy(w, f)
+		return err
+	}
+	if _, err := f.Seek(-webLogTail, io.SeekEnd); err != nil {
+		return err
+	}
+	br := bufio.NewReader(f)
+	// The first line starts before the point this seeked to, so it is partial
+	// and is dropped rather than shown as a line of its own.
+	if _, err := br.ReadString('\n'); err != nil && err != io.EOF {
+		return err
+	}
+	_, err = io.Copy(w, br)
+	return err
 }
 
 // handleState answers with the state the page shows, which it fetches to bring
@@ -337,6 +458,14 @@ func (s *webServer) page() webPageData {
 	data.RefreshSecs = int(webRefresh.Seconds())
 	data.Generated = time.Now().Format("15:04:05")
 	_, data.Interactive = s.controller()
+	if s.logFile != "" {
+		data.LogFile = s.logFile
+		data.LogName = filepath.Base(s.logFile)
+		data.LogURL = webLogPath
+		data.LogRawURL = webLogRawPath
+		data.LogTailKB = webLogTail >> 10
+		data.LogRefreshSecs = int(webLogRefresh.Seconds())
+	}
 	return data
 }
 
@@ -370,11 +499,26 @@ type webGroup struct {
 	Conns   []webConn
 	Running int
 	URLs    []string
+	// Members names the connections of the group, which is what the script
+	// compares to decide whether two starts or stops can run at once.
+	Members []string
 }
 
 // webPageData is what the page is rendered from.
 type webPageData struct {
 	Interactive bool
+	// LogFile is the file this pconn is logging to, LogName its base name and
+	// LogURL where the page serves it; all three are empty when the logs go
+	// to the terminal and so there is nothing to link to.
+	LogFile string
+	LogName string
+	LogURL  string
+	// LogRawURL is where the log view fetches the text from, and the other
+	// two are what it says about what it shows.
+	LogRawURL      string
+	LogTailKB      int
+	LogRefreshSecs int
+
 	Groups      []webGroup
 	Ungrouped   []webConn
 	Total       int
@@ -416,6 +560,7 @@ func webGrouped(entries []webEntry) (groups []webGroup, ungrouped []webConn, tot
 	for _, name := range names {
 		g := webGroup{Name: name, Conns: byGroup[name]}
 		for _, c := range g.Conns {
+			g.Members = append(g.Members, c.Name)
 			if c.Running {
 				g.Running++
 			}

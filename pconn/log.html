@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pconn log</title>
+{{template "style" .}}
+<style>
+  .logmeta { display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap; margin-bottom: .75rem; }
+  .logmeta h1 { margin: 0; }
+  #log {
+    margin: 0; padding: .75rem;
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap; word-break: break-word;
+    max-height: 80vh; overflow-y: auto;
+  }
+  .empty { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+<div class="logmeta">
+  <h1>{{.LogName}}</h1>
+  <span class="sub" title="{{.LogFile}}">{{.LogFile}}</span>
+</div>
+<p class="sub">
+  the last {{.LogTailKB}}KB, brought up to date every {{.LogRefreshSecs}}s
+  &middot; <a href="{{.LogRawURL}}">plain text</a>
+  &middot; <a href="/">connections</a>
+</p>
+<pre id="log" class="empty" data-raw="{{.LogRawURL}}">loading&hellip;</pre>
+</main>
+<script>
+(function () {
+  "use strict";
+  const pre = document.getElementById("log");
+  const raw = pre.dataset.raw;
+
+  async function refresh() {
+    try {
+      const resp = await fetch(raw, { headers: { "X-Pconn": "1" } });
+      const text = await resp.text();
+      if (!resp.ok) {
+        pre.textContent = text || resp.statusText;
+        return;
+      }
+      // Only when it has changed, so that a selection in the log is not
+      // cleared by every refresh.
+      if (pre.textContent !== text) {
+        // Follow the end of the log unless the reader has scrolled up to
+        // look at something, which following would snatch away.
+        const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 24;
+        pre.classList.toggle("empty", text === "");
+        pre.textContent = text === "" ? "the log is empty" : text;
+        if (atEnd) {
+          pre.scrollTop = pre.scrollHeight;
+        }
+      }
+    } catch (err) {
+      pre.textContent = "could not read the log: " + err.message;
+    }
+  }
+
+  refresh();
+  setInterval(refresh, {{.LogRefreshSecs}} * 1000);
+})();
+</script>
+</body>
+</html>

@@ -415,6 +415,7 @@ func maintainConnections(
 		if web, err = listenWeb(cf.HTTP, fixedConns(runners), logger); err != nil {
 			return err
 		}
+		web.logFile = logFilePath
 		if err := web.checkForwardPorts(cfg); err != nil {
 			web.close()
 			return err
