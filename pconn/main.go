@@ -141,11 +141,22 @@ func searchPath(explicit bool) string {
 	return cmdconfig.SearchPathUserDirs(appDir)
 }
 
+// logFilePath is the file that the logger created by the pre-hooks writes to,
+// and is empty when the logs go to the terminal. The page served by 'pconn
+// serve' links to it, and 'pconn tmux' says where it is, since a tmux session
+// takes over the terminal that the logs would otherwise have gone to.
+var logFilePath string
+
 // loggerPrehook creates the logger from the configuration, as overridden by the
 // command line flags.
 var loggerPrehook = subcmd.LoggerHook("withLoggerPrehook", func(ctx context.Context, fs *flag.FlagSet) (*cmdutil.Logger, error) {
 	cfg, _ := cmdutil.ContextValue[Config](ctx)
-	return cfg.Logging.WithFlagOverrides(fs, globalFlags.LoggingFlags).NewLogger()
+	logger, err := cfg.Logging.WithFlagOverrides(fs, globalFlags.LoggingFlags).NewLogger()
+	if err != nil {
+		return nil, err
+	}
+	logFilePath = logger.Path()
+	return logger, nil
 })
 
 // loadConfigPrehook loads the configuration, rejecting unknown fields, and adds

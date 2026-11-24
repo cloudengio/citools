@@ -8,9 +8,15 @@
 # This file is also the fixture used by the tests, so that the example cannot
 # drift from what pconn actually accepts.
 
+# Where the logs go and what is in them. 'pconn serve' links to the log file
+# from the page it serves, and 'pconn tmux' logs to a temporary file of its own
+# when none is configured here, since it must not write to the terminal that
+# the tmux session has taken over.
 logging:
   level: 1 # 0=error, 1=warn, 2=info, 3=debug
   format: text # text or json
+  # file: /tmp/pconn.log # the default writes to stderr, and - to stdout
+  # temp_file: pconn-XXXXXX.log # a unique file instead; exclusive with file
 
 # Each connection has a name and exactly one block of fields specific to its
 # type, which is implied by the block. Only ssh is supported at present. For

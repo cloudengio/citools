@@ -392,3 +392,35 @@ func TestServeNoBrowser(t *testing.T) {
 		t.Errorf("the page is still served: got %v", code)
 	}
 }
+
+// TestServeLinksToLog covers the page linking to the log file that the
+// logging section of the configuration names, and serving it: why a
+// connection cannot be established is in the log, and the page is where that
+// is noticed.
+func TestServeLinksToLog(t *testing.T) {
+	f := startServe(t)
+
+	_, body := f.get(t, "/")
+	for _, want := range []string{`href="/log"`, ">pconn.log</a>", `title="` + f.logPath + `"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the page does not contain %q", want)
+		}
+	}
+
+	code, view := f.get(t, "/log")
+	if code != http.StatusOK {
+		t.Fatalf("got %v: %v", code, view)
+	}
+	if !strings.Contains(view, `href="/log/raw"`) {
+		t.Errorf("the log view does not link to its text:\n%v", view)
+	}
+
+	code, log := f.get(t, "/log/raw")
+	if code != http.StatusOK {
+		t.Fatalf("got %v: %v", code, log)
+	}
+	// The log of this run, which is what makes the link worth following.
+	if !strings.Contains(log, "serving the list of connections") {
+		t.Errorf("got %q, want the log of this run", log)
+	}
+}

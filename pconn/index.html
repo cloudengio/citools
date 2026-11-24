@@ -1,10 +1,4 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-{{if not .Interactive}}<meta http-equiv="refresh" content="{{.RefreshSecs}}">{{end}}
-<title>pconn connections</title>
+{{define "style"}}
 <style>
   :root {
     color-scheme: light dark;
@@ -20,6 +14,8 @@
     --accent: #2b4d7e;
     --btn: #2b4d7e;
     --btn-fg: #ffffff;
+    --btn-hover: #1d3659;
+    --ghost-hover: #e8edf5;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -35,6 +31,8 @@
       --accent: #8fb3e8;
       --btn: #3a5f96;
       --btn-fg: #f3f6fb;
+      --btn-hover: #4d77b8;
+      --ghost-hover: #263040;
     }
   }
   * { box-sizing: border-box; }
@@ -65,8 +63,24 @@
     font: inherit; font-size: .8rem; padding: .25rem .7rem; border-radius: 5px;
     border: 1px solid var(--btn); background: var(--btn); color: var(--btn-fg); cursor: pointer;
   }
+  button {
+    transition: background-color .12s ease, border-color .12s ease, box-shadow .12s ease;
+  }
   button.ghost { background: transparent; color: var(--accent); border-color: var(--line); }
+  /* Hover says that the button is the thing under the pointer and can be
+     clicked; pressing it moves it, so that the click is seen to have landed. */
+  button:hover:not(:disabled) {
+    background: var(--btn-hover); border-color: var(--btn-hover);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .25);
+  }
+  button.ghost:hover:not(:disabled) {
+    background: var(--ghost-hover); border-color: var(--accent); box-shadow: none;
+  }
+  button:active:not(:disabled) { transform: translateY(1px); box-shadow: none; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   button:disabled { opacity: .55; cursor: progress; }
+  /* The forwarded ports are links too. */
+  a:hover code { background: var(--ghost-hover); }
   table { width: 100%; border-collapse: collapse; }
   thead th {
     text-align: left; font-size: .72rem; text-transform: uppercase; letter-spacing: .06em;
@@ -90,11 +104,11 @@
   .s-stopped { color: var(--muted); }
   .none { color: var(--muted); }
   .detail { display: block; margin-top: .2rem; max-width: 24rem; }
-  #message {
-    margin: 1rem 0 0; padding: .6rem .75rem; border-radius: 6px;
+  #messages p {
+    margin: .5rem 0 0; padding: .5rem .75rem; border-radius: 6px;
     border: 1px solid var(--line); background: var(--card); font-size: .9rem;
   }
-  #message.bad { border-color: var(--bad); color: var(--bad); }
+  #messages p.bad { border-color: var(--bad); color: var(--bad); }
   [hidden] { display: none !important; }
   @media (max-width: 40rem) {
     thead { display: none; }
@@ -103,19 +117,34 @@
     .detail { max-width: none; }
   }
 </style>
+{{end}}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{{if not .Interactive}}<meta http-equiv="refresh" content="{{.RefreshSecs}}">{{end}}
+<title>pconn connections</title>
+{{template "style" .}}
 </head>
 <body>
 <main>
 <header>
   <h1>pconn connections</h1>
-  <p class="sub">
+  <p class="sub" id="summary">
     {{.Up}} of {{.Total}} established
     {{if .Interactive}}&middot; click a group or a connection to start it and open its pages{{end}}
     &middot; <span id="generated">{{.Generated}}</span>
+    &middot;
+    {{if .LogURL}}
+      <a href="{{.LogURL}}" target="_blank" rel="noopener" title="{{.LogFile}}">{{.LogName}}</a>
+    {{else}}
+      logging to the terminal
+    {{end}}
   </p>
 </header>
 
-<p id="message" hidden></p>
+<div id="messages"></div>
 
 {{define "conns"}}
 <table>
@@ -153,9 +182,9 @@
       {{if $.Interactive}}
       <td>
         {{if .Running}}
-          <button class="ghost" data-stop="{{.Name}}">stop</button>
+          <button class="ghost" data-stop="{{.Name}}" data-members="{{json (list .Name)}}">stop</button>
         {{else}}
-          <button data-start="{{.Name}}" data-open="{{urls .URLs}}">start</button>
+          <button data-start="{{.Name}}" data-open="{{urls .URLs}}" data-members="{{json (list .Name)}}">start</button>
         {{end}}
       </td>
       {{end}}
@@ -165,6 +194,7 @@
 </table>
 {{end}}
 
+<div id="conns">
 {{$page := .}}
 {{range .Groups}}
 <section class="group">
@@ -173,8 +203,8 @@
     <span class="count">{{.Running}} of {{len .Conns}} running</span>
     {{if $page.Interactive}}
     <span class="controls">
-      <button data-start="{{.Name}}" data-open="{{urls .URLs}}">start group</button>
-      <button class="ghost" data-stop="{{.Name}}">stop</button>
+      <button data-start="{{.Name}}" data-open="{{urls .URLs}}" data-members="{{json .Members}}">start group</button>
+      <button class="ghost" data-stop="{{.Name}}" data-members="{{json .Members}}">stop</button>
     </span>
     {{end}}
   </h2>
@@ -192,38 +222,98 @@
 {{if and (not .Groups) (not .Ungrouped)}}
 <p class="sub">No connections are configured.</p>
 {{end}}
+</div>
 </main>
 
 {{if .Interactive}}
 <script>
 (function () {
   "use strict";
-  const message = document.getElementById("message");
-  let busy = false;
+  const messages = document.getElementById("messages");
 
-  function say(text, bad) {
-    message.textContent = text;
-    message.classList.toggle("bad", !!bad);
-    message.hidden = !text;
+  // ops are the starts and stops in progress, by the group or connection they
+  // were asked for. Each runs independently of the others, and only a request
+  // for a connection that one of them is already starting or stopping is
+  // refused: a member of a group cannot be started or stopped on its own
+  // while the group is, nor a group while one of its members is. Stopping the
+  // very thing that is being started is the exception, and cancels the start.
+  const ops = new Map();
+
+  class Cancelled extends Error {}
+
+  // say reports on the operation for target, one line per target so that the
+  // reports of operations that run at the same time do not overwrite each
+  // other.
+  function say(target, text, bad) {
+    let line = messages.querySelector("p[data-target='" + CSS.escape(target) + "']");
+    if (!line) {
+      line = document.createElement("p");
+      line.dataset.target = target;
+      messages.appendChild(line);
+    }
+    line.textContent = text;
+    line.classList.toggle("bad", !!bad);
   }
 
-  // The tabs are opened here, during the click, because a browser only allows
-  // it then: they are opened empty and pointed at their pages once the
-  // connection is up. A browser that blocks them leaves the links in the
-  // table, which open the same pages.
-  function openBlank(urls) {
+  function membersOf(button) {
+    try {
+      return JSON.parse(button.dataset.members || "[]");
+    } catch (e) {
+      return [];
+    }
+  }
+
+  // conflict returns the operation in progress that shares a connection with
+  // members, if there is one.
+  function conflict(members) {
+    for (const [target, op] of ops) {
+      if (members.some((m) => op.members.has(m))) {
+        return [target, op];
+      }
+    }
+    return [null, null];
+  }
+
+  // markBusy disables the buttons that would be refused, which is everything
+  // that shares a connection with an operation in progress other than the
+  // stop that cancels a start; it is applied again after every refresh, since
+  // a refresh replaces the buttons.
+  function markBusy() {
+    for (const button of document.querySelectorAll("button[data-start], button[data-stop]")) {
+      const target = button.dataset.start !== undefined ? button.dataset.start : button.dataset.stop;
+      const own = ops.get(target);
+      const cancels = button.dataset.stop !== undefined && own && own.kind === "start";
+      const [busy] = conflict(membersOf(button));
+      button.disabled = busy !== null && !cancels;
+    }
+  }
+
+  // The tabs that are opened are left in the background: starting a group is
+  // done from this page, and watching it come up happens here, so taking the
+  // focus away from it would be taking it away from the thing being used.
+  // Whether it can be given back is the browser's decision, not this page's.
+  function keepFocus(tabs) {
+    for (const tab of tabs) {
+      try {
+        tab.blur();
+      } catch (e) { /* Not every browser allows it. */ }
+    }
+    try {
+      window.focus();
+    } catch (e) { /* As above. */ }
+  }
+
+  // The pages of a group are opened once its connections are up, at their
+  // own urls, and not before: nothing is opened while it is being started. A
+  // browser that blocks them leaves the links in the table, which open the
+  // same pages.
+  function openPages(urls) {
     const tabs = [];
     for (const url of urls) {
-      const tab = window.open("", "_blank");
+      const tab = window.open(url, "_blank");
       if (!tab) {
-        tabs.forEach((t) => t.close());
         return null;
       }
-      try {
-        tab.document.write("<title>starting…</title><p style='font:15px system-ui;padding:2rem'>" +
-          "waiting for pconn to establish the connection…");
-        tab.document.close();
-      } catch (e) { /* about:blank is enough on its own. */ }
       tabs.push(tab);
     }
     return tabs;
@@ -243,11 +333,18 @@
   }
 
   // established resolves once every connection of the target is up, and
-  // rejects with the reason when one of them cannot be.
-  function established(target, deadline) {
+  // rejects with the reason when one of them cannot be, or with Cancelled when
+  // the start has been cancelled by a stop.
+  function established(target, op, deadline) {
+    if (op.cancelled) {
+      return Promise.reject(new Cancelled());
+    }
     return fetch("/api/established?target=" + encodeURIComponent(target), {
       headers: { "X-Pconn": "1" },
     }).then((resp) => resp.json()).then((state) => {
+      if (op.cancelled) {
+        throw new Cancelled();
+      }
       if (state.ready) {
         return true;
       }
@@ -257,78 +354,139 @@
           : "timed out waiting for " + (state.waiting || target));
       }
       if (state.error) {
-        say("waiting for " + state.waiting + ": " + state.error);
+        say(target, "waiting for " + state.waiting + ": " + state.error);
       }
       return new Promise((resolve) => setTimeout(resolve, 500))
-        .then(() => established(target, deadline));
+        .then(() => established(target, op, deadline));
     });
   }
 
-  async function start(target, urls, button) {
-    const tabs = urls.length ? openBlank(urls) : [];
-    if (urls.length && !tabs) {
-      say("the browser blocked the new tabs: allow pop-ups for this page, or use the links in the table", true);
-    }
-    busy = true;
-    button.disabled = true;
-    say("starting " + target + "…");
+  async function start(target, op, urls) {
+    say(target, "starting " + target + "…");
     try {
-      await post("/api/start", target);
-      await established(target, Date.now() + 120000);
-      if (tabs) {
-        tabs.forEach((tab, i) => { tab.location = urls[i]; });
+      // Kept, so that a stop which cancels this start can wait for the start
+      // to have reached the server and not be overtaken by it.
+      op.posted = post("/api/start", target);
+      await op.posted;
+      refresh();
+      await established(target, op, Date.now() + 120000);
+      const tabs = urls.length ? openPages(urls) : [];
+      if (!tabs) {
+        say(target, target + " is up, but the browser blocked its pages: allow pop-ups for this page, or use the links in the table", true);
+        return;
       }
-      say(target + " is up");
+      keepFocus(tabs);
+      say(target, target + " is up");
     } catch (err) {
-      if (tabs) {
-        tabs.forEach((tab) => tab.close());
+      if (err instanceof Cancelled) {
+        return; // The stop that cancelled it says what happened.
       }
-      say("could not start " + target + ": " + err.message, true);
-    } finally {
-      busy = false;
-      button.disabled = false;
-      location.reload();
+      say(target, "could not start " + target + ": " + err.message, true);
     }
   }
 
-  async function stop(target, button) {
-    busy = true;
-    button.disabled = true;
-    say("stopping " + target + "…");
+  async function stop(target) {
+    say(target, "stopping " + target + "…");
     try {
       await post("/api/stop", target);
-      say(target + " is stopped");
+      say(target, target + " is stopped");
     } catch (err) {
-      say("could not stop " + target + ": " + err.message, true);
-    } finally {
-      busy = false;
-      button.disabled = false;
-      location.reload();
+      say(target, "could not stop " + target + ": " + err.message, true);
     }
+  }
+
+  // run runs one operation, recording it for as long as it is in progress.
+  function run(kind, target, members, fn) {
+    const op = { kind, members: new Set(members), cancelled: false };
+    ops.set(target, op);
+    markBusy();
+    // Either is async, so an error that neither of them handles would
+    // otherwise be a rejected promise that nobody sees: a button that does
+    // nothing at all, with no hint as to why.
+    fn(op)
+      .catch((err) => say(target, "could not " + kind + " " + target + ": " +
+        (err && err.message ? err.message : err), true))
+      .finally(() => {
+        if (ops.get(target) === op) {
+          ops.delete(target);
+        }
+        refresh();
+      });
   }
 
   document.addEventListener("click", (event) => {
     const button = event.target.closest("button");
-    if (!button || busy) {
+    if (!button || button.disabled) {
       return;
     }
+    const members = membersOf(button);
     if (button.dataset.start !== undefined) {
+      const target = button.dataset.start;
+      const [busy, op] = conflict(members);
+      if (busy !== null) {
+        say(target, "cannot start " + target + " while " + busy + " is being " +
+          (op.kind === "start" ? "started" : "stopped"), true);
+        return;
+      }
       const urls = (button.dataset.open || "").split(/\s+/).filter(Boolean);
-      start(button.dataset.start, urls, button);
+      run("start", target, members, (op) => start(target, op, urls));
       return;
     }
     if (button.dataset.stop !== undefined) {
-      stop(button.dataset.stop, button);
+      const target = button.dataset.stop;
+      const own = ops.get(target);
+      if (own && own.kind === "start") {
+        // Stopping what is being started cancels the start, which is how a
+        // group that is failing to come up is given up on.
+        own.cancelled = true;
+        say(target, "cancelling the start of " + target + "…");
+        // After the start has reached the server, so that the stop is not
+        // overtaken by it and the group left running.
+        const started = own.posted || Promise.resolve();
+        run("stop", target, members, () => started.catch(() => {}).then(() => stop(target)));
+        return;
+      } else {
+        const [busy, op] = conflict(members);
+        if (busy !== null) {
+          say(target, "cannot stop " + target + " while " + busy + " is being " +
+            (op.kind === "start" ? "started" : "stopped"), true);
+          return;
+        }
+      }
+      run("stop", target, members, () => stop(target));
     }
   });
 
-  // Brought up to date on a timer, as the read-only page is by a meta
-  // refresh, but never whilst a connection is being started or stopped.
-  setInterval(() => {
-    if (!busy) {
-      location.reload();
+  // refresh brings the list of connections up to date in place, rather than
+  // by reloading the page, which would end every operation in progress.
+  let refreshing = false;
+  async function refresh() {
+    if (refreshing) {
+      return;
     }
-  }, {{.RefreshSecs}} * 1000);
+    refreshing = true;
+    try {
+      const resp = await fetch("/", { headers: { "X-Pconn": "1" } });
+      if (!resp.ok) {
+        return;
+      }
+      const doc = new DOMParser().parseFromString(await resp.text(), "text/html");
+      for (const id of ["summary", "conns"]) {
+        const fresh = doc.getElementById(id);
+        const here = document.getElementById(id);
+        if (fresh && here) {
+          here.innerHTML = fresh.innerHTML;
+        }
+      }
+      markBusy();
+    } catch (e) {
+      // The next refresh will try again.
+    } finally {
+      refreshing = false;
+    }
+  }
+
+  setInterval(refresh, {{.RefreshSecs}} * 1000);
 })();
 </script>
 {{end}}

@@ -65,6 +65,9 @@ func (c ServeCommand) Run(ctx context.Context, flags any, args []string) error {
 	if err != nil {
 		return err
 	}
+	// The page links to the log, since the reason a connection will not come
+	// up is in it and the page is where that is noticed.
+	web.logFile = logFilePath
 	// Before anything is started, since a connection that forwards this port
 	// could not be started at all whilst the page is served on it.
 	if err := web.checkForwardPorts(cfg); err != nil {

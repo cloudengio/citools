@@ -37,10 +37,6 @@ type TmuxFlags struct {
 // logging to the terminal would corrupt a tmux control mode session.
 const tmuxLogPattern = "pconn-tmux-XXXXXX.log"
 
-// tmuxLogPath is the file that the tmux command's logger writes to, set by
-// tmuxLoggerPrehook.
-var tmuxLogPath string
-
 var tmuxLoggerPrehook = subcmd.LoggerHook("tmuxLoggerPrehook", func(ctx context.Context, fs *flag.FlagSet) (*cmdutil.Logger, error) {
 	cfg, _ := cmdutil.ContextValue[Config](ctx)
 	lc := cfg.Logging.WithFlagOverrides(fs, globalFlags.LoggingFlags)
@@ -51,7 +47,7 @@ var tmuxLoggerPrehook = subcmd.LoggerHook("tmuxLoggerPrehook", func(ctx context.
 	if err != nil {
 		return nil, err
 	}
-	tmuxLogPath = logger.Path()
+	logFilePath = logger.Path()
 	return logger, nil
 })
 
@@ -95,8 +91,8 @@ func (c TmuxCommand) Run(ctx context.Context, flags any, args []string) error {
 	status := func(format string, args ...any) {
 		fmt.Fprintf(os.Stderr, "pconn: "+format+"\n", args...)
 	}
-	if tmuxLogPath != "" {
-		status("logging to %s", tmuxLogPath)
+	if logFilePath != "" {
+		status("logging to %s", logFilePath)
 	}
 	// Only say why a connection cannot be made when nothing is attached, since
 	// anything written to the terminal then would corrupt the session. That

@@ -341,20 +341,20 @@ func TestTmuxCommandErrors(t *testing.T) {
 func TestTmuxLogsToFile(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
-	tmuxLogPath = ""
+	logFilePath = ""
 	_ = dispatchTmux(t, tmuxTestConfig, "dev")
-	if !strings.HasPrefix(tmuxLogPath, tmp) {
-		t.Errorf("got log path %q, want a file in %v", tmuxLogPath, tmp)
+	if !strings.HasPrefix(logFilePath, tmp) {
+		t.Errorf("got log path %q, want a file in %v", logFilePath, tmp)
 	}
-	if _, err := os.Stat(tmuxLogPath); err != nil {
+	if _, err := os.Stat(logFilePath); err != nil {
 		t.Error(err)
 	}
 
 	explicit := filepath.Join(t.TempDir(), "explicit.log")
-	tmuxLogPath = ""
+	logFilePath = ""
 	_ = dispatchTmux(t, "logging:\n  file: "+explicit+"\n"+tmuxTestConfig, "dev")
-	if tmuxLogPath != explicit {
-		t.Errorf("got log path %q, want the configured %q", tmuxLogPath, explicit)
+	if logFilePath != explicit {
+		t.Errorf("got log path %q, want the configured %q", logFilePath, explicit)
 	}
 }
 
