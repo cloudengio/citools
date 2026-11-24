@@ -25,6 +25,7 @@ type serveFixture struct {
 	forwardB  int
 	echo      int
 	done      <-chan error
+	opened    <-chan string
 	cancel    func()
 	cfgPath   string
 	logPath   string
@@ -89,6 +90,19 @@ connections:
 		srv.addr(), user, knownHostsPath, forwardB, echo,
 		srv.addr(), user, knownHostsPath, forwardC, echo))
 
+	// The page is opened by the command, so the tests take that over: running
+	// them must not open a browser.
+	opened := make(chan string, 4)
+	previousOpen := openBrowserFn
+	openBrowserFn = func(url string) error {
+		select {
+		case opened <- url:
+		default:
+		}
+		return nil
+	}
+	t.Cleanup(func() { openBrowserFn = previousOpen })
+
 	port := freePort(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	cli := newTestCLI(t)
@@ -113,7 +127,7 @@ connections:
 	f := &serveFixture{
 		base:     fmt.Sprintf("http://127.0.0.1:%d", port),
 		forwardA: forwardA, forwardB: forwardB, echo: echo,
-		done: done, cancel: cancel, cfgPath: cfgPath, logPath: logPath, sshServer: srv,
+		done: done, opened: opened, cancel: cancel, cfgPath: cfgPath, logPath: logPath, sshServer: srv,
 	}
 	f.waitServing(t)
 	return f
@@ -347,5 +361,34 @@ connections:
 		t.Errorf("the address was not released: %v", err)
 	} else {
 		_ = l.Close()
+	}
+}
+
+// TestServeOpensBrowser covers the page being opened for the user rather than
+// left to be copied out of the log, and the flag for a pconn that something
+// other than a person runs.
+func TestServeOpensBrowser(t *testing.T) {
+	f := startServe(t)
+	select {
+	case got := <-f.opened:
+		if want := f.base + "/"; got != want {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the page was not opened")
+	}
+}
+
+func TestServeNoBrowser(t *testing.T) {
+	// startServe waits for the page to be served, so by the time it returns
+	// the page would have been opened had it been going to be.
+	f := startServe(t, "--no-browser")
+	select {
+	case got := <-f.opened:
+		t.Errorf("--no-browser opened %v", got)
+	case <-time.After(250 * time.Millisecond):
+	}
+	if code, _ := f.get(t, "/"); code != http.StatusOK {
+		t.Errorf("the page is still served: got %v", code)
 	}
 }

@@ -328,3 +328,25 @@ connections:
 		srv.close()
 	}
 }
+
+// TestWebBrowseURL covers the url that is opened in a browser, which is where
+// the page is served except when it is served on every interface: a browser
+// cannot use an unspecified address.
+func TestWebBrowseURL(t *testing.T) {
+	logger := slog.New(slog.DiscardHandler)
+	for _, tc := range []struct{ addr, want string }{
+		{"127.0.0.1:0", "http://127.0.0.1:%d/"},
+		// Served on every interface, so this host stands for itself.
+		{"0.0.0.0:0", "http://127.0.0.1:%d/"},
+		{":0", "http://127.0.0.1:%d/"},
+	} {
+		srv, err := listenWeb(tc.addr, fixedConns(nil), logger)
+		if err != nil {
+			t.Fatalf("%v: %v", tc.addr, err)
+		}
+		if got, want := srv.browseURL(), fmt.Sprintf(tc.want, srv.port()); got != want {
+			t.Errorf("%v: got %v, want %v", tc.addr, got, want)
+		}
+		srv.close()
+	}
+}

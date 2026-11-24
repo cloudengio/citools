@@ -211,10 +211,13 @@ Naming a host in a forward reaches a service that only the remote host can reach
 `pconn serve` serves a page listing every connection in the configuration, as groups and individually, so that a connection can be started and used without reading the configuration file or remembering which local port reaches what.
 
 ```
-pconn serve                      # http://127.0.0.1:8099/, nothing connected yet
-pconn serve ci                    # the same, with the ci group already up
+pconn serve                      # opens http://127.0.0.1:8099/, nothing connected yet
+pconn serve ci                   # the same, with the ci group already up
 pconn serve --http=0.0.0.0:8099
+pconn serve --no-browser         # serve it, but open nothing
 ```
+
+The page is opened in the browser once it is being served, since reaching it is the point of the command; `--no-browser` is for a `pconn serve` that a service runs rather than a person. A browser that cannot be opened is not a failure: the page is still served, and the address is logged.
 
 Clicking a group starts every connection in it; clicking a single connection starts that one. Once they are established — which the page waits for, since a port that is not forwarded yet refuses connections — a browser tab is opened for each of the group's web forwards, at the [`url`](#port-forwarding-fields) of each. A connection that is running can be stopped from the page, which releases its local ports.
 

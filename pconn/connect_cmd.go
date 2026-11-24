@@ -443,7 +443,7 @@ func maintainConnections(
 	// call.
 	var webDone chan struct{}
 	if web != nil {
-		logger.Info("serving the list of connections", "url", web.url())
+		logger.Info("serving the list of connections", "url", web.browseURL())
 		webDone = make(chan struct{})
 		go func() {
 			defer close(webDone)

@@ -15,8 +15,9 @@
 // field names, as ssh's ProxyJump ('ssh -J') does. The config command shows
 // and documents the configuration.
 //
-// The serve command serves a page listing every configured connection, as
-// groups and individually, and starts and stops them as the page asks: clicking
+// The serve command opens and serves a page listing every configured
+// connection, as groups and individually, and starts and stops them as the
+// page asks: clicking
 // a group brings up its connections and opens a browser tab for each of their
 // web forwards, so that a connection can be used without remembering which
 // local port reaches what. The connect command's --http flag serves the same
@@ -56,7 +57,7 @@ commands:
     args:
       - "<group>... - optional group(s) of connections to connect (use 'all' for all connections); defaults to all if omitted"
   - name: serve
-    summary: serve a page listing the configured connections, which starts and stops them on demand
+    summary: open and serve a page listing the configured connections, which starts and stops them on demand
     args:
       - "<group>|<name>... - optional group(s) or connection(s) to bring up at once; the rest are started from the page"
   - name: tmux

@@ -112,6 +112,20 @@ func (s *webServer) url() string {
 	return "http://" + s.listener.Addr().String() + "/"
 }
 
+// browseURL is the url to open in a browser, which is where the page is served
+// unless it is served on every interface: a browser cannot use an unspecified
+// address, so the loopback one stands for this host.
+func (s *webServer) browseURL() string {
+	host, port, err := net.SplitHostPort(s.listener.Addr().String())
+	if err != nil {
+		return s.url()
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, port) + "/"
+}
+
 // port is the port the page is served on, which is the one that was bound and
 // so is a real port even where the address asked for any.
 func (s *webServer) port() int {

@@ -6,7 +6,7 @@ Usage of `pconn`
     manage persistent network connections
 
     connect - maintain the connections that have port forwards, for one or more groups or for all of them
-      serve - serve a page listing the configured connections, which starts and stops them on demand
+      serve - open and serve a page listing the configured connections, which starts and stops them on demand
        tmux - attach to a tmux session over a connection, reconnecting and reattaching if it is lost
      config - show the configuration, and its documentation.
 
@@ -47,13 +47,14 @@ tmux command. A host that cannot be reached from where `pconn` runs is reached
 through one that can, which its proxy field names, as ssh's ProxyJump ('ssh
 -J') does. The config command shows and documents the configuration.
 
-The serve command serves a page listing every configured connection,
-as groups and individually, and starts and stops them as the page asks:
-clicking a group brings up its connections and opens a browser tab for each
-of their web forwards, so that a connection can be used without remembering
-which local port reaches what. The connect command's --http flag serves
-the same page, read-only, for the connections it was told to maintain.
-The page is embedded in the binary and loads nothing from anywhere.
+The serve command opens and serves a page listing every configured
+connection, as groups and individually, and starts and stops them as the
+page asks: clicking a group brings up its connections and opens a browser
+tab for each of their web forwards, so that a connection can be used
+without remembering which local port reaches what. The connect command's
+--http flag serves the same page, read-only, for the connections it was
+told to maintain. The page is embedded in the binary and loads nothing from
+anywhere.
 
 The tmux command attaches to a tmux session over one of the configured
 connections, running the command line that its tmux block configures, eg.
@@ -280,10 +281,13 @@ Naming a host in a forward reaches a service that only the remote host can reach
 `pconn serve` serves a page listing every connection in the configuration, as groups and individually, so that a connection can be started and used without reading the configuration file or remembering which local port reaches what.
 
 ```
-pconn serve                      # http://127.0.0.1:8099/, nothing connected yet
-pconn serve ci                    # the same, with the ci group already up
+pconn serve                      # opens http://127.0.0.1:8099/, nothing connected yet
+pconn serve ci                   # the same, with the ci group already up
 pconn serve --http=0.0.0.0:8099
+pconn serve --no-browser         # serve it, but open nothing
 ```
+
+The page is opened in the browser once it is being served, since reaching it is the point of the command; `--no-browser` is for a `pconn serve` that a service runs rather than a person. A browser that cannot be opened is not a failure: the page is still served, and the address is logged.
 
 Clicking a group starts every connection in it; clicking a single connection starts that one. Once they are established — which the page waits for, since a port that is not forwarded yet refuses connections — a browser tab is opened for each of the group's web forwards, at the [`url`](#port-forwarding-fields) of each. A connection that is running can be stopped from the page, which releases its local ports.
 

@@ -3,7 +3,7 @@
 //	manage persistent network connections
 //
 //	connect - maintain the connections that have port forwards, for one or more groups or for all of them
-//	  serve - serve a page listing the configured connections, which starts and stops them on demand
+//	  serve - open and serve a page listing the configured connections, which starts and stops them on demand
 //	   tmux - attach to a tmux session over a connection, reconnecting and reattaching if it is lost
 //	 config - show the configuration, and its documentation.
 //

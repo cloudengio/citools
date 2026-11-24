@@ -23,6 +23,7 @@ type ServeFlags struct {
 	Config cmdconfig.FilesFlag `subcmd:"config,,YAML configuration file (overrides global --config)"`
 	//nolint:lll // The usage has to say what the address means.
 	HTTP             string        `subcmd:"http,localhost:8099,'address to serve the page on; a bare port is served on the loopback interface, eg. 8099, and an address names the interface to serve on, eg. 0.0.0.0:8099. It must not be a port that a connection forwards'"`
+	NoBrowser        bool          `subcmd:"no-browser,false,'do not open the page in the browser; for a pconn run by a service rather than by hand'"`
 	UnlimitedRetries bool          `subcmd:"unlimited-retries,true,continue retrying connections indefinitely"`
 	StatusInterval   time.Duration `subcmd:"status-interval,15s,how often to report on connections that have not yet been established; 0 disables"`
 	//nolint:lll // The usage has to say when this is worth using.
@@ -83,10 +84,23 @@ func (c ServeCommand) Run(ctx context.Context, flags any, args []string) error {
 
 	go reporter.run(runCtx)
 
+	// The browsable url rather than the address that was bound: an address
+	// that is served on every interface cannot be used by a browser, and this
+	// line is what is copied when nothing is opened.
 	logger.Info("serving the list of connections",
-		"url", web.url(),
+		"url", web.browseURL(),
 		"started", startedDesc(args),
 	)
+	if !sf.NoBrowser {
+		// The page is what this command is for, so it is opened rather than
+		// left to be copied out of the log. A browser that cannot be opened is
+		// not a failure: the page is still served, and the url above is how to
+		// reach it.
+		if err := openBrowserFn(web.browseURL()); err != nil {
+			logger.Warn("could not open the page in the browser",
+				"url", web.browseURL(), "err", err)
+		}
+	}
 	// Returns when the context is done, which is what ends serving.
 	web.serve(runCtx)
 
@@ -94,7 +108,7 @@ func (c ServeCommand) Run(ctx context.Context, flags any, args []string) error {
 	// which is waited for so that the ports are released before pconn exits.
 	cancel()
 	sup.StopAll()
-	logger.Info("stopped serving the list of connections", "url", web.url())
+	logger.Info("stopped serving the list of connections", "url", web.browseURL())
 	return nil
 }
 
