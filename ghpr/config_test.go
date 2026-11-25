@@ -355,6 +355,33 @@ func TestCLIConfigDescribe(t *testing.T) {
 	}
 }
 
+func TestCLICompletions(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	globalFlags = GlobalFlags{}
+
+	for _, sh := range []string{"bash", "zsh"} {
+		out := captureOutput(func() {
+			cli := createCLI()
+			cli.WithGlobalFlags(subcmd.NewFlagSet().MustRegisterFlagStruct(&globalFlags, nil, nil))
+			if err := cli.DispatchWithArgs(context.Background(), "ghpr", "completions", "--program=ghpr", sh); err != nil {
+				t.Fatalf("completions %s: %v", sh, err)
+			}
+		})
+		for _, want := range []string{"ghpr", "create-pr", "merge-with-summary", "write-notes-as-commits", "list-commits-with-notes", "completions", "--base"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s completion output missing %q", sh, want)
+			}
+		}
+	}
+
+	cli := createCLI()
+	cli.WithGlobalFlags(subcmd.NewFlagSet().MustRegisterFlagStruct(&globalFlags, nil, nil))
+	if err := cli.DispatchWithArgs(context.Background(), "ghpr", "completions", "fish"); err == nil {
+		t.Error("expected error for unsupported shell")
+	}
+}
+
 // TestSearchPath covers the directories a configuration file is looked for in:
 // ghpr's own, plus the current directory only when a file was named on the
 // command line.

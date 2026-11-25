@@ -8,6 +8,7 @@
 //	              post-note - [deprecated] attach the description of a merged pull request to the commit it created on the base branch
 //	 write-notes-as-commits - rewrite history from a commit onward to replace its commit body with its git note
 //	list-commits-with-notes - list commits that have git notes, newest first, as candidates for write-notes-as-commits
+//	            completions - generate shell completion scripts (bash or zsh)
 //	                 config - show the configuration, and its documentation.
 //
 // global flags: [--base=main --config=config.yaml,ghpr.yaml --dry-run=false --engine=claude --max-diff-lines=3000 --model= --show-command=false --show-summary-command=false --verbose=false --yes=false]
