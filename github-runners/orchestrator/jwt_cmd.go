@@ -14,7 +14,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -23,6 +22,7 @@ import (
 	"cloudeng.io/cmdutil"
 	"cloudeng.io/cmdutil/keys/keyscmd"
 	"cloudeng.io/file/localfs"
+	"cloudeng.io/webapp"
 	"cloudeng.io/webapp/webauth/jwtutil"
 )
 
@@ -115,9 +115,8 @@ type JWTIssuerFlags struct {
 	IssueRedirect bool   `subcmd:"issue-redirect,true,automatically issue a redirect after setting the authentication cookie"`
 }
 
-var jwtOpenBrowserFn = func(url string) error {
-	return exec.Command("open", url).Start()
-}
+// jwtOpenBrowserFn opens the authentication URL, and is replaced by the tests.
+var jwtOpenBrowserFn = webapp.OpenLink
 
 // runJWTIssuer runs a temporary HTTP server that issues a single JWT
 // authentication cookie and redirects to the configured URL.
