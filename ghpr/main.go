@@ -35,6 +35,7 @@ import (
 	"cloudeng.io/cmdutil"
 	"cloudeng.io/cmdutil/cmdconfig"
 	"cloudeng.io/cmdutil/subcmd"
+	"cloudeng.io/cmdutil/subcmd/shells"
 )
 
 const cmdSpec = `name: ghpr
@@ -64,6 +65,10 @@ commands:
     summary: list commits that have git notes, newest first, as candidates for write-notes-as-commits
     args:
       - "[<rev>] - revision or range to inspect; defaults to HEAD"
+  - name: completions
+    summary: generate shell completion scripts (bash or zsh)
+    args:
+      - "<shell> - shell name (bash or zsh)"
   {{range subcmdExtension "config"}}{{.}}
   {{end}}
 `
@@ -325,6 +330,10 @@ func createCLI() *subcmd.CommandSetYAML {
 	cmdSet.Set("write-notes-as-commits").MustSetPreHooks(configPrehook)
 	cmdSet.Set("list-commits-with-notes").MustRunner(listCommitsWithNotes, &ListCommitsWithNotesFlags{})
 	cmdSet.Set("list-commits-with-notes").MustSetPreHooks(configPrehook)
+	cmdSet.Set("completions").MustRunner(
+		shells.Runner(cmdSet.CommandSet, nil),
+		&shells.Flags{},
+	)
 
 	cmdSet.Set("config").MustSetPreHooks(configPrehook)
 	return cmdSet
