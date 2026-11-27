@@ -119,12 +119,12 @@ func loadIgnored(configFile string) (map[string]bool, error) {
 		if os.IsNotExist(err) {
 			return map[string]bool{}, nil
 		}
-		return nil, fmt.Errorf("Error reading config file: %w", err)
+		return nil, fmt.Errorf("error reading config file: %w", err)
 	}
 
 	var cfg Config
 	if err := yaml.Unmarshal(b, &cfg); err != nil {
-		return nil, fmt.Errorf("Error parsing config file: %w", err)
+		return nil, fmt.Errorf("error parsing config file: %w", err)
 	}
 
 	ignoredVars := make(map[string]bool, len(cfg.Ignore))
@@ -147,7 +147,7 @@ func filterStream(r io.Reader, out, errOut io.Writer, ignoredVars map[string]boo
 			if err == io.EOF {
 				break
 			}
-			fmt.Fprintf(errOut, "Error decoding govulncheck JSON output: %v\n", err)
+			_, _ = fmt.Fprintf(errOut, "Error decoding govulncheck JSON output: %v\n", err)
 			break
 		}
 
@@ -181,7 +181,7 @@ func filterStream(r io.Reader, out, errOut io.Writer, ignoredVars map[string]boo
 
 		unmatchedFound = true
 		indentedJSON, _ := json.MarshalIndent(raw, "", "  ")
-		fmt.Fprintf(out, "Unmatched Vulnerability Found (%s):\n%s\n\n", vulnID, string(indentedJSON))
+		_, _ = fmt.Fprintf(out, "Unmatched Vulnerability Found (%s):\n%s\n\n", vulnID, string(indentedJSON))
 	}
 
 	return unmatchedFound
@@ -201,7 +201,7 @@ func run(cliArgs []string, stdout, stderr io.Writer, newCmd func(string, ...stri
 	// 1. Read and parse the YAML configuration
 	ignoredVars, err := loadIgnored(configFile)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		_, _ = fmt.Fprintln(stderr, err)
 		return 1
 	}
 
@@ -218,12 +218,12 @@ func run(cliArgs []string, stdout, stderr io.Writer, newCmd func(string, ...stri
 	cmd.Stderr = stderr
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		fmt.Fprintf(stderr, "Error setting up stdout pipe: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "Error setting up stdout pipe: %v\n", err)
 		return 1
 	}
 
 	if err := cmd.Start(); err != nil {
-		fmt.Fprintf(stderr, "Error starting govulncheck: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "Error starting govulncheck: %v\n", err)
 		return 1
 	}
 
@@ -234,7 +234,7 @@ func run(cliArgs []string, stdout, stderr io.Writer, newCmd func(string, ...stri
 
 	// 4. Determine exit status
 	if unmatchedFound {
-		fmt.Fprintln(stderr, "Error: Unmatched vulnerabilities were found.")
+		_, _ = fmt.Fprintln(stderr, "Error: Unmatched vulnerabilities were found.")
 		return 1
 	}
 
@@ -246,7 +246,7 @@ func run(cliArgs []string, stdout, stderr io.Writer, newCmd func(string, ...stri
 		if exitErr, ok := cmdErr.(*exec.ExitError); ok && exitErr.ExitCode() == 3 {
 			return 0
 		}
-		fmt.Fprintf(stderr, "govulncheck failed: %v\n", cmdErr)
+		_, _ = fmt.Fprintf(stderr, "govulncheck failed: %v\n", cmdErr)
 		return 1
 	}
 

@@ -375,7 +375,7 @@ func TestRun(t *testing.T) {
 		if code != 1 {
 			t.Fatalf("run() = %d, want 1", code)
 		}
-		if !strings.Contains(errOut.String(), "Error parsing config file:") {
+		if !strings.Contains(errOut.String(), "error parsing config file:") {
 			t.Errorf("stderr %q missing parse error", errOut.String())
 		}
 	})
@@ -421,7 +421,7 @@ func TestHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
 	}
-	fmt.Fprint(os.Stdout, os.Getenv("GO_HELPER_STDOUT"))
+	_, _ = fmt.Fprint(os.Stdout, os.Getenv("GO_HELPER_STDOUT"))
 	code, _ := strconv.Atoi(os.Getenv("GO_HELPER_EXIT_CODE"))
 	os.Exit(code)
 }
