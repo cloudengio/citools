@@ -30,7 +30,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -111,57 +110,32 @@ func importedButNotCalled(f *Finding) bool {
 }
 
 func main() {
-	var configFile string
-	var includeNotCalled bool
-	flag.StringVar(&configFile, "config", ".govulnchecker.yaml", "Path to the YAML configuration file containing ignored vulnerabilities")
-	flag.BoolVar(&includeNotCalled, "include-not-called", false, "Include vulnerabilities that are imported but never called (symbol scan level only)")
-	flag.Parse()
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, exec.Command))
+}
 
-	// 1. Read and parse the YAML configuration
+func loadIgnored(configFile string) (map[string]bool, error) {
 	b, err := os.ReadFile(configFile)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			os.Exit(0)
+		if os.IsNotExist(err) {
+			return map[string]bool{}, nil
 		}
-		fmt.Fprintf(os.Stderr, "Error reading config file: %v\n", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("Error reading config file: %w", err)
 	}
 
 	var cfg Config
 	if err := yaml.Unmarshal(b, &cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "Error parsing config file: %v\n", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("Error parsing config file: %w", err)
 	}
 
-	ignoredVars := make(map[string]bool)
+	ignoredVars := make(map[string]bool, len(cfg.Ignore))
 	for _, item := range cfg.Ignore {
 		ignoredVars[strings.TrimSpace(item.ID)] = true
 	}
+	return ignoredVars, nil
+}
 
-	// 2. Prepare the govulncheck command
-	// flag.Args() automatically contains everything passed after `--`
-	// (or any non-flag arguments if `--` wasn't explicitly used).
-	args := []string{"--format=json"}
-	args = append(args, flag.Args()...)
-
-	cmd := exec.Command("govulncheck", args...)
-
-	// govulncheck writes its JSON output to stdout.
-	// We'll pass stderr straight through in case of fatal runtime errors.
-	cmd.Stderr = os.Stderr
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error setting up stdout pipe: %v\n", err)
-		os.Exit(1)
-	}
-
-	if err := cmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error starting govulncheck: %v\n", err)
-		os.Exit(1)
-	}
-
-	// 3. Process the JSON stream
-	decoder := json.NewDecoder(stdoutPipe)
+func filterStream(r io.Reader, out, errOut io.Writer, ignoredVars map[string]bool, includeNotCalled bool) bool {
+	decoder := json.NewDecoder(r)
 	unmatchedFound := false
 	scanLevel := "symbol" // default; overridden by the config message
 
@@ -173,8 +147,8 @@ func main() {
 			if err == io.EOF {
 				break
 			}
-			fmt.Fprintf(os.Stderr, "Error decoding govulncheck JSON output: %v\n", err)
-			continue
+			fmt.Fprintf(errOut, "Error decoding govulncheck JSON output: %v\n", err)
+			break
 		}
 
 		// Re-marshal to our struct to easily check the fields
@@ -207,15 +181,61 @@ func main() {
 
 		unmatchedFound = true
 		indentedJSON, _ := json.MarshalIndent(raw, "", "  ")
-		fmt.Printf("Unmatched Vulnerability Found (%s):\n%s\n\n", vulnID, string(indentedJSON))
+		fmt.Fprintf(out, "Unmatched Vulnerability Found (%s):\n%s\n\n", vulnID, string(indentedJSON))
 	}
+
+	return unmatchedFound
+}
+
+func run(cliArgs []string, stdout, stderr io.Writer, newCmd func(string, ...string) *exec.Cmd) int {
+	fs := flag.NewFlagSet("govulnchecker", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var configFile string
+	var includeNotCalled bool
+	fs.StringVar(&configFile, "config", ".govulnchecker.yaml", "Path to the YAML configuration file containing ignored vulnerabilities")
+	fs.BoolVar(&includeNotCalled, "include-not-called", false, "Include vulnerabilities that are imported but never called (symbol scan level only)")
+	if err := fs.Parse(cliArgs); err != nil {
+		return 2
+	}
+
+	// 1. Read and parse the YAML configuration
+	ignoredVars, err := loadIgnored(configFile)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+
+	// 2. Prepare the govulncheck command
+	// fs.Args() automatically contains everything passed after `--`
+	// (or any non-flag arguments if `--` wasn't explicitly used).
+	args := []string{"--format=json"}
+	args = append(args, fs.Args()...)
+
+	cmd := newCmd("govulncheck", args...)
+
+	// govulncheck writes its JSON output to stdout.
+	// We'll pass stderr straight through in case of fatal runtime errors.
+	cmd.Stderr = stderr
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		fmt.Fprintf(stderr, "Error setting up stdout pipe: %v\n", err)
+		return 1
+	}
+
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintf(stderr, "Error starting govulncheck: %v\n", err)
+		return 1
+	}
+
+	// 3. Process the JSON stream
+	unmatchedFound := filterStream(stdoutPipe, stdout, stderr, ignoredVars, includeNotCalled)
 
 	cmdErr := cmd.Wait()
 
 	// 4. Determine exit status
 	if unmatchedFound {
-		fmt.Fprintln(os.Stderr, "Error: Unmatched vulnerabilities were found.")
-		os.Exit(1)
+		fmt.Fprintln(stderr, "Error: Unmatched vulnerabilities were found.")
+		return 1
 	}
 
 	// govulncheck exits with codes depending on what it found. If it errored
@@ -224,9 +244,11 @@ func main() {
 		// govulncheck returns exit code 3 if vulns are found in recent versions,
 		// but since we caught no unignored ones, exit with 0 unless there was an execution failure.
 		if exitErr, ok := cmdErr.(*exec.ExitError); ok && exitErr.ExitCode() == 3 {
-			os.Exit(0)
+			return 0
 		}
-		fmt.Fprintf(os.Stderr, "govulncheck failed: %v\n", cmdErr)
-		os.Exit(1)
+		fmt.Fprintf(stderr, "govulncheck failed: %v\n", cmdErr)
+		return 1
 	}
+
+	return 0
 }
