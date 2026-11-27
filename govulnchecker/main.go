@@ -30,6 +30,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -119,6 +120,9 @@ func main() {
 	// 1. Read and parse the YAML configuration
 	b, err := os.ReadFile(configFile)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			os.Exit(0)
+		}
 		fmt.Fprintf(os.Stderr, "Error reading config file: %v\n", err)
 		os.Exit(1)
 	}
